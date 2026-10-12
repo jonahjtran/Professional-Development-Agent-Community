@@ -3,7 +3,13 @@ name = "agent-studio"
 version = "0.1.0"
 description = "Human-gated multi-agent development pipeline on the Claude Agent SDK"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "rich>=15.0.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+studio = "orchestrator.cli:app"
 
 [dependency-groups]
 dev = [
