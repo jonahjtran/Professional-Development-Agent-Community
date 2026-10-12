@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Human-gated multi-agent development pipeline on the Claude Agent SDK"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "pydantic>=2.14.1",
+    "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "typer>=0.27.3",
 ]
@@ -39,3 +41,7 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.12"
 strict = true
 files = ["orchestrator", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true
