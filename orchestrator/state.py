@@ -24,11 +24,14 @@ class Status(StrEnum):
     DONE = "done"
 
 
+# Slugs become directory names, so they must not be able to escape runs/.
+Slug = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*$")]
+
+
 class ProjectState(BaseModel):
     """Everything needed to resume a project after a crash or Ctrl-C."""
 
-    # Slugs become directory names, so they must not be able to escape runs/.
-    project_slug: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*$")]
+    project_slug: Slug
     idea: str
     stage: Stage = Stage.INTAKE
     status: Status = Status.RUNNING
