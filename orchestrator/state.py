@@ -1,6 +1,7 @@
 import contextlib
 import os
 import tempfile
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Self
@@ -45,6 +46,23 @@ class Intervention(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class GateOutcome(StrEnum):
+    APPROVE = "approve"
+    REQUEST_CHANGES = "request_changes"
+    REJECT = "reject"
+
+
+class GateRecord(BaseModel):
+    """One human decision at a gate, kept for the audit trail."""
+
+    stage: Stage
+    outcome: GateOutcome
+    comments: str = ""
+    ts: datetime
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProjectState(BaseModel):
     """Everything needed to resume a project after a crash or Ctrl-C."""
 
@@ -56,6 +74,7 @@ class ProjectState(BaseModel):
     revisions: dict[Stage, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
     intervention: Intervention | None = None
     cost_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
+    gate_history: list[GateRecord] = Field(default_factory=list)
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)
