@@ -88,7 +88,8 @@ INTAKE
 | Field | Meaning |
 | --- | --- |
 | `project_slug`, `idea` | Identity and the original one-paragraph idea |
-| `stage`, `status` | Current stage; `running`, `awaiting_gate`, `halted`, or `done` |
+| `stage`, `status` | Current stage; `running`, `awaiting_human`, `halted`, or `done`. `halted` is for the kill switch and unrecoverable errors |
+| `intervention` | Why the run is waiting for a human: `kind` (`gate`, `revision_cap`, `budget_cap`, `qa_failed`, `tool_permission`) plus a short `detail`. Set if and only if `status` is `awaiting_human`, so `resume` knows which question to re-ask |
 | `artifacts` | Map of name → path, content hash, approved\_at, revision number |
 | `current_task_id` | Task being built in the Developer loop |
 | `revisions` | Revision count per stage |
@@ -99,7 +100,7 @@ INTAKE
 
 - Validate every agent output against its Pydantic schema before showing it at a gate. A failure triggers one automatic retry with the validation error, then halts.
 - Max 3 revisions per stage and `max_turns` per agent, both set in `config.yaml`. At the cap, ask the human: approve anyway, abandon, or raise the cap.
-- Budget caps per stage and per project in dollars; exceeding one halts the run before the next agent call.
+- Budget caps per stage and per project in dollars; exceeding one stops the run for a human decision (`awaiting_human`, kind `budget_cap`) before the next agent call.
 - Writes to `state.json` are atomic (write temp file, then rename). `studio resume <project>` continues from the saved stage after a crash or Ctrl-C.
 - Each stage reads only the approved artifacts it declares as inputs, never the whole run directory.
 - Append every transition, agent call, tool call, and gate decision to `trace.jsonl`.
