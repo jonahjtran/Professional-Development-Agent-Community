@@ -1,0 +1,29 @@
+# Agent Studio configuration. Model names and budgets live here, never in code.
+
+models:
+  # Tiers map to concrete model IDs. Verify against current docs before Phase 2.
+  strong: claude-opus-5-5
+  fast: claude-haiku-5-5
+
+budget:
+  project_cap_usd: 20.0
+  # Halt and ask the human once spend reaches this fraction of the cap.
+  warn_at_fraction: 0.8
+  # Placeholder caps; tune against measured cost after Phase 7.
+  # developer and qa are per task; the rest are per stage.
+  stage_caps_usd:
+    product_owner: 1.5
+    architect: 2.5
+    developer: 2.0
+    qa: 0.5
+    career_coach: 2.0
+
+limits:
+  max_revisions: 3 # per stage, then ask the human
+  max_qa_loops: 2 # QA -> Developer round trips before the human gate
+  max_turns: # per agent run
+    product_owner: 20
+    architect: 20
+    developer: 40
+    qa: 20
+    career_coach: 20
