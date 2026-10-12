@@ -3,7 +3,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.state import ProjectState, Stage, Status, load_state, save_state, state_path
+from orchestrator.state import (
+    Intervention,
+    InterventionKind,
+    ProjectState,
+    Stage,
+    Status,
+    load_state,
+    save_state,
+    state_path,
+)
 
 
 def new_state(slug: str = "demo") -> ProjectState:
@@ -35,11 +44,13 @@ def test_rejects_a_negative_revision_count() -> None:
 
 
 def test_save_then_load_round_trips_the_state(tmp_path: Path) -> None:
-    state = new_state()
-    state.stage = Stage.ARCHITECT
-    state.status = Status.AWAITING_GATE
-    state.current_task_id = "T-3"
-    state.revisions = {Stage.PRODUCT_OWNER: 2}
+    state = new_state().evolve(
+        stage=Stage.ARCHITECT,
+        status=Status.AWAITING_HUMAN,
+        intervention=Intervention(kind=InterventionKind.GATE, detail="Approve the PRD"),
+        current_task_id="T-3",
+        revisions={Stage.PRODUCT_OWNER: 2},
+    )
 
     save_state(tmp_path, state)
     loaded = load_state(tmp_path, "demo")
@@ -54,10 +65,8 @@ def test_save_creates_the_run_directory(tmp_path: Path) -> None:
 
 
 def test_save_overwrites_the_previous_state(tmp_path: Path) -> None:
-    state = new_state()
-    save_state(tmp_path, state)
-    state.stage = Stage.DEVELOPER
-    save_state(tmp_path, state)
+    save_state(tmp_path, new_state())
+    save_state(tmp_path, new_state().evolve(stage=Stage.DEVELOPER))
 
     assert load_state(tmp_path, "demo").stage == Stage.DEVELOPER
 
@@ -71,9 +80,8 @@ def test_save_leaves_no_temp_files_behind(tmp_path: Path) -> None:
 def test_failed_save_keeps_the_previous_state_intact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    state = new_state()
-    save_state(tmp_path, state)
-    state.stage = Stage.QA
+    save_state(tmp_path, new_state())
+    state = new_state().evolve(stage=Stage.QA)
 
     def fail_replace(src: object, dst: object) -> None:
         raise OSError("disk full")
@@ -99,3 +107,88 @@ def test_load_corrupt_state_raises_validation_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_state(tmp_path, "demo")
+
+
+def awaiting(kind: InterventionKind = InterventionKind.BUDGET_CAP) -> ProjectState:
+    return new_state().evolve(
+        status=Status.AWAITING_HUMAN,
+        intervention=Intervention(kind=kind, detail="Spent $16.00 of the $20.00 cap"),
+    )
+
+
+def test_new_project_has_no_intervention() -> None:
+    assert new_state().intervention is None
+
+
+def test_awaiting_human_requires_an_intervention() -> None:
+    with pytest.raises(ValidationError):
+        new_state().evolve(status=Status.AWAITING_HUMAN)
+
+
+@pytest.mark.parametrize("status", [Status.RUNNING, Status.HALTED, Status.DONE])
+def test_only_awaiting_human_may_carry_an_intervention(status: Status) -> None:
+    intervention = Intervention(kind=InterventionKind.QA_FAILED, detail="2 loops used")
+
+    with pytest.raises(ValidationError):
+        new_state().evolve(status=status, intervention=intervention)
+
+
+@pytest.mark.parametrize("kind", list(InterventionKind))
+def test_every_intervention_kind_can_be_requested(kind: InterventionKind) -> None:
+    state = awaiting(kind)
+
+    assert state.status == Status.AWAITING_HUMAN
+    assert state.intervention is not None
+    assert state.intervention.kind == kind
+
+
+def test_resolving_an_intervention_returns_the_project_to_running() -> None:
+    state = awaiting().evolve(status=Status.RUNNING, intervention=None)
+
+    assert state.status == Status.RUNNING
+    assert state.intervention is None
+
+
+def test_intervention_requires_a_non_empty_detail() -> None:
+    with pytest.raises(ValidationError):
+        Intervention(kind=InterventionKind.GATE, detail="")
+
+
+def test_intervention_survives_save_and_load(tmp_path: Path) -> None:
+    state = awaiting(InterventionKind.REVISION_CAP)
+
+    save_state(tmp_path, state)
+
+    assert load_state(tmp_path, "demo") == state
+
+
+def test_loading_a_file_with_an_inconsistent_intervention_is_rejected(tmp_path: Path) -> None:
+    path = state_path(tmp_path, "demo")
+    path.parent.mkdir()
+    path.write_text(
+        '{"project_slug": "demo", "idea": "x", "status": "awaiting_human", "intervention": null}'
+    )
+
+    with pytest.raises(ValidationError):
+        load_state(tmp_path, "demo")
+
+
+def test_state_cannot_be_modified_in_place() -> None:
+    state = new_state()
+
+    with pytest.raises(ValidationError):
+        state.stage = Stage.QA
+
+
+def test_evolve_returns_a_new_state_and_leaves_the_original_unchanged() -> None:
+    original = new_state()
+
+    changed = original.evolve(stage=Stage.ARCHITECT)
+
+    assert changed.stage == Stage.ARCHITECT
+    assert original.stage == Stage.INTAKE
+
+
+def test_evolve_validates_the_changed_values() -> None:
+    with pytest.raises(ValidationError):
+        new_state().evolve(project_slug="../escape")
