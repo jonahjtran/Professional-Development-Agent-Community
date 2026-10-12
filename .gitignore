@@ -13,3 +13,6 @@ dist/
 
 # Per-project run output (state, traces, cost)
 runs/
+
+# Private learning notebook (learn-as-you-build skill)
+docs/learning/
