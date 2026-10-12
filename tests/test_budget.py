@@ -1,0 +1,202 @@
+from pathlib import Path
+
+import pytest
+
+from orchestrator.budget import BudgetLevel, assess_budget, pause_for_budget, record_cost
+from orchestrator.config import Config
+from orchestrator.state import (
+    InterventionKind,
+    ProjectState,
+    Stage,
+    Status,
+    load_state,
+    save_state,
+)
+
+
+def make_config() -> Config:
+    return Config.model_validate(
+        {
+            "models": {"strong": "strong-model-id", "fast": "fast-model-id"},
+            "budget": {
+                "project_cap_usd": 20.0,
+                "warn_at_fraction": 0.8,
+                "stage_caps_usd": {
+                    "product_owner": 1.5,
+                    "architect": 2.5,
+                    "developer": 10.0,
+                    "qa": 2.5,
+                    "career_coach": 2.0,
+                },
+            },
+            "limits": {
+                "max_revisions": 3,
+                "max_qa_loops": 2,
+                "max_turns": {
+                    "product_owner": 20,
+                    "architect": 20,
+                    "developer": 40,
+                    "qa": 20,
+                    "career_coach": 20,
+                },
+            },
+        }
+    )
+
+
+def new_state() -> ProjectState:
+    return ProjectState(project_slug="demo", idea="A tool that tracks student org events.")
+
+
+def state_with_spend(**spend_by_stage: float) -> ProjectState:
+    return new_state().evolve(cost_usd={Stage(name): usd for name, usd in spend_by_stage.items()})
+
+
+def test_a_new_project_has_spent_nothing() -> None:
+    assert new_state().total_cost_usd == 0.0
+
+
+def test_record_cost_adds_to_the_stage_and_the_total() -> None:
+    state = record_cost(new_state(), Stage.PRODUCT_OWNER, 0.40)
+
+    assert state.cost_usd[Stage.PRODUCT_OWNER] == pytest.approx(0.40)
+    assert state.total_cost_usd == pytest.approx(0.40)
+
+
+def test_record_cost_accumulates_across_calls_and_stages() -> None:
+    state = record_cost(new_state(), Stage.PRODUCT_OWNER, 0.40)
+    state = record_cost(state, Stage.PRODUCT_OWNER, 0.35)
+    state = record_cost(state, Stage.ARCHITECT, 1.00)
+
+    assert state.cost_usd[Stage.PRODUCT_OWNER] == pytest.approx(0.75)
+    assert state.cost_usd[Stage.ARCHITECT] == pytest.approx(1.00)
+    assert state.total_cost_usd == pytest.approx(1.75)
+
+
+def test_record_cost_leaves_the_original_state_unchanged() -> None:
+    original = new_state()
+
+    record_cost(original, Stage.QA, 0.50)
+
+    assert original.total_cost_usd == 0.0
+
+
+def test_record_cost_rejects_a_negative_amount() -> None:
+    with pytest.raises(ValueError, match="negative"):
+        record_cost(new_state(), Stage.QA, -0.01)
+
+
+def test_recorded_cost_survives_save_and_load(tmp_path: Path) -> None:
+    state = record_cost(new_state(), Stage.ARCHITECT, 1.25)
+
+    save_state(tmp_path, state)
+
+    assert load_state(tmp_path, "demo").cost_usd == {Stage.ARCHITECT: 1.25}
+
+
+def test_spend_well_under_the_caps_is_ok() -> None:
+    state = state_with_spend(product_owner=0.5)
+
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    assert assessment.level == BudgetLevel.OK
+
+
+def test_spend_just_under_the_warning_threshold_is_ok() -> None:
+    state = state_with_spend(
+        developer=9.0, architect=2.0, product_owner=1.0, qa=2.0, career_coach=1.99
+    )
+
+    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+
+    assert assessment.level == BudgetLevel.OK
+
+
+def test_reaching_eighty_percent_of_the_project_cap_warns() -> None:
+    state = state_with_spend(
+        developer=9.0, architect=2.0, product_owner=1.0, qa=2.0, career_coach=2.0
+    )
+
+    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+
+    assert assessment.level == BudgetLevel.WARNING
+    assert "$16.00" in assessment.detail
+    assert "$20.00" in assessment.detail
+
+
+def test_reaching_the_project_cap_is_exceeded() -> None:
+    state = state_with_spend(
+        developer=10.0, architect=2.5, product_owner=1.5, qa=2.5, career_coach=2.0
+    )
+    state = record_cost(state, Stage.DEVELOPER, 1.5)
+
+    assessment = assess_budget(state, make_config(), Stage.CAREER_COACH)
+
+    assert assessment.level == BudgetLevel.EXCEEDED
+    assert "project" in assessment.detail.lower()
+    assert "$20.00" in assessment.detail
+
+
+def test_reaching_a_stage_cap_is_exceeded_even_when_the_project_is_under_budget() -> None:
+    state = state_with_spend(product_owner=1.5)
+
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    assert assessment.level == BudgetLevel.EXCEEDED
+    assert "product_owner" in assessment.detail
+    assert "$1.50" in assessment.detail
+
+
+def test_one_stage_being_at_its_cap_does_not_block_another_stage() -> None:
+    state = state_with_spend(product_owner=1.5)
+
+    assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
+
+    assert assessment.level == BudgetLevel.OK
+
+
+def test_the_project_cap_is_reported_before_a_stage_cap() -> None:
+    state = state_with_spend(developer=20.0)
+
+    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+
+    assert assessment.level == BudgetLevel.EXCEEDED
+    assert "project" in assessment.detail.lower()
+
+
+def test_pausing_for_budget_waits_for_a_human_with_a_budget_cap_intervention() -> None:
+    state = state_with_spend(product_owner=1.5)
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    paused = pause_for_budget(state, assessment)
+
+    assert paused.status == Status.AWAITING_HUMAN
+    assert paused.intervention is not None
+    assert paused.intervention.kind == InterventionKind.BUDGET_CAP
+    assert paused.intervention.detail == assessment.detail
+
+
+def test_pausing_for_budget_keeps_the_rest_of_the_state() -> None:
+    state = state_with_spend(product_owner=1.5).evolve(stage=Stage.PRODUCT_OWNER)
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    paused = pause_for_budget(state, assessment)
+
+    assert paused.stage == Stage.PRODUCT_OWNER
+    assert paused.cost_usd == state.cost_usd
+
+
+def test_pausing_for_budget_when_nothing_is_wrong_is_an_error() -> None:
+    state = new_state()
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    with pytest.raises(ValueError, match="within budget"):
+        pause_for_budget(state, assessment)
+
+
+def test_a_stage_with_no_dollar_cap_is_limited_only_by_the_project_cap() -> None:
+    state = state_with_spend(product_owner=1.0)
+
+    assessment = assess_budget(state, make_config(), Stage.INTAKE)
+
+    assert assessment.level == BudgetLevel.OK
