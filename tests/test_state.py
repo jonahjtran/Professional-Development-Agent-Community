@@ -192,3 +192,14 @@ def test_evolve_returns_a_new_state_and_leaves_the_original_unchanged() -> None:
 def test_evolve_validates_the_changed_values() -> None:
     with pytest.raises(ValidationError):
         new_state().evolve(project_slug="../escape")
+
+
+def test_rejects_a_negative_stage_cost() -> None:
+    with pytest.raises(ValidationError):
+        new_state().evolve(cost_usd={Stage.QA: -0.5})
+
+
+def test_total_cost_is_the_sum_of_the_stage_costs() -> None:
+    state = new_state().evolve(cost_usd={Stage.PRODUCT_OWNER: 0.75, Stage.ARCHITECT: 1.25})
+
+    assert state.total_cost_usd == pytest.approx(2.0)

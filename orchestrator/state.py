@@ -55,6 +55,7 @@ class ProjectState(BaseModel):
     current_task_id: str | None = None
     revisions: dict[Stage, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
     intervention: Intervention | None = None
+    cost_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -67,6 +68,10 @@ class ProjectState(BaseModel):
         if not waiting and self.intervention is not None:
             raise ValueError("only awaiting_human may carry an intervention")
         return self
+
+    @property
+    def total_cost_usd(self) -> float:
+        return sum(self.cost_usd.values())
 
     def evolve(self, **changes: Any) -> Self:
         """Return a copy with `changes` applied, fully re-validated."""

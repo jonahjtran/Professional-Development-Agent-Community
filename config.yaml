@@ -9,13 +9,13 @@ budget:
   project_cap_usd: 20.0
   # Halt and ask the human once spend reaches this fraction of the cap.
   warn_at_fraction: 0.8
-  # Placeholder caps; tune against measured cost after Phase 7.
-  # developer and qa are per task; the rest are per stage.
+  # Placeholder caps for each stage as a whole (all tasks summed); tune against
+  # measured cost after Phase 7. The project cap above is what limits total spend.
   stage_caps_usd:
     product_owner: 1.5
     architect: 2.5
-    developer: 2.0
-    qa: 0.5
+    developer: 10.0
+    qa: 2.5
     career_coach: 2.0
 
 limits:
