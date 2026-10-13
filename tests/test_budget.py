@@ -69,22 +69,18 @@ def test_spend_well_under_the_caps_is_ok() -> None:
     assert assessment.level == BudgetLevel.OK
 
 
-def test_spend_just_under_the_warning_threshold_is_ok() -> None:
-    state = state_with_spend(
-        developer=9.0, architect=2.0, product_owner=1.0, qa=2.0, career_coach=1.99
-    )
+def test_project_spend_just_under_the_warning_threshold_is_ok() -> None:
+    state = state_with_spend(developer=15.99)
 
-    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+    assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
 
     assert assessment.level == BudgetLevel.OK
 
 
 def test_reaching_eighty_percent_of_the_project_cap_warns() -> None:
-    state = state_with_spend(
-        developer=9.0, architect=2.0, product_owner=1.0, qa=2.0, career_coach=2.0
-    )
+    state = state_with_spend(developer=16.0)
 
-    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+    assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
 
     assert assessment.level == BudgetLevel.WARNING
     assert "$16.00" in assessment.detail
@@ -171,7 +167,7 @@ def test_a_stage_with_no_dollar_cap_is_limited_only_by_the_project_cap() -> None
 
 def test_extra_project_dollars_raise_the_project_cap() -> None:
     state = state_with_spend(developer=20.0)  # exactly the $20.00 project cap
-    state = state.evolve(allowances=Allowances(extra_project_usd=5.0, warning_acknowledged=True))
+    state = state.evolve(allowances=Allowances(extra_project_usd=20.0))  # cap is now $40.00
 
     assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
 
@@ -180,7 +176,7 @@ def test_extra_project_dollars_raise_the_project_cap() -> None:
 
 def test_the_raised_project_cap_is_the_one_reported_when_it_is_reached() -> None:
     state = state_with_spend(developer=26.0)
-    state = state.evolve(allowances=Allowances(extra_project_usd=5.0, warning_acknowledged=True))
+    state = state.evolve(allowances=Allowances(extra_project_usd=5.0))
 
     assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
 
@@ -207,12 +203,87 @@ def test_the_raised_stage_cap_is_the_one_reported_when_it_is_reached() -> None:
     assert "$2.50 stage cap" in assessment.detail
 
 
-def test_an_acknowledged_warning_is_not_raised_again() -> None:
-    state = state_with_spend(
-        developer=9.0, architect=2.0, product_owner=1.0, qa=2.0, career_coach=2.0
-    )
-    state = state.evolve(allowances=Allowances(warning_acknowledged=True))
+def test_reaching_eighty_percent_of_a_stage_cap_warns() -> None:
+    state = state_with_spend(product_owner=1.2)  # 80% of the $1.50 stage cap
 
-    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    assert assessment.level == BudgetLevel.WARNING
+    assert "product_owner" in assessment.detail
+    assert "$1.50" in assessment.detail
+
+
+def test_stage_spend_just_under_eighty_percent_is_ok() -> None:
+    state = state_with_spend(product_owner=1.19)
+
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
 
     assert assessment.level == BudgetLevel.OK
+
+
+def test_a_stage_warning_applies_only_to_that_stage() -> None:
+    state = state_with_spend(product_owner=1.2)
+
+    assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
+
+    assert assessment.level == BudgetLevel.OK
+
+
+def test_the_stage_warning_uses_the_raised_stage_cap() -> None:
+    allowances = Allowances(extra_stage_usd={Stage.PRODUCT_OWNER: 1.0})  # cap is now $2.50
+    config = make_config()
+
+    below = state_with_spend(product_owner=1.9).evolve(allowances=allowances)
+    at_eighty = state_with_spend(product_owner=2.0).evolve(allowances=allowances)
+
+    assert assess_budget(below, config, Stage.PRODUCT_OWNER).level == BudgetLevel.OK
+    assert assess_budget(at_eighty, config, Stage.PRODUCT_OWNER).level == BudgetLevel.WARNING
+
+
+def test_the_project_warning_uses_the_raised_project_cap() -> None:
+    state = state_with_spend(developer=20.0).evolve(allowances=Allowances(extra_project_usd=5.0))
+
+    assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
+
+    assert assessment.level == BudgetLevel.WARNING
+    assert "$25.00" in assessment.detail
+
+
+def test_project_and_stage_warnings_are_both_reported() -> None:
+    state = state_with_spend(developer=14.0, qa=2.0)  # project $16.00 of $20.00; qa $2.00 of $2.50
+
+    assessment = assess_budget(state, make_config(), Stage.QA)
+
+    assert assessment.level == BudgetLevel.WARNING
+    assert "Project spend" in assessment.detail
+    assert "qa spend" in assessment.detail
+
+
+def test_exceeding_a_cap_takes_priority_over_a_warning() -> None:
+    state = state_with_spend(product_owner=1.5, developer=16.0)
+
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    assert assessment.level == BudgetLevel.EXCEEDED
+
+
+def test_the_warning_is_raised_on_every_check_not_only_the_first() -> None:
+    state = state_with_spend(developer=16.0)
+    config = make_config()
+
+    first = assess_budget(state, config, Stage.ARCHITECT)
+    second = assess_budget(state, config, Stage.ARCHITECT)
+
+    assert first.level == second.level == BudgetLevel.WARNING
+
+
+def test_going_back_to_an_earlier_stage_warns_again() -> None:
+    config = make_config()
+    state = state_with_spend(developer=8.5)  # 85% of the developer stage cap
+    assert assess_budget(state, config, Stage.DEVELOPER).level == BudgetLevel.WARNING
+
+    state = record_cost(state, Stage.QA, 0.5)  # the work moves on to QA...
+    assert assess_budget(state, config, Stage.QA).level == BudgetLevel.OK
+
+    # ...and then loops back to the Developer, which must warn again.
+    assert assess_budget(state, config, Stage.DEVELOPER).level == BudgetLevel.WARNING

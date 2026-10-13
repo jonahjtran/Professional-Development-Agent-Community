@@ -212,7 +212,6 @@ def test_a_new_project_has_no_extra_allowances() -> None:
     assert allowances.extra_project_usd == 0.0
     assert allowances.extra_stage_usd == {}
     assert allowances.extra_revisions == {}
-    assert allowances.warning_acknowledged is False
 
 
 @pytest.mark.parametrize(
@@ -234,7 +233,6 @@ def test_allowances_survive_save_and_load(tmp_path: Path) -> None:
             extra_project_usd=5.0,
             extra_stage_usd={Stage.ARCHITECT: 1.0},
             extra_revisions={Stage.PRODUCT_OWNER: 2},
-            warning_acknowledged=True,
         )
     )
 

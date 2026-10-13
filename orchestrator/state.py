@@ -72,7 +72,6 @@ class Allowances(BaseModel):
     extra_project_usd: Annotated[float, Field(ge=0)] = 0.0
     extra_stage_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
     extra_revisions: dict[Stage, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
-    warning_acknowledged: bool = False
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
