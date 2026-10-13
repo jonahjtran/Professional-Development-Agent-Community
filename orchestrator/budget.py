@@ -32,34 +32,40 @@ def assess_budget(state: ProjectState, config: Config, stage: Stage) -> BudgetAs
 
     Reaching a cap counts as exceeded, so the run stops before the next call.
     The project cap is checked first, then the stage's own cap, then the warning threshold.
+    Caps are the config values plus any extra room the human granted (state.allowances).
     """
     budget = config.budget
+    allowances = state.allowances
+    project_cap = budget.project_cap_usd + allowances.extra_project_usd
     project_spent = state.total_cost_usd
 
-    if project_spent >= budget.project_cap_usd:
+    if project_spent >= project_cap:
         return BudgetAssessment(
             level=BudgetLevel.EXCEEDED,
             detail=(
-                f"Project spend ${project_spent:.2f} reached the "
-                f"${budget.project_cap_usd:.2f} project cap"
+                f"Project spend ${project_spent:.2f} reached the ${project_cap:.2f} project cap"
             ),
         )
 
     stage_spent = state.cost_usd.get(stage, 0.0)
-    stage_cap = getattr(budget.stage_caps_usd, stage.value, None)
-    if stage_cap is not None and stage_spent >= stage_cap:
-        return BudgetAssessment(
-            level=BudgetLevel.EXCEEDED,
-            detail=f"{stage.value} spend ${stage_spent:.2f} reached its ${stage_cap:.2f} stage cap",
-        )
+    base_stage_cap = getattr(budget.stage_caps_usd, stage.value, None)
+    if base_stage_cap is not None:
+        stage_cap = base_stage_cap + allowances.extra_stage_usd.get(stage, 0.0)
+        if stage_spent >= stage_cap:
+            return BudgetAssessment(
+                level=BudgetLevel.EXCEEDED,
+                detail=(
+                    f"{stage.value} spend ${stage_spent:.2f} reached its ${stage_cap:.2f} stage cap"
+                ),
+            )
 
-    warn_at = budget.project_cap_usd * budget.warn_at_fraction
-    if project_spent >= warn_at:
+    warn_at = project_cap * budget.warn_at_fraction
+    if project_spent >= warn_at and not allowances.warning_acknowledged:
         return BudgetAssessment(
             level=BudgetLevel.WARNING,
             detail=(
                 f"Project spend ${project_spent:.2f} is at {budget.warn_at_fraction:.0%} of the "
-                f"${budget.project_cap_usd:.2f} project cap"
+                f"${project_cap:.2f} project cap"
             ),
         )
 

@@ -13,6 +13,7 @@ from orchestrator.gates import (
     run_gate,
 )
 from orchestrator.state import (
+    Allowances,
     InterventionKind,
     ProjectState,
     Stage,
@@ -283,3 +284,46 @@ def test_run_gate_reports_the_waiting_state_before_asking_the_human() -> None:
     )
 
     assert len(backend.requests) == 1
+
+
+# --- extra revisions granted by the human -------------------------------------------------
+
+
+def test_extra_revisions_let_a_stage_go_past_the_configured_cap() -> None:
+    state = waiting_at(
+        Stage.PRODUCT_OWNER,
+        revisions={Stage.PRODUCT_OWNER: 3},
+        allowances=Allowances(extra_revisions={Stage.PRODUCT_OWNER: 2}),
+    )
+
+    state = apply_decision(state, make_config(), request_changes(), now=NOW)
+
+    assert state.status == Status.RUNNING
+    assert state.revisions[Stage.PRODUCT_OWNER] == 4
+
+
+def test_the_raised_revision_cap_still_applies_once_it_is_used_up() -> None:
+    state = waiting_at(
+        Stage.PRODUCT_OWNER,
+        revisions={Stage.PRODUCT_OWNER: 5},
+        allowances=Allowances(extra_revisions={Stage.PRODUCT_OWNER: 2}),
+    )
+
+    state = apply_decision(state, make_config(), request_changes(), now=NOW)
+
+    assert state.intervention is not None
+    assert state.intervention.kind == InterventionKind.REVISION_CAP
+    assert "5 revisions" in state.intervention.detail
+
+
+def test_extra_revisions_for_one_stage_do_not_help_another() -> None:
+    state = waiting_at(
+        Stage.ARCHITECT,
+        revisions={Stage.ARCHITECT: 3},
+        allowances=Allowances(extra_revisions={Stage.PRODUCT_OWNER: 2}),
+    )
+
+    state = apply_decision(state, make_config(), request_changes(), now=NOW)
+
+    assert state.intervention is not None
+    assert state.intervention.kind == InterventionKind.REVISION_CAP

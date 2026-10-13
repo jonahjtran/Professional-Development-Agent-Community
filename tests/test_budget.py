@@ -4,6 +4,7 @@ import pytest
 
 from orchestrator.budget import BudgetLevel, assess_budget, pause_for_budget, record_cost
 from orchestrator.state import (
+    Allowances,
     InterventionKind,
     ProjectState,
     Stage,
@@ -164,5 +165,54 @@ def test_a_stage_with_no_dollar_cap_is_limited_only_by_the_project_cap() -> None
     state = state_with_spend(product_owner=1.0)
 
     assessment = assess_budget(state, make_config(), Stage.INTAKE)
+
+    assert assessment.level == BudgetLevel.OK
+
+
+def test_extra_project_dollars_raise_the_project_cap() -> None:
+    state = state_with_spend(developer=20.0)  # exactly the $20.00 project cap
+    state = state.evolve(allowances=Allowances(extra_project_usd=5.0, warning_acknowledged=True))
+
+    assessment = assess_budget(state, make_config(), Stage.ARCHITECT)
+
+    assert assessment.level == BudgetLevel.OK
+
+
+def test_the_raised_project_cap_is_the_one_reported_when_it_is_reached() -> None:
+    state = state_with_spend(developer=26.0)
+    state = state.evolve(allowances=Allowances(extra_project_usd=5.0, warning_acknowledged=True))
+
+    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
+
+    assert assessment.level == BudgetLevel.EXCEEDED
+    assert "$25.00 project cap" in assessment.detail
+
+
+def test_extra_dollars_for_a_stage_raise_only_that_stage_cap() -> None:
+    state = state_with_spend(product_owner=1.5, architect=2.5)
+    state = state.evolve(allowances=Allowances(extra_stage_usd={Stage.PRODUCT_OWNER: 1.0}))
+    config = make_config()
+
+    assert assess_budget(state, config, Stage.PRODUCT_OWNER).level == BudgetLevel.OK
+    assert assess_budget(state, config, Stage.ARCHITECT).level == BudgetLevel.EXCEEDED
+
+
+def test_the_raised_stage_cap_is_the_one_reported_when_it_is_reached() -> None:
+    state = state_with_spend(product_owner=3.0)
+    state = state.evolve(allowances=Allowances(extra_stage_usd={Stage.PRODUCT_OWNER: 1.0}))
+
+    assessment = assess_budget(state, make_config(), Stage.PRODUCT_OWNER)
+
+    assert assessment.level == BudgetLevel.EXCEEDED
+    assert "$2.50 stage cap" in assessment.detail
+
+
+def test_an_acknowledged_warning_is_not_raised_again() -> None:
+    state = state_with_spend(
+        developer=9.0, architect=2.0, product_owner=1.0, qa=2.0, career_coach=2.0
+    )
+    state = state.evolve(allowances=Allowances(warning_acknowledged=True))
+
+    assessment = assess_budget(state, make_config(), Stage.DEVELOPER)
 
     assert assessment.level == BudgetLevel.OK
