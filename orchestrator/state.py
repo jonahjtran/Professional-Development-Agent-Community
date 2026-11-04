@@ -89,6 +89,7 @@ class ProjectState(BaseModel):
     cost_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
     gate_history: list[GateRecord] = Field(default_factory=list)
     allowances: Allowances = Field(default_factory=Allowances)
+    qa_loops: Annotated[int, Field(ge=0)] = 0  # times QA has sent the work back to the Developer
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)
