@@ -6,7 +6,7 @@ again, belong to the pipeline.
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -18,10 +18,22 @@ from orchestrator.state import (
     GateRecord,
     InterventionKind,
     ProjectState,
+    Stage,
     Status,
 )
 
-__all__ = ["CapAction", "CapResolution", "resolve_cap"]
+__all__ = [
+    "CapAction",
+    "CapBackend",
+    "CapRequest",
+    "CapResolution",
+    "cap_request",
+    "resolve_cap",
+    "run_cap_pause",
+]
+
+
+_CAP_KINDS = (InterventionKind.REVISION_CAP, InterventionKind.BUDGET_CAP)
 
 
 class CapAction(StrEnum):
@@ -48,6 +60,54 @@ class CapResolution(BaseModel):
         return self
 
 
+class CapRequest(BaseModel):
+    """What the human is shown at a cap pause."""
+
+    kind: InterventionKind
+    stage: Stage
+    detail: str
+    can_approve_anyway: bool
+    unit: Literal["usd", "revisions"]
+
+    model_config = ConfigDict(frozen=True)
+
+
+class CapBackend(Protocol):
+    """Where the answer to a cap pause comes from: a terminal prompt now, Slack or web later."""
+
+    def resolve(self, request: CapRequest) -> CapResolution: ...
+
+
+def cap_request(state: ProjectState, config: Config) -> CapRequest:
+    """Describe the open cap pause: why it stopped and which answers are allowed."""
+    if state.intervention is None or state.intervention.kind not in _CAP_KINDS:
+        raise ValueError("no open cap pause to resolve")
+    kind = state.intervention.kind
+    if kind == InterventionKind.REVISION_CAP:
+        can_approve = True
+    else:
+        can_approve = assess_budget(state, config, state.stage).level != BudgetLevel.EXCEEDED
+    return CapRequest(
+        kind=kind,
+        stage=state.stage,
+        detail=state.intervention.detail,
+        can_approve_anyway=can_approve,
+        unit="revisions" if kind == InterventionKind.REVISION_CAP else "usd",
+    )
+
+
+def run_cap_pause(
+    state: ProjectState,
+    config: Config,
+    backend: CapBackend,
+    *,
+    now: datetime | None = None,
+) -> ProjectState:
+    """Ask the human about the open cap pause and apply the answer."""
+    resolution = backend.resolve(cap_request(state, config))
+    return resolve_cap(state, config, resolution, now=now)
+
+
 def resolve_cap(
     state: ProjectState,
     config: Config,
@@ -62,9 +122,9 @@ def resolve_cap(
     the raise was too small. Continuing at a budget *warning* sets no flag either, because
     warnings are recomputed on every check.
     """
-    kind = state.intervention.kind if state.intervention else None
-    if kind not in (InterventionKind.REVISION_CAP, InterventionKind.BUDGET_CAP):
+    if state.intervention is None or state.intervention.kind not in _CAP_KINDS:
         raise ValueError("no open cap pause to resolve")
+    kind = state.intervention.kind
 
     if resolution.action == CapAction.ABANDON:
         history = state.gate_history

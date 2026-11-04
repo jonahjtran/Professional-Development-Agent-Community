@@ -239,3 +239,12 @@ def test_allowances_survive_save_and_load(tmp_path: Path) -> None:
     save_state(tmp_path, state)
 
     assert load_state(tmp_path, "demo") == state
+
+
+def test_qa_loops_starts_at_zero_and_survives_save_and_load(tmp_path: Path) -> None:
+    state = ProjectState(project_slug="demo", idea="x")
+    assert state.qa_loops == 0
+
+    save_state(tmp_path, state.evolve(qa_loops=2))
+
+    assert load_state(tmp_path, "demo").qa_loops == 2
