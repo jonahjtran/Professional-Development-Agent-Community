@@ -1,4 +1,5 @@
 import re
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -8,9 +9,11 @@ from pydantic import ValidationError
 from orchestrator import __version__
 from orchestrator.cli_cap import CliCapBackend
 from orchestrator.cli_gate import CliGateBackend
-from orchestrator.config import load_config
+from orchestrator.config import Config, load_config
+from orchestrator.default_specs import default_specs
 from orchestrator.echo_agent import EchoAgent
-from orchestrator.pipeline import PipelineContext, run_pipeline
+from orchestrator.pipeline import AgentRunner, PipelineContext, run_pipeline
+from orchestrator.runner import SdkRunner
 from orchestrator.state import ProjectState, Status, load_state, state_path
 
 app = typer.Typer(
@@ -19,6 +22,13 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+class AgentKind(StrEnum):
+    ECHO = "echo"  # the free dummy agent, for trying the flow
+    CLAUDE = "claude"  # real Claude calls through the Agent SDK (costs money)
+
+
+AgentOption = Annotated[AgentKind, typer.Option("--agent", help="Which agent runs the stages.")]
 ConfigOption = Annotated[Path, typer.Option("--config", help="Path to config.yaml.")]
 RunsDirOption = Annotated[Path, typer.Option("--runs-dir", help="Where projects are stored.")]
 
@@ -55,7 +65,13 @@ def _fail(message: str) -> typer.Exit:
     return typer.Exit(1)
 
 
-def _context(config_path: Path, runs_dir: Path) -> PipelineContext:
+def make_runner(kind: AgentKind, config: Config, runs_dir: Path) -> AgentRunner:
+    if kind == AgentKind.CLAUDE:
+        return SdkRunner(config, runs_dir, default_specs())
+    return EchoAgent()
+
+
+def _context(config_path: Path, runs_dir: Path, agent: AgentKind) -> PipelineContext:
     try:
         config = load_config(config_path)
     except FileNotFoundError:
@@ -65,7 +81,7 @@ def _context(config_path: Path, runs_dir: Path) -> PipelineContext:
     return PipelineContext(
         config=config,
         runs_dir=runs_dir,
-        runner=EchoAgent(),
+        runner=make_runner(agent, config, runs_dir),
         gates=CliGateBackend(),
         caps=CliCapBackend(),
     )
@@ -85,6 +101,7 @@ def run(
     slug: Annotated[str | None, typer.Option(help="Project name (default: from the idea).")] = None,
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
+    agent: AgentOption = AgentKind.ECHO,
 ) -> None:
     """Start a new project and run it until it is done or halted."""
     try:
@@ -96,7 +113,7 @@ def run(
             f"Project {project.project_slug} already exists. "
             f"Continue it with: studio resume {project.project_slug}"
         )
-    ctx = _context(config, runs_dir)
+    ctx = _context(config, runs_dir, agent)
     _finish(run_pipeline(project, ctx))
 
 
@@ -105,6 +122,7 @@ def resume(
     project: Annotated[str, typer.Argument(help="Project name.")],
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
+    agent: AgentOption = AgentKind.ECHO,
 ) -> None:
     """Continue a project from its last saved step, after a crash or Ctrl-C."""
     try:
@@ -114,4 +132,4 @@ def resume(
     if state.status in (Status.DONE, Status.HALTED):
         typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
         return
-    _finish(run_pipeline(state, _context(config, runs_dir)))
+    _finish(run_pipeline(state, _context(config, runs_dir, agent)))

@@ -163,3 +163,28 @@ def test_resume_of_a_finished_project_says_there_is_nothing_to_do(tmp_path: Path
 
     assert result.exit_code == 0
     assert "nothing" in result.output.lower()
+
+
+# --- choosing the agent ----------------------------------------------------------------------
+
+
+def test_run_accepts_the_echo_agent_option(tmp_path: Path) -> None:
+    result = invoke(
+        tmp_path, "run", "Track events", "--slug", "demo", "--agent", "echo", input=FOUR_APPROVALS
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_run_rejects_an_unknown_agent(tmp_path: Path) -> None:
+    result = invoke(tmp_path, "run", "Track events", "--agent", "gpt")
+
+    assert result.exit_code != 0
+
+
+def test_resume_accepts_the_agent_option(tmp_path: Path) -> None:
+    invoke(tmp_path, "run", "Track events", "--slug", "demo", input="approve\n\n")
+
+    result = invoke(tmp_path, "resume", "demo", "--agent", "echo", input="approve\n\n" * 3)
+
+    assert result.exit_code == 0, result.output
