@@ -15,7 +15,13 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from orchestrator.budget import BudgetLevel, assess_budget, pause_for_budget, record_cost
+from orchestrator.budget import (
+    BudgetLevel,
+    assess_budget,
+    pause_for_budget,
+    record_cost,
+    write_cost_report,
+)
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
 from orchestrator.config import Config
 from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
@@ -283,6 +289,7 @@ def _move(state: ProjectState, ctx: PipelineContext, to: Stage) -> ProjectState:
 
 def _save(state: ProjectState, ctx: PipelineContext) -> None:
     save_state(ctx.runs_dir, state)
+    write_cost_report(ctx.runs_dir, state)
 
 
 def _trace(ctx: PipelineContext, state: ProjectState, event: EventType, **fields: object) -> None:

@@ -1,9 +1,18 @@
+import json
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from orchestrator.config import Config
-from orchestrator.state import Intervention, InterventionKind, ProjectState, Stage, Status
+from orchestrator.state import (
+    Intervention,
+    InterventionKind,
+    ProjectState,
+    Stage,
+    Status,
+    atomic_write,
+)
 
 
 class BudgetLevel(StrEnum):
@@ -113,3 +122,16 @@ def pause_for_budget(state: ProjectState, assessment: BudgetAssessment) -> Proje
         status=Status.AWAITING_HUMAN,
         intervention=Intervention(kind=InterventionKind.BUDGET_CAP, detail=assessment.detail),
     )
+
+
+def cost_report_path(runs_dir: Path, slug: str) -> Path:
+    return runs_dir / slug / "cost.json"
+
+
+def write_cost_report(runs_dir: Path, state: ProjectState) -> None:
+    """Write cost.json: dollars per stage and the project total."""
+    report = {
+        "stages": {stage.value: usd for stage, usd in state.cost_usd.items()},
+        "total_usd": state.total_cost_usd,
+    }
+    atomic_write(cost_report_path(runs_dir, state.project_slug), json.dumps(report, indent=2))

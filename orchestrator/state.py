@@ -116,17 +116,16 @@ def state_path(runs_dir: Path, slug: str) -> Path:
     return runs_dir / slug / "state.json"
 
 
-def save_state(runs_dir: Path, state: ProjectState) -> None:
-    """Write state.json atomically: write a temp file, then rename it into place.
+def atomic_write(path: Path, text: str) -> None:
+    """Write `text` to `path` atomically: write a temp file, then rename it into place.
 
-    A crash mid-write leaves the previous state.json untouched.
+    A crash mid-write leaves the previous file untouched.
     """
-    path = state_path(runs_dir, state.project_slug)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".state-", suffix=".tmp")
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".part")
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(state.model_dump_json(indent=2))
+            f.write(text)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, path)
@@ -134,6 +133,11 @@ def save_state(runs_dir: Path, state: ProjectState) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_name)
         raise
+
+
+def save_state(runs_dir: Path, state: ProjectState) -> None:
+    """Write state.json atomically."""
+    atomic_write(state_path(runs_dir, state.project_slug), state.model_dump_json(indent=2))
 
 
 def load_state(runs_dir: Path, slug: str) -> ProjectState:
