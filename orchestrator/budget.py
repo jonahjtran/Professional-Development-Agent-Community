@@ -12,9 +12,17 @@ class BudgetLevel(StrEnum):
     EXCEEDED = "exceeded"
 
 
+class BudgetScope(StrEnum):
+    """Which limit an assessment is about: the whole project or the stage about to run."""
+
+    PROJECT = "project"
+    STAGE = "stage"
+
+
 class BudgetAssessment(BaseModel):
     level: BudgetLevel
     detail: str
+    scope: BudgetScope | None = None  # None when within budget
 
     model_config = ConfigDict(frozen=True)
 
@@ -53,6 +61,7 @@ def assess_budget(state: ProjectState, config: Config, stage: Stage) -> BudgetAs
     if _reached(project_spent, project_cap):
         return BudgetAssessment(
             level=BudgetLevel.EXCEEDED,
+            scope=BudgetScope.PROJECT,
             detail=(
                 f"Project spend ${project_spent:.2f} reached the ${project_cap:.2f} project cap"
             ),
@@ -68,13 +77,15 @@ def assess_budget(state: ProjectState, config: Config, stage: Stage) -> BudgetAs
     if stage_cap is not None and _reached(stage_spent, stage_cap):
         return BudgetAssessment(
             level=BudgetLevel.EXCEEDED,
+            scope=BudgetScope.STAGE,
             detail=f"{stage.value} spend ${stage_spent:.2f} reached its ${stage_cap:.2f} stage cap",
         )
 
     # Warnings are recomputed from current spend on every check, never remembered. The pipeline
     # can loop back to an earlier stage, and the human should be told each time.
     warnings: list[str] = []
-    if _reached(project_spent, project_cap * budget.warn_at_fraction):
+    project_warned = _reached(project_spent, project_cap * budget.warn_at_fraction)
+    if project_warned:
         warnings.append(
             f"Project spend ${project_spent:.2f} is at {budget.warn_at_fraction:.0%} of the "
             f"${project_cap:.2f} project cap"
@@ -85,7 +96,11 @@ def assess_budget(state: ProjectState, config: Config, stage: Stage) -> BudgetAs
             f"${stage_cap:.2f} stage cap"
         )
     if warnings:
-        return BudgetAssessment(level=BudgetLevel.WARNING, detail="; ".join(warnings))
+        return BudgetAssessment(
+            level=BudgetLevel.WARNING,
+            scope=BudgetScope.PROJECT if project_warned else BudgetScope.STAGE,
+            detail="; ".join(warnings),
+        )
 
     return BudgetAssessment(level=BudgetLevel.OK, detail="Within budget")
 
