@@ -19,6 +19,16 @@ class BudgetAssessment(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+def _reached(spent: float, threshold: float) -> bool:
+    """True once `spent` has reached `threshold`.
+
+    Thresholds like 80% of $1.50 come out as 1.2000000000000002 in floating point, so a plain
+    `>=` would miss spend that is exactly on the line. A billionth of a dollar is far below any
+    real cost, so it is safe slack.
+    """
+    return spent >= threshold - 1e-9
+
+
 def record_cost(state: ProjectState, stage: Stage, usd: float) -> ProjectState:
     """Return a new state with `usd` added to `stage`'s spend."""
     if usd < 0:
@@ -32,36 +42,50 @@ def assess_budget(state: ProjectState, config: Config, stage: Stage) -> BudgetAs
 
     Reaching a cap counts as exceeded, so the run stops before the next call.
     The project cap is checked first, then the stage's own cap, then the warning threshold.
+    Caps are the config values plus any extra room the human granted (state.allowances).
+    The warning applies to the project total and to the stage about to run.
     """
     budget = config.budget
+    allowances = state.allowances
+    project_cap = budget.project_cap_usd + allowances.extra_project_usd
     project_spent = state.total_cost_usd
 
-    if project_spent >= budget.project_cap_usd:
+    if _reached(project_spent, project_cap):
         return BudgetAssessment(
             level=BudgetLevel.EXCEEDED,
             detail=(
-                f"Project spend ${project_spent:.2f} reached the "
-                f"${budget.project_cap_usd:.2f} project cap"
+                f"Project spend ${project_spent:.2f} reached the ${project_cap:.2f} project cap"
             ),
         )
 
     stage_spent = state.cost_usd.get(stage, 0.0)
-    stage_cap = getattr(budget.stage_caps_usd, stage.value, None)
-    if stage_cap is not None and stage_spent >= stage_cap:
+    base_stage_cap = getattr(budget.stage_caps_usd, stage.value, None)
+    stage_cap = (
+        None
+        if base_stage_cap is None
+        else base_stage_cap + allowances.extra_stage_usd.get(stage, 0.0)
+    )
+    if stage_cap is not None and _reached(stage_spent, stage_cap):
         return BudgetAssessment(
             level=BudgetLevel.EXCEEDED,
             detail=f"{stage.value} spend ${stage_spent:.2f} reached its ${stage_cap:.2f} stage cap",
         )
 
-    warn_at = budget.project_cap_usd * budget.warn_at_fraction
-    if project_spent >= warn_at:
-        return BudgetAssessment(
-            level=BudgetLevel.WARNING,
-            detail=(
-                f"Project spend ${project_spent:.2f} is at {budget.warn_at_fraction:.0%} of the "
-                f"${budget.project_cap_usd:.2f} project cap"
-            ),
+    # Warnings are recomputed from current spend on every check, never remembered. The pipeline
+    # can loop back to an earlier stage, and the human should be told each time.
+    warnings: list[str] = []
+    if _reached(project_spent, project_cap * budget.warn_at_fraction):
+        warnings.append(
+            f"Project spend ${project_spent:.2f} is at {budget.warn_at_fraction:.0%} of the "
+            f"${project_cap:.2f} project cap"
         )
+    if stage_cap is not None and _reached(stage_spent, stage_cap * budget.warn_at_fraction):
+        warnings.append(
+            f"{stage.value} spend ${stage_spent:.2f} is at {budget.warn_at_fraction:.0%} of its "
+            f"${stage_cap:.2f} stage cap"
+        )
+    if warnings:
+        return BudgetAssessment(level=BudgetLevel.WARNING, detail="; ".join(warnings))
 
     return BudgetAssessment(level=BudgetLevel.OK, detail="Within budget")
 

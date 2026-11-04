@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.state import (
+    Allowances,
     Intervention,
     InterventionKind,
     ProjectState,
@@ -203,3 +204,38 @@ def test_total_cost_is_the_sum_of_the_stage_costs() -> None:
     state = new_state().evolve(cost_usd={Stage.PRODUCT_OWNER: 0.75, Stage.ARCHITECT: 1.25})
 
     assert state.total_cost_usd == pytest.approx(2.0)
+
+
+def test_a_new_project_has_no_extra_allowances() -> None:
+    allowances = new_state().allowances
+
+    assert allowances.extra_project_usd == 0.0
+    assert allowances.extra_stage_usd == {}
+    assert allowances.extra_revisions == {}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"extra_project_usd": -1.0},
+        {"extra_stage_usd": {Stage.QA: -0.5}},
+        {"extra_revisions": {Stage.QA: -1}},
+    ],
+)
+def test_rejects_negative_allowances(bad: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        Allowances.model_validate(bad)
+
+
+def test_allowances_survive_save_and_load(tmp_path: Path) -> None:
+    state = new_state().evolve(
+        allowances=Allowances(
+            extra_project_usd=5.0,
+            extra_stage_usd={Stage.ARCHITECT: 1.0},
+            extra_revisions={Stage.PRODUCT_OWNER: 2},
+        )
+    )
+
+    save_state(tmp_path, state)
+
+    assert load_state(tmp_path, "demo") == state

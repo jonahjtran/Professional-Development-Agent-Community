@@ -100,7 +100,9 @@ def apply_decision(
 
     if decision.outcome == GateOutcome.REQUEST_CHANGES:
         used = state.revisions.get(state.stage, 0)
-        max_revisions = config.limits.max_revisions
+        max_revisions = config.limits.max_revisions + state.allowances.extra_revisions.get(
+            state.stage, 0
+        )
         if used >= max_revisions:
             return state.evolve(
                 gate_history=history,

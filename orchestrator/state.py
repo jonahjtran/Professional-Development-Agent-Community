@@ -63,6 +63,19 @@ class GateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class Allowances(BaseModel):
+    """Extra room the human has granted, added on top of the limits in config.yaml.
+
+    Kept in the state, not the config, so a decision to raise a cap is saved with the project.
+    """
+
+    extra_project_usd: Annotated[float, Field(ge=0)] = 0.0
+    extra_stage_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
+    extra_revisions: dict[Stage, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class ProjectState(BaseModel):
     """Everything needed to resume a project after a crash or Ctrl-C."""
 
@@ -75,6 +88,7 @@ class ProjectState(BaseModel):
     intervention: Intervention | None = None
     cost_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
     gate_history: list[GateRecord] = Field(default_factory=list)
+    allowances: Allowances = Field(default_factory=Allowances)
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)
