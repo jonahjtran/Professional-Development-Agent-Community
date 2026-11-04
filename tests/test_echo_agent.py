@@ -8,7 +8,7 @@ from tests.factories import make_config, new_state
 
 
 def request(stage: Stage, comments: str | None = None) -> AgentRequest:
-    return AgentRequest(stage=stage, idea="Track events", comments=comments)
+    return AgentRequest(stage=stage, project="demo", idea="Track events", comments=comments)
 
 
 def test_the_echo_agent_echoes_the_stage_and_the_idea() -> None:

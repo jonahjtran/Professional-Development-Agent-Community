@@ -5,6 +5,7 @@ import pytest
 from orchestrator.caps import CapAction, CapRequest, CapResolution
 from orchestrator.gates import GateDecision, GateOutcome, GateRequest
 from orchestrator.pipeline import (
+    AgentError,
     AgentRequest,
     AgentResult,
     PipelineContext,
@@ -457,3 +458,46 @@ def test_the_run_is_traced_with_transitions_agent_calls_and_gates(tmp_path: Path
     assert events.count("agent_end") == 5
     assert events.count("gate") == 4
     assert events.count("transition") >= 5
+
+
+# --- agent failures and token counts ---------------------------------------------------------
+
+
+class FailingAgent(FakeAgent):
+    def run(self, request: AgentRequest) -> AgentResult:
+        raise AgentError("error_max_turns", cost_usd=0.7)
+
+
+def test_an_agent_failure_halts_the_project_and_keeps_the_cost(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path, FailingAgent())
+
+    state = run_pipeline(start(), ctx)
+
+    assert state.status == Status.HALTED
+    assert state.cost_usd[Stage.PRODUCT_OWNER] == pytest.approx(0.7)
+    assert load_state(tmp_path, "demo") == state
+
+
+def test_an_agent_failure_is_traced(tmp_path: Path) -> None:
+    import json
+
+    run_pipeline(start(), make_ctx(tmp_path, FailingAgent()))
+
+    lines = [json.loads(x) for x in trace_path(tmp_path, "demo").read_text().splitlines()]
+    end = next(e for e in lines if e["event"] == "agent_end")
+    assert "error_max_turns" in end["details"]["error"]
+    assert end["cost_usd"] == pytest.approx(0.7)
+
+
+def test_token_counts_reach_the_trace(tmp_path: Path) -> None:
+    import json
+
+    class Counting(FakeAgent):
+        def run(self, request: AgentRequest) -> AgentResult:
+            return AgentResult(output="x", cost_usd=0.1, tokens_in=11, tokens_out=7)
+
+    run_pipeline(start(), make_ctx(tmp_path, Counting()))
+
+    lines = [json.loads(x) for x in trace_path(tmp_path, "demo").read_text().splitlines()]
+    end = next(e for e in lines if e["event"] == "agent_end")
+    assert (end["tokens_in"], end["tokens_out"]) == (11, 7)

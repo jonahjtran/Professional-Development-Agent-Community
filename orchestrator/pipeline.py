@@ -36,6 +36,7 @@ from orchestrator.state import (
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 
 __all__ = [
+    "AgentError",
     "AgentRequest",
     "AgentResult",
     "AgentRunner",
@@ -59,6 +60,7 @@ class AgentRequest(BaseModel):
     """What an agent is asked to do. `comments` is feedback it must address."""
 
     stage: Stage
+    project: str
     idea: str
     previous_draft: str | None = None
     comments: str | None = None
@@ -75,8 +77,18 @@ class AgentResult(BaseModel):
     model: str = "dummy"
     prompt_version: str = "v0"
     passed: bool | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
 
     model_config = ConfigDict(frozen=True)
+
+
+class AgentError(Exception):
+    """An agent call failed. `cost_usd` is what the failed call still cost, so it can be billed."""
+
+    def __init__(self, message: str, *, cost_usd: float = 0.0) -> None:
+        super().__init__(message)
+        self.cost_usd = cost_usd
 
 
 class AgentRunner(Protocol):
@@ -134,7 +146,20 @@ def _run_stage(
     request = _build_request(state, ctx)
     _trace(ctx, state, EventType.AGENT_START, agent=stage.value)
     started = time.monotonic()
-    result = ctx.runner.run(request)
+    try:
+        result = ctx.runner.run(request)
+    except AgentError as error:
+        # An unrecoverable failure: bill what it cost, record it, and stop for good.
+        _trace(
+            ctx,
+            state,
+            EventType.AGENT_END,
+            agent=stage.value,
+            cost_usd=error.cost_usd,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            details={"error": str(error)},
+        )
+        return record_cost(state, stage, error.cost_usd).evolve(status=Status.HALTED)
     _trace(
         ctx,
         state,
@@ -142,6 +167,8 @@ def _run_stage(
         agent=stage.value,
         model=result.model,
         prompt_version=result.prompt_version,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
         cost_usd=result.cost_usd,
         latency_ms=int((time.monotonic() - started) * 1000),
     )
@@ -182,6 +209,7 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
             comments = last.comments or None
     return AgentRequest(
         stage=stage,
+        project=state.project_slug,
         idea=state.idea,
         previous_draft=previous,
         comments=comments,
