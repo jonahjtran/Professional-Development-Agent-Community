@@ -39,3 +39,28 @@ def test_the_claude_option_makes_the_sdk_runner(tmp_path: Path) -> None:
 def test_an_unknown_agent_option_is_rejected() -> None:
     with pytest.raises(ValueError):
         AgentKind("gpt")
+
+
+def test_the_api_option_makes_a_validating_api_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.api_runner import ValidatingRunner
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+
+    assert isinstance(make_runner(AgentKind.API, make_config(), tmp_path), ValidatingRunner)
+
+
+def test_the_api_product_owner_uses_web_search_the_strong_tier_and_the_prd_schema() -> None:
+    from orchestrator.default_specs import default_api_specs
+    from schemas import PRD
+
+    [spec] = default_api_specs()
+
+    assert (spec.stage, spec.tier, spec.web_search, spec.schema) == (
+        Stage.PRODUCT_OWNER,
+        "strong",
+        True,
+        PRD,
+    )
+    assert spec.prompt.version == "v1"

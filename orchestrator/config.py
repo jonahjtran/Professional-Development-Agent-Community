@@ -40,13 +40,33 @@ class Budget(_Strict):
 class Limits(_Strict):
     max_revisions: int = Field(ge=0)
     max_qa_loops: int = Field(ge=0)
+    max_web_searches: int = Field(ge=0)  # per agent call, for agents allowed to search the web
     max_turns: StageValues[Annotated[int, Field(ge=1)]]
+
+
+class TierPricing(_Strict):
+    """Dollars per million tokens for one model tier."""
+
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+    cache_read: float = Field(ge=0)
+    cache_write: float = Field(ge=0)
+
+
+class Pricing(_Strict):
+    strong: TierPricing
+    fast: TierPricing
+    web_search_usd_per_request: float = Field(ge=0)
+
+    def for_tier(self, tier: Tier) -> TierPricing:
+        return self.strong if tier == "strong" else self.fast
 
 
 class Config(_Strict):
     models: Models
     budget: Budget
     limits: Limits
+    pricing: Pricing
 
 
 def load_config(path: Path) -> Config:

@@ -21,9 +21,25 @@ budget:
 limits:
   max_revisions: 3 # per stage, then ask the human
   max_qa_loops: 2 # QA -> Developer round trips before the human gate
+  max_web_searches: 5 # per agent call, for agents allowed to search the web
   max_turns: # per agent run
     product_owner: 20
     architect: 20
     developer: 40
     qa: 20
     career_coach: 20
+
+pricing:
+  # Dollars per million tokens, by tier (Anthropic pricing page, checked 2026-11-04). The raw API
+  # reports token counts but not dollars, so the budget uses these. Re-check when models change.
+  strong: # claude-opus-5-5
+    input: 4.0
+    output: 20.0
+    cache_read: 0.2
+    cache_write: 5.0
+  fast: # claude-haiku-5-5, prompts up to 100K tokens
+    input: 0.1
+    output: 0.5
+    cache_read: 0.01
+    cache_write: 0.125
+  web_search_usd_per_request: 0.01 # $10 per 1,000 searches
