@@ -25,6 +25,7 @@ from orchestrator.halt import request_halt
 from orchestrator.inbox import (
     AnswerRejected,
     Pending,
+    PendingKind,
     all_pending,
     answer,
     answered,
@@ -235,6 +236,11 @@ def create_app(
                 raise
             return message(request, "This question was already answered.", f"/p/{slug}")
         summary = pending.request.get("summary")
+        workbench = (
+            data.career_workbench(runs_dir, view.state)
+            if pending.kind == PendingKind.GATE and pending.request.get("stage") == "career_coach"
+            else None
+        )
         return templates.TemplateResponse(
             request,
             "question.html",
@@ -243,6 +249,9 @@ def create_app(
                 "q": pending,
                 "summary_html": markdown_html(summary) if isinstance(summary, str) else "",
                 "refused": rejection_reason(runs_dir, slug, question_id),
+                "wb": workbench,
+                "readme_html": markdown_html(workbench.plan.readme_md) if workbench else "",
+                "case_html": markdown_html(workbench.plan.case_study_md) if workbench else "",
             },
         )
 

@@ -10,8 +10,10 @@ from pydantic import ValidationError
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.config import Config
 from orchestrator.inbox import all_pending, run_is_alive
+from orchestrator.latex import render_snippets
 from orchestrator.state import GateRecord, ProjectState, Stage, Status, load_state, state_path
 from orchestrator.trace import EventType, TraceEvent, trace_path
+from schemas import CareerPlan, EvidenceSet, ResumeChange
 
 STAGES = (Stage.PRODUCT_OWNER, Stage.ARCHITECT, Stage.DEVELOPER, Stage.QA, Stage.CAREER_COACH)
 LABELS = {
@@ -197,3 +199,54 @@ def read_trace(
 
 def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+@dataclass(frozen=True)
+class BulletView:
+    text: str
+    evidence: list[tuple[str, str, str]]  # id, type, what the evidence says
+
+
+@dataclass(frozen=True)
+class ResumeChangeView:
+    change: ResumeChange
+    bullets: list[BulletView]
+    latex: str  # paste-ready for the Overleaf resume
+
+
+@dataclass(frozen=True)
+class Workbench:
+    """The career plan laid out for a decision: each claim beside the evidence behind it."""
+
+    plan: CareerPlan
+    changes: list[ResumeChangeView]
+    website_evidence: list[tuple[str, str, str]]
+
+
+def career_workbench(runs_dir: Path, state: ProjectState) -> Workbench | None:
+    """The plan and its evidence for the career gate, or None if there is no plan to show."""
+    plan_record = state.artifacts.get("career_plan.json")
+    evidence_record = state.artifacts.get("evidence.json")
+    if plan_record is None or evidence_record is None:
+        return None
+    store = ArtifactStore(runs_dir, state.project_slug)
+    try:
+        plan = CareerPlan.model_validate_json(store.read(plan_record))
+        evidence = EvidenceSet.model_validate_json(store.read(evidence_record))
+    except (ValidationError, ValueError, OSError):
+        return None
+
+    def cited(ids: list[str]) -> list[tuple[str, str, str]]:
+        found = (evidence.get(i) for i in ids)
+        return [(e.id, e.type.value, e.description) for e in found if e is not None]
+
+    changes = [
+        ResumeChangeView(
+            change=c,
+            bullets=[BulletView(b.text, cited(b.evidence_ids)) for b in c.bullets],
+            latex=render_snippets([c]) if c.bullets else "",
+        )
+        for c in plan.resume_changes
+    ]
+    website = cited(plan.website_entry.evidence_ids) if plan.website_entry else []
+    return Workbench(plan=plan, changes=changes, website_evidence=website)

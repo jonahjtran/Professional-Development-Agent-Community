@@ -1,0 +1,48 @@
+<h2>Fit with your goals</h2>
+{% for f in wb.plan.fit %}
+<div class="card"><strong>{{ f.track.value|replace('_', ' ') }}</strong>
+  <span class="pill {{ 'done' if f.decision.value == 'include' else '' }}">{{ f.decision.value }}</span>
+  <div>{{ f.reason }}</div></div>
+{% endfor %}
+
+<h2>Resume</h2>
+{% for c in wb.changes %}
+<div class="card">
+  <strong>{{ c.change.action.value|upper }}: {{ c.change.entry }}</strong> <span class="muted">({{ c.change.section }})</span>
+  <div>{{ c.change.reason }}</div>
+  {% if c.change.replaces %}<div class="muted">Replaces: {{ c.change.replaces }}</div>{% endif %}
+  {% for b in c.bullets %}
+  <div style="margin:10px 0">
+    <div>• {{ b.text }}</div>
+    {% for e in b.evidence %}<div class="muted" style="margin-left:16px">↳ <code>{{ e[0] }}</code> ({{ e[1] }}): {{ e[2] }}</div>{% endfor %}
+  </div>
+  {% endfor %}
+  {% if c.latex %}
+  <details><summary>LaTeX for Overleaf</summary>
+    <pre class="latex">{{ c.latex }}</pre>
+    <button type="button" class="copy">Copy</button>
+  </details>
+  {% endif %}
+</div>
+{% else %}<p class="muted">No resume change is proposed.</p>{% endfor %}
+
+<h2>Website</h2>
+{% if wb.plan.website_entry %}
+{% set w = wb.plan.website_entry %}
+<div class="card">
+  <div class="muted">{{ wb.plan.website_reason }}</div>
+  <h3 style="margin:8px 0 0">{{ w.title }}</h3>
+  <div>{{ w.hook }}</div>
+  <div class="muted">{{ w.metric }}{% if w.scope %} · {{ w.scope }}{% endif %}</div>
+  <p><strong>Problem.</strong> {{ w.problem }}</p>
+  <p><strong>Approach.</strong> {{ w.approach }}</p>
+  <p><strong>Result.</strong> {{ w.result }}</p>
+  <div>{% for t in w.tags %}<span class="pill">{{ t }}</span> {% endfor %}</div>
+  {% for e in wb.website_evidence %}<div class="muted" style="margin-left:16px">↳ <code>{{ e[0] }}</code> ({{ e[1] }}): {{ e[2] }}</div>{% endfor %}
+  <p class="muted">Approving opens a pull request on your site. Merging it is what puts this live.</p>
+</div>
+{% else %}<div class="card">No website entry. {{ wb.plan.website_reason }}</div>{% endif %}
+
+<h2>README and case study</h2>
+<details><summary>README for the project repository</summary><div class="card md">{{ readme_html|safe }}</div></details>
+<details><summary>Case study (docs/case_study.md)</summary><div class="card md">{{ case_html|safe }}</div></details>
