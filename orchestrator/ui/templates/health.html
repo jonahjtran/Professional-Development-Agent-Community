@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Health · Agent Studio{% endblock %}
+{% block body %}
+<h1>Health</h1>
+{% if failing %}<div class="banner">{{ failing|length }} thing(s) will stop a full run. Fix them first.</div>
+{% else %}<p>Nothing will stop a full run.</p>{% endif %}
+<table>
+  <tr><th></th><th>Check</th><th>Result</th><th>What to do</th></tr>
+  {% for c in checks %}
+  <tr><td><span class="pill {{ 'done' if c.status == 'ok' else 'waiting' if c.status == 'warn' else 'halted' }}">{{ c.status }}</span></td>
+    <td>{{ c.name }}</td><td>{{ c.detail }}</td><td class="muted">{{ c.fix }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

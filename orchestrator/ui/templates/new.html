@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}New project · Agent Studio{% endblock %}
+{% block body %}
+<h1>New project</h1>
+{% for p in problems %}<div class="banner">{{ p }}</div>{% endfor %}
+<form method="post" action="/new/preview">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><label>Name (also the repository name)<br>
+    <input type="text" name="name" value="{{ fields.get('name', '') }}" style="width:100%" placeholder="my-project"></label></p>
+  <p><label>The idea, in a paragraph<br>
+    <textarea name="idea" rows="6" style="width:100%">{{ fields.get('idea', '') }}</textarea></label></p>
+  <p><label>Track
+    <select name="track">{% for t in tracks %}<option value="{{ t.value }}" {{ 'selected' if fields.get('track') == t.value }}>{{ t.value }}</option>{% endfor %}</select></label></p>
+  <p>How to run it<br>
+    <label><input type="radio" name="agent" value="full" {{ 'checked' if fields.get('agent', 'full') == 'full' }}> Full: real agents, a new GitHub repository, pull requests (costs money, up to the project cap)</label><br>
+    <label><input type="radio" name="agent" value="echo" {{ 'checked' if fields.get('agent') == 'echo' }}> Practice: the free dummy agent, nothing is created anywhere</label></p>
+  <p>Repository visibility<br>
+    <label><input type="radio" name="visibility" value="private" {{ 'checked' if fields.get('visibility', 'private') == 'private' }}> Private</label>
+    <label><input type="radio" name="visibility" value="public" {{ 'checked' if fields.get('visibility') == 'public' }}> Public</label>
+    <label><input type="checkbox" name="public_ok" {{ 'checked' if fields.get('public_ok') }}> I want it public</label></p>
+  <button>Review</button>
+</form>
+{% endblock %}

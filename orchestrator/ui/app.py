@@ -32,11 +32,19 @@ from orchestrator.inbox import (
     rejection_reason,
     run_is_alive,
 )
-from orchestrator.state import ProjectState, Status
+from orchestrator.newproject import (
+    NewProject,
+    NewProjectError,
+    create_project,
+    default_projects_dir,
+)
+from orchestrator.state import ProjectState, Status, state_path
 from orchestrator.trace import EventType
 from orchestrator.ui import data
+from orchestrator.ui import health as health_checks
 from orchestrator.ui.decisions import FormError, describe, payload_from_form
 from orchestrator.ui.render import artifact_kind, markdown_html, pretty_json
+from schemas import Track
 
 HERE = Path(__file__).parent
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
@@ -72,15 +80,46 @@ def resume_command(state: ProjectState, config_path: Path, runs_dir: Path) -> li
     ]  # fmt: skip
 
 
+Creator = Callable[..., NewProject]
+HealthRunner = Callable[[], list[health_checks.Check]]
+_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,59}$")
+_MIN_IDEA, _MAX_IDEA = 10, 2000
+
+
+def start_command(
+    *,
+    idea: str,
+    slug: str,
+    agent: str,
+    track: str,
+    repo: Path | None,
+    config_path: Path,
+    runs_dir: Path,
+) -> list[str]:
+    command = [
+        sys.executable, "-c", "from orchestrator.cli import app; app()",
+        "run", idea, "--slug", slug, "--agent", agent, "--track", track, "--ui",
+        "--config", str(config_path.resolve()), "--runs-dir", str(runs_dir.resolve()),
+    ]  # fmt: skip
+    return command + (["--repo", str(repo)] if repo is not None else [])
+
+
 def create_app(
     runs_dir: Path,
     config: Config,
     *,
     config_path: Path = Path("config.yaml"),
     launcher: Launcher = launch_detached,
+    projects_dir: Path | None = None,
+    creator: Creator = create_project,
+    health: HealthRunner | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
+    clones = projects_dir or default_projects_dir()
+    run_health = health or (
+        lambda: health_checks.run_checks(repo_root=config_path.resolve().parent)
+    )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
@@ -118,6 +157,12 @@ def create_app(
 
     @app.get("/p/{slug}", response_class=HTMLResponse)
     def project(request: Request, slug: str) -> HTMLResponse:
+        log = runs_dir / slug / "run.log"
+        if _SLUG.match(slug) and not state_path(runs_dir, slug).exists() and log.exists():
+            tail = "\n".join(log.read_text(errors="replace").splitlines()[-20:])
+            return templates.TemplateResponse(
+                request, "starting.html", {"slug": slug, "tail": tail}
+            )
         view = project_or_404(slug)
         return templates.TemplateResponse(
             request, "project.html", {"view": view, "pending": pending_for(runs_dir, slug)}
@@ -255,5 +300,105 @@ def create_app(
             )
         launcher(command, config_path.resolve().parent, runs_dir / slug / "run.log")
         return RedirectResponse(f"/p/{slug}", status_code=303)
+
+    # --- starting a project ----------------------------------------------------------------
+
+    def problems_with(form: Any) -> tuple[dict[str, str], list[str]]:
+        fields = {
+            "name": str(form.get("name", "")).strip(),
+            "idea": str(form.get("idea", "")).strip(),
+            "track": str(form.get("track", "engineering")),
+            "agent": str(form.get("agent", "full")),
+            "visibility": str(form.get("visibility", "private")),
+            "public_ok": "on" if form.get("public_ok") == "on" else "",
+        }
+        problems: list[str] = []
+        if not _NAME.match(fields["name"]):
+            problems.append("The name must be lowercase letters, digits and hyphens (max 60).")
+        elif state_path(runs_dir, fields["name"]).exists():
+            problems.append(f"A project called {fields['name']} already exists.")
+        elif fields["agent"] == "full" and (clones / fields["name"]).exists():
+            problems.append(f"{clones / fields['name']} already exists on this computer.")
+        if not _MIN_IDEA <= len(fields["idea"]) <= _MAX_IDEA:
+            problems.append(f"Describe the idea in {_MIN_IDEA} to {_MAX_IDEA} characters.")
+        if fields["track"] not in {t.value for t in Track}:
+            problems.append("Choose a track.")
+        if fields["agent"] not in {"full", "echo"}:
+            problems.append("Choose how to run it.")
+        if fields["visibility"] not in {"private", "public"}:
+            problems.append("Choose private or public.")
+        if (
+            fields["visibility"] == "public"
+            and fields["agent"] == "full"
+            and not fields["public_ok"]
+        ):
+            problems.append("Tick the box to confirm you want a public repository.")
+        if fields["agent"] == "full":
+            problems += [
+                f"{c.name}: {c.detail} {c.fix}".strip()
+                for c in health_checks.blocking(
+                    health_checks.run_checks(
+                        repo_root=config_path.resolve().parent, fetch=None, network=False
+                    )
+                )
+                if c.name in {"Anthropic API key", "GitHub token", "Career profile"}
+            ]
+        return fields, problems
+
+    @app.get("/new", response_class=HTMLResponse)
+    def new_form(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request, "new.html", {"fields": {}, "problems": [], "tracks": list(Track)}
+        )
+
+    @app.post("/new/preview", response_class=HTMLResponse)
+    async def new_preview(request: Request) -> HTMLResponse:
+        form = await checked_form(request)
+        fields, problems = problems_with(form)
+        if problems:
+            return templates.TemplateResponse(
+                request,
+                "new.html",
+                {"fields": fields, "problems": problems, "tracks": list(Track)},
+                status_code=400,
+            )
+        return templates.TemplateResponse(
+            request, "confirm_new.html", {"f": fields, "clone": clones / fields["name"]}
+        )
+
+    @app.post("/new/start")
+    async def new_start(request: Request) -> Response:
+        form = await checked_form(request)
+        fields, problems = problems_with(form)
+        if problems:
+            return message(request, " ".join(problems), "/new", 400)
+        name, agent = fields["name"], fields["agent"]
+        repo: Path | None = None
+        if agent == "full":
+            try:
+                created = creator(
+                    name, clones, public=fields["visibility"] == "public", confirm=lambda _q: True
+                )
+            except NewProjectError as error:
+                return message(request, str(error), "/new", 409)
+            repo = created.path
+        command = start_command(
+            idea=fields["idea"],
+            slug=name,
+            agent=agent,
+            track=fields["track"],
+            repo=repo,
+            config_path=config_path,
+            runs_dir=runs_dir,
+        )
+        launcher(command, config_path.resolve().parent, runs_dir / name / "run.log")
+        return RedirectResponse(f"/p/{name}", status_code=303)
+
+    @app.get("/health", response_class=HTMLResponse)
+    def health_page(request: Request) -> HTMLResponse:
+        checks = run_health()
+        return templates.TemplateResponse(
+            request, "health.html", {"checks": checks, "failing": health_checks.blocking(checks)}
+        )
 
     return app
