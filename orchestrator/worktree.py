@@ -181,3 +181,18 @@ def discard_unused(repo: Path, task_id: str) -> bool:
     _git(repo, "worktree", "prune")
     delete_branch(repo, branch)
     return True
+
+
+def branch_has_commits(repo: Path, task_id: str) -> bool:
+    """True if `agent/<task_id>` exists and has commits its base branch does not."""
+    branch = f"{BRANCH_PREFIX}{task_id}"
+    if branch_sha(repo, branch) is None:
+        return False
+    base = "main" if branch_sha(repo, "main") else "HEAD"
+    return int(_git(repo, "rev-list", "--count", f"{base}..{branch}").stdout.strip()) > 0
+
+
+def commit_all(path: Path, message: str) -> None:
+    """Stage everything in a worktree and commit it, as the person running the orchestrator."""
+    _git(path, "add", "-A")
+    _git(path, "commit", "-m", message)

@@ -188,6 +188,7 @@ def _context(
         caps=CliCapBackend(),
         stages=default_stage_specs() if agent in (AgentKind.API, AgentKind.FULL) else {},
         publisher=publisher,
+        repo=repo.resolve() if (agent == AgentKind.FULL and repo is not None) else None,
     )
 
 
