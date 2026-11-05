@@ -7,14 +7,21 @@ import typer
 from pydantic import ValidationError
 
 from orchestrator import __version__
+from orchestrator.api_runner import ApiRunner, ValidatingRunner
 from orchestrator.cli_cap import CliCapBackend
 from orchestrator.cli_gate import CliGateBackend
 from orchestrator.config import Config, load_config
-from orchestrator.default_specs import default_specs
+from orchestrator.default_specs import (
+    default_api_schemas,
+    default_api_specs,
+    default_specs,
+    default_stage_specs,
+)
 from orchestrator.echo_agent import EchoAgent
 from orchestrator.pipeline import AgentRunner, PipelineContext, run_pipeline
 from orchestrator.runner import SdkRunner
 from orchestrator.state import ProjectState, Status, load_state, state_path
+from schemas import Track
 
 app = typer.Typer(
     name="studio",
@@ -26,6 +33,7 @@ app = typer.Typer(
 class AgentKind(StrEnum):
     ECHO = "echo"  # the free dummy agent, for trying the flow
     CLAUDE = "claude"  # real Claude calls through the Agent SDK (costs money)
+    API = "api"  # real Claude calls through the Messages API (costs money)
 
 
 AgentOption = Annotated[AgentKind, typer.Option("--agent", help="Which agent runs the stages.")]
@@ -68,6 +76,8 @@ def _fail(message: str) -> typer.Exit:
 def make_runner(kind: AgentKind, config: Config, runs_dir: Path) -> AgentRunner:
     if kind == AgentKind.CLAUDE:
         return SdkRunner(config, runs_dir, default_specs())
+    if kind == AgentKind.API:
+        return ValidatingRunner(ApiRunner(config, default_api_specs()), default_api_schemas())
     return EchoAgent()
 
 
@@ -84,6 +94,7 @@ def _context(config_path: Path, runs_dir: Path, agent: AgentKind) -> PipelineCon
         runner=make_runner(agent, config, runs_dir),
         gates=CliGateBackend(),
         caps=CliCapBackend(),
+        stages=default_stage_specs() if agent == AgentKind.API else {},
     )
 
 
@@ -102,10 +113,11 @@ def run(
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
     agent: AgentOption = AgentKind.ECHO,
+    track: Annotated[Track, typer.Option(help="Which kind of PRD to write.")] = Track.ENGINEERING,
 ) -> None:
     """Start a new project and run it until it is done or halted."""
     try:
-        project = ProjectState(project_slug=slug or slugify(idea), idea=idea)
+        project = ProjectState(project_slug=slug or slugify(idea), idea=idea, track=track)
     except (ValueError, ValidationError) as error:
         raise _fail(f"Invalid project name: {error}") from None
     if state_path(runs_dir, project.project_slug).exists():

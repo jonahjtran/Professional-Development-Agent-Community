@@ -8,6 +8,8 @@ from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from schemas import Track
+
 
 class Stage(StrEnum):
     INTAKE = "intake"
@@ -100,6 +102,7 @@ class ProjectState(BaseModel):
     cost_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
     gate_history: list[GateRecord] = Field(default_factory=list)
     allowances: Allowances = Field(default_factory=Allowances)
+    track: Track = Track.ENGINEERING
     artifacts: dict[str, Artifact] = Field(default_factory=dict)
     qa_loops: Annotated[int, Field(ge=0)] = 0  # times QA has sent the work back to the Developer
 

@@ -8,13 +8,23 @@ Gates (human decisions) follow product_owner, architect, qa and career_coach. A 
 the work back to the developer, up to `limits.max_qa_loops` times, then goes to the human.
 """
 
+import difflib
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from orchestrator.artifacts import (
+    STAGE_INPUTS,
+    ArtifactStore,
+    approve_artifacts,
+    record_artifacts,
+    stage_inputs,
+)
 from orchestrator.budget import (
     BudgetLevel,
     assess_budget,
@@ -25,6 +35,7 @@ from orchestrator.budget import (
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
 from orchestrator.config import Config
 from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
+from orchestrator.stages import StageSpec
 from orchestrator.state import (
     GateOutcome,
     InterventionKind,
@@ -108,6 +119,8 @@ class PipelineContext:
     runner: AgentRunner
     gates: GateBackend
     caps: CapBackend
+    # Stages whose output is a validated document stored as artifacts. Others stay plain text.
+    stages: Mapping[Stage, StageSpec] = field(default_factory=dict)
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -162,19 +175,24 @@ def _run_stage(
             details={"error": str(error)},
         )
         return record_cost(state, stage, error.cost_usd).evolve(status=Status.HALTED)
-    _trace(
+    state = record_cost(state, stage, result.cost_usd)
+    spec = ctx.stages.get(stage)
+    summary: str | None = None
+    artifact_names: list[str] = []
+    if spec is not None:
+        try:
+            state, summary = _store_artifacts(state, ctx, spec, result.output)
+        except ValidationError as error:
+            _trace_agent_end(ctx, state, result, started, details={"error": f"not valid: {error}"})
+            return state.evolve(status=Status.HALTED)
+        artifact_names = sorted(state.artifacts)
+    _trace_agent_end(
         ctx,
         state,
-        EventType.AGENT_END,
-        agent=stage.value,
-        model=result.model,
-        prompt_version=result.prompt_version,
-        tokens_in=result.tokens_in,
-        tokens_out=result.tokens_out,
-        cost_usd=result.cost_usd,
-        latency_ms=int((time.monotonic() - started) * 1000),
+        result,
+        started,
+        details={"artifacts": artifact_names} if spec is not None else {},
     )
-    state = record_cost(state, stage, result.cost_usd)
 
     if stage == Stage.QA and result.passed is False:
         if state.qa_loops < ctx.config.limits.max_qa_loops:
@@ -185,7 +203,7 @@ def _run_stage(
             f"QA FAILED: the Developer's {state.qa_loops} retries did not fix it."
         )
     else:
-        output = result.output
+        output = summary if summary is not None else result.output
     _write_draft(ctx, state, output)
 
     if stage not in _GATED:
@@ -198,7 +216,12 @@ def _run_stage(
 
 def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
     stage = state.stage
+    spec = ctx.stages.get(stage)
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
     draft = _read_draft(ctx, state, stage)
+    if spec is not None and spec.json_name in state.artifacts:
+        # Revise the document itself, not the version rendered for the human.
+        draft = store.read(state.artifacts[spec.json_name])
     last = state.gate_history[-1] if state.gate_history else None
     previous: str | None = None
     comments: str | None = None
@@ -216,6 +239,8 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
         previous_draft=previous,
         comments=comments,
         revision=state.revisions.get(stage, 0),
+        track=state.track.value,
+        inputs=stage_inputs(state, stage, store) if spec and stage in STAGE_INPUTS else {},
     )
 
 
@@ -299,6 +324,8 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     last = state.gate_history[-1]
     if last.outcome != GateOutcome.APPROVE:
         return state
+    unapproved = [name for name, a in state.artifacts.items() if a.approved_at is None]
+    state = approve_artifacts(state, unapproved, now=datetime.now(UTC))
     if state.stage == Stage.CAREER_COACH:
         _trace(ctx, state, EventType.TRANSITION, details={"to": "done"})
         return state.evolve(status=Status.DONE)
@@ -306,6 +333,63 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
 
 
 # --- helpers ---------------------------------------------------------------------------------
+
+
+def _store_artifacts(
+    state: ProjectState, ctx: PipelineContext, spec: StageSpec, output: str
+) -> tuple[ProjectState, str]:
+    """Validate the agent's document, save its artifacts, and build the text for the human.
+
+    Raises pydantic.ValidationError if the output is not a valid document.
+    """
+    model = spec.schema.model_validate_json(output)
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    previous_md = (
+        store.read(state.artifacts[spec.md_name]) if spec.md_name in state.artifacts else None
+    )
+    revision = 1 + max((a.revision for a in state.artifacts.values()), default=0)
+    written = {
+        name: store.write(name, text, revision=revision) for name, text in spec.build(model).items()
+    }
+    state = record_artifacts(state, written)
+    new_md = store.read(written[spec.md_name])
+    return state, f"{new_md}\n\n---\n{_changes_since(previous_md, new_md)}"
+
+
+def _changes_since(previous: str | None, current: str) -> str:
+    if previous is None:
+        return "This is the first draft; there is nothing to compare it with."
+    diff = list(
+        difflib.unified_diff(
+            previous.splitlines(), current.splitlines(), "previous", "this draft", lineterm=""
+        )
+    )
+    if not diff:
+        return "No changes since the previous draft."
+    return "Changes since the previous draft:\n" + "\n".join(diff)
+
+
+def _trace_agent_end(
+    ctx: PipelineContext,
+    state: ProjectState,
+    result: AgentResult,
+    started: float,
+    *,
+    details: dict[str, object],
+) -> None:
+    _trace(
+        ctx,
+        state,
+        EventType.AGENT_END,
+        agent=state.stage.value,
+        model=result.model,
+        prompt_version=result.prompt_version,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        cost_usd=result.cost_usd,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        details=details,
+    )
 
 
 def _next_stage(stage: Stage) -> Stage:
