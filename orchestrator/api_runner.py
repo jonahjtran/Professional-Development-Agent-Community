@@ -89,7 +89,11 @@ class ApiRunner:
         cost = 0.0
         tokens_in = tokens_out = 0
         for _ in range(_MAX_RESUMES + 1):
-            response = self._client.messages.create(messages=messages, **params)
+            try:
+                response = self._client.messages.create(messages=messages, **params)
+            except anthropic.APIError as error:
+                # Missing key, rate limit, network down: halt cleanly, keeping the cost so far.
+                raise AgentError(f"API error: {error}", cost_usd=cost) from error
             call_cost, call_in, call_out = self._price(spec, response)
             cost += call_cost
             tokens_in += call_in

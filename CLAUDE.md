@@ -20,6 +20,9 @@ uv run studio --help          # the CLI
 
 `ruff`, `mypy` and `pytest` must all pass before opening a PR.
 
+Live tests call the real Claude API and cost money, so they are skipped by default and never run
+in CI. Run them on purpose with `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s`.
+
 ## Working rules
 
 - Work one phase at a time from the build plan, and stop after each phase for human review.

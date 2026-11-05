@@ -31,6 +31,7 @@ packages = ["orchestrator", "schemas"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["live: calls the real Claude API and costs money (opt-in with --live)"]
 
 [tool.ruff]
 line-length = 100
