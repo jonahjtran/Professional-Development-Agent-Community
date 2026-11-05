@@ -141,8 +141,10 @@ def test_the_developer_builds_a_task_in_a_throwaway_repo(tmp_path: Path) -> None
         print(f"  denied: {details['tool']}: {details['summary']} ({details['reason']})")
 
 
-def _wait_for_ci(repo: Path, token: str, pr_url: str, timeout: float = 900) -> bool:
-    env = {**os.environ, "GH_TOKEN": token}
+def _wait_for_ci(repo: Path, pr_url: str, timeout: float = 900) -> bool:
+    # The token is read here and never passed around: pytest prints the arguments of a failed
+    # call, so a token passed as an argument would be shown in the failure output.
+    env = {**os.environ, "GH_TOKEN": load_token()}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         done = subprocess.run(
@@ -161,7 +163,6 @@ def _wait_for_ci(repo: Path, token: str, pr_url: str, timeout: float = 900) -> b
     reason="opens a real pull request on this repository: set AGENT_STUDIO_LIVE_GITHUB=1",
 )
 def test_a_task_becomes_a_github_pull_request_that_passes_ci_on_this_repo(tmp_path: Path) -> None:
-    token = load_token()
     config = load_config(ROOT / "config.yaml")
     task_id = f"LIVE-{int(time.time())}"
     task = {
@@ -182,17 +183,18 @@ def test_a_task_becomes_a_github_pull_request_that_passes_ci_on_this_repo(tmp_pa
         "size": "S",
     }
     runner = DevRunner(config, tmp_path / "runs", ROOT, RecordingHuman(), load_prompt("developer"))
-    publisher = Publisher(ROOT, token)
+    publisher = Publisher(ROOT, load_token())
     pr_url = None
     try:
         result = DevResult.model_validate_json(runner.run(request_for(task, "live-gh")).output)
         published = publisher.publish(result, title=f"{task_id}: live smoke test")
         pr_url = published.pr_url
         assert pr_url and pr_url.startswith("https://github.com/")
-        assert _wait_for_ci(ROOT, token, pr_url), f"CI did not pass for {pr_url}"
+        ci_passed = _wait_for_ci(ROOT, pr_url)
+        assert ci_passed, f"CI did not pass for {pr_url}"
         print(f"\nlive pull request passed CI: {pr_url}")
     finally:
-        env = {**os.environ, "GH_TOKEN": token}
+        env = {**os.environ, "GH_TOKEN": load_token()}
         if pr_url:
             subprocess.run(
                 ["gh", "pr", "close", pr_url, "--delete-branch"], cwd=ROOT, env=env, check=False
