@@ -259,3 +259,42 @@ def test_a_response_with_no_usage_is_an_error_so_spend_is_never_silently_zero() 
 def test_a_stage_with_no_spec_is_an_error() -> None:
     with pytest.raises(AgentError, match="architect"):
         runner(FakeClient(response())).run(request(stage=Stage.ARCHITECT))
+
+
+# --- API errors halt the run cleanly -----------------------------------------------------------
+
+
+def test_an_api_error_becomes_an_agent_error_so_the_run_halts_instead_of_crashing() -> None:
+    import anthropic
+    import httpx2
+
+    class Failing(FakeClient):
+        def create(self, **kwargs: Any) -> SimpleNamespace:
+            raise anthropic.APIConnectionError(
+                request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+            )
+
+    with pytest.raises(AgentError, match="API error"):
+        runner(Failing()).run(request())
+
+
+def test_an_api_error_after_a_paused_turn_keeps_the_cost_already_spent() -> None:
+    import anthropic
+    import httpx2
+
+    class FailsSecond(FakeClient):
+        def create(self, **kwargs: Any) -> SimpleNamespace:
+            if self.calls:
+                raise anthropic.APIConnectionError(
+                    request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+                )
+            return super().create(**kwargs)
+
+    client = FailsSecond(
+        response("", stop_reason="pause_turn", input_tokens=1_000_000, output_tokens=0)
+    )
+
+    with pytest.raises(AgentError) as error:
+        runner(client).run(request())
+
+    assert error.value.cost_usd == pytest.approx(4.0)
