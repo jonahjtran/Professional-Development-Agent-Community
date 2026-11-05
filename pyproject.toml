@@ -6,10 +6,15 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.5.0",
     "claude-agent-sdk>=0.2.178",
+    "fastapi>=0.162.0",
+    "jinja2>=3.1.6",
+    "markdown-it-py>=4.2.0",
     "pydantic>=2.14.1",
+    "python-multipart>=0.0.33",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "typer>=0.27.3",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -17,6 +22,7 @@ studio = "orchestrator.cli:app"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy",
     "pytest",
     "ruff",
