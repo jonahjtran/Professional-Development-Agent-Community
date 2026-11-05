@@ -160,9 +160,12 @@ class Inbox:
         record["answered_by"] = answered_by
         if answer_path is not None:
             record["answer"] = _read(answer_path)
-            answer_path.unlink(missing_ok=True)
         atomic_write(self._root / "done" / f"{pending.id}.json", json.dumps(record, indent=2))
+        # Close the question first, the answer file last: until the question is gone a second
+        # answer is refused as "already answered", and once it is gone as "no longer open".
         (self._root / "pending" / f"{pending.id}.json").unlink(missing_ok=True)
+        if answer_path is not None:
+            answer_path.unlink(missing_ok=True)
         (self._root / "answers" / f"{pending.id}.invalid").unlink(missing_ok=True)
 
 

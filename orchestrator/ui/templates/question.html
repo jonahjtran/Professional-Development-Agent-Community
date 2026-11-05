@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ describe(q)[0] }} · {{ q.project }}{% endblock %}
+{% block body %}
+{% set r = q.request %}
+<p><a href="/inbox">← Inbox</a> · <a href="/p/{{ q.project }}">{{ q.project }}</a></p>
+<h1>{{ describe(q)[0] }}</h1>
+{% if refused %}<div class="banner">Your last answer was refused: {{ refused }}. Please answer again.</div>{% endif %}
+
+<form method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+
+{% if q.kind.value == 'gate' %}
+  <p class="muted">Spent so far ${{ '%.2f'|format(r.cost_usd) }}</p>
+  <div class="card md">{{ summary_html|safe }}</div>
+  {% if r.questions %}
+  <h2>Questions for you</h2>
+  <p class="muted">Answer what you know and leave the rest blank. Your answers become evidence the next draft can use.</p>
+  {% for question in r.questions %}
+  <p><label>{{ question }}<br><input type="text" name="answer{{ loop.index0 }}" style="width:100%"></label></p>
+  {% endfor %}
+  {% endif %}
+  {% if r['items'] %}
+  <h2>What to approve</h2>
+  <p class="muted">Each ticked item is carried out when you approve. Untick anything you want skipped.</p>
+  {% for item in r['items'] %}
+  <div><label><input type="checkbox" name="items" value="{{ item.id }}" checked> {{ item.label }}</label></div>
+  {% endfor %}
+  {% endif %}
+  <h2>Your decision</h2>
+  <p><label>Comments (for “request changes”, say what should change)<br>
+    <textarea name="comments" rows="4" style="width:100%"></textarea></label></p>
+  <p>
+    <button name="outcome" value="approve">Approve</button>
+    <button name="outcome" value="request_changes">Request changes</button>
+    <button name="outcome" value="reject">Reject</button>
+    <label><input type="checkbox" name="halt"> with reject: halt the project instead of restarting this stage</label>
+  </p>
+
+{% elif q.kind.value == 'cap' %}
+  <div class="card">{{ r.detail }}</div>
+  <p>Raising adds to the limit in config.yaml for this project only.</p>
+  <p>
+    {% if r.can_approve_anyway %}<button name="action" value="approve_anyway">Approve anyway (this once)</button>{% endif %}
+    <button name="action" value="abandon">Abandon the project</button>
+  </p>
+  <p><label>Raise by {{ 'revisions' if r.unit == 'revisions' else 'dollars' }}:
+    <input type="text" name="amount" size="6"></label>
+    <button name="action" value="raise">Raise</button></p>
+
+{% elif q.kind.value == 'merge' %}
+  <p>QA checks the finished project, so each of these pull requests must be merged into main first.</p>
+  <div class="card">{% for url in r.pr_urls %}<div><a href="{{ url }}" rel="noopener">{{ url }}</a></div>{% endfor %}</div>
+  <p>
+    <button name="merged" value="yes">I merged them: check again</button>
+    <button name="merged" value="no">Give up and halt</button>
+  </p>
+
+{% elif q.kind.value == 'tool' %}
+  <p>The Developer wants to use <strong>{{ r.tool }}</strong>:</p>
+  <pre>{{ r.summary }}</pre>
+  <p class="muted">Why you are being asked: {{ r.reason }}</p>
+  <p><label>If you deny, tell the agent why (optional)<br><input type="text" name="message" style="width:100%"></label></p>
+  <p><button name="allow" value="yes">Allow once</button> <button name="allow" value="no">Deny</button></p>
+{% endif %}
+</form>
+{% endblock %}
