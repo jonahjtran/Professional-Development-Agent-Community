@@ -107,11 +107,37 @@ def test_writing_outside_the_worktree_is_denied(wt: Path) -> None:
     assert verdict("Write", {"file_path": "link_out", "content": "x"}, wt).verdict == D
 
 
-def test_editing_the_ci_workflows_is_always_denied(wt: Path) -> None:
+def test_editing_the_ci_workflows_asks_the_human_by_default(wt: Path) -> None:
     decision = verdict("Write", {"file_path": ".github/workflows/ci.yml", "content": "x"}, wt)
+
+    assert decision.verdict == Q
+    assert ".github" in decision.reason and "approval" in decision.reason
+
+
+def test_editing_the_ci_workflows_is_denied_when_the_repo_protects_them(wt: Path) -> None:
+    decision = verdict(
+        "Write",
+        {"file_path": ".github/workflows/ci.yml", "content": "x"},
+        wt,
+        protected=(".github",),
+    )
 
     assert decision.verdict == D
     assert ".github" in decision.reason
+
+
+def test_reading_the_ci_workflows_is_always_fine(wt: Path) -> None:
+    assert verdict("Read", {"file_path": ".github/workflows/ci.yml"}, wt).verdict == A
+
+
+def test_other_files_are_not_caught_by_the_ci_rule(wt: Path) -> None:
+    assert verdict("Edit", edit("src/a.py"), wt).verdict == A
+    assert verdict("Write", {"file_path": "docs/github.md", "content": "x"}, wt).verdict == A
+
+
+def test_a_folder_whose_name_merely_starts_with_dot_github_is_not_caught(wt: Path) -> None:
+    for path in (".github-notes/readme.md", ".githubx/a.txt", ".github.md"):
+        assert verdict("Write", {"file_path": path, "content": "x"}, wt).verdict == A, path
 
 
 def test_extra_protected_paths_are_denied_for_edits_but_not_for_reads(wt: Path) -> None:
@@ -364,17 +390,42 @@ def test_risky_or_unlisted_commands_ask_the_human(wt: Path, command: str, word: 
         "cp a ../b",
         "mv a /tmp/b",
         "cat link_out",
-        # protected files
-        "touch .github/workflows/x.yml",
-        "echo x > .github/workflows/ci.yml",
-        "cp a .github/workflows/b.yml",
-        "sed -i s/a/b/ .github/workflows/ci.yml",
     ],
 )
 def test_dangerous_commands_are_denied(wt: Path, command: str) -> None:
     decision = bash(command, wt)
 
     assert decision.verdict == D, f"{command!r} -> {decision}"
+
+
+CI_WRITES = [
+    "touch .github/workflows/x.yml",
+    "echo x > .github/workflows/ci.yml",
+    "cp a .github/workflows/b.yml",
+    "sed -i s/a/b/ .github/workflows/ci.yml",
+    "mkdir -p .github/workflows",
+]
+
+
+@pytest.mark.parametrize("command", CI_WRITES)
+def test_writing_the_ci_workflows_from_the_shell_asks_the_human_by_default(
+    wt: Path, command: str
+) -> None:
+    decision = bash(command, wt)
+
+    assert decision.verdict == Q, decision.reason
+    assert ".github" in decision.reason
+
+
+@pytest.mark.parametrize("command", CI_WRITES)
+def test_writing_the_ci_workflows_from_the_shell_is_denied_when_protected(
+    wt: Path, command: str
+) -> None:
+    assert bash(command, wt, protected=(".github",)).verdict == D
+
+
+def test_reading_the_ci_workflows_from_the_shell_is_fine(wt: Path) -> None:
+    assert bash("cat .github/workflows/ci.yml", wt).verdict == A
 
 
 def test_a_denial_beats_an_ask_in_the_same_command(wt: Path) -> None:
