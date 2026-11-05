@@ -87,17 +87,18 @@ class ApiRunner:
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": _user_message(request)}]
         cost = 0.0
-        tokens_in = tokens_out = 0
+        tokens_in = tokens_out = total_searches = 0
         for _ in range(_MAX_RESUMES + 1):
             try:
                 response = self._client.messages.create(messages=messages, **params)
             except anthropic.APIError as error:
                 # Missing key, rate limit, network down: halt cleanly, keeping the cost so far.
                 raise AgentError(f"API error: {error}", cost_usd=cost) from error
-            call_cost, call_in, call_out = self._price(spec, response)
+            call_cost, call_in, call_out, call_searches = self._price(spec, response)
             cost += call_cost
             tokens_in += call_in
             tokens_out += call_out
+            total_searches += call_searches
 
             if response.stop_reason == "pause_turn":
                 messages = [*messages, {"role": "assistant", "content": response.content}]
@@ -116,10 +117,11 @@ class ApiRunner:
                 prompt_version=spec.prompt.version,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                web_searches=total_searches,
             )
         raise AgentError("the turn kept pausing and never finished (paused)", cost_usd=cost)
 
-    def _price(self, spec: ApiAgentSpec, response: Any) -> tuple[float, int, int]:
+    def _price(self, spec: ApiAgentSpec, response: Any) -> tuple[float, int, int, int]:
         usage = response.usage
         if usage is None:
             raise AgentError("the response reported no usage, so its cost is unknown")
@@ -131,7 +133,7 @@ class ApiRunner:
             + (usage.cache_read_input_tokens or 0) * prices.cache_read
             + (usage.cache_creation_input_tokens or 0) * prices.cache_write
         ) / 1_000_000 + searches * self._config.pricing.web_search_usd_per_request
-        return cost, usage.input_tokens, usage.output_tokens
+        return cost, usage.input_tokens, usage.output_tokens, searches
 
 
 def _user_message(request: AgentRequest) -> str:
@@ -180,6 +182,7 @@ class ValidatingRunner:
                 "cost_usd": first.cost_usd + second.cost_usd,
                 "tokens_in": _add(first.tokens_in, second.tokens_in),
                 "tokens_out": _add(first.tokens_out, second.tokens_out),
+                "web_searches": first.web_searches + second.web_searches,
             }
         )
         problem = _validation_problem(schema, second.output)

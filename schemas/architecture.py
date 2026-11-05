@@ -5,6 +5,8 @@ from pydantic import Field
 
 from schemas._base import Schema, Text
 
+_MAX_SLUG_LENGTH = 50
+
 
 class Component(Schema):
     name: Text
@@ -40,4 +42,5 @@ class ADR(Schema):
     @property
     def filename(self) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", self.title.lower()).strip("-")
+        slug = slug[:_MAX_SLUG_LENGTH].rstrip("-")  # long titles must not make unwieldy file names
         return f"{self.number:03d}-{slug}.md"

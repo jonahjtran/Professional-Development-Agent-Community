@@ -92,6 +92,7 @@ class AgentResult(BaseModel):
     passed: bool | None = None
     tokens_in: int | None = None
     tokens_out: int | None = None
+    web_searches: int = 0  # web searches run during the call (each one is billed)
 
     model_config = ConfigDict(frozen=True)
 
@@ -396,7 +397,7 @@ def _trace_agent_end(
         tokens_out=result.tokens_out,
         cost_usd=result.cost_usd,
         latency_ms=int((time.monotonic() - started) * 1000),
-        details=details,
+        details={**details, "web_searches": result.web_searches},
     )
 
 

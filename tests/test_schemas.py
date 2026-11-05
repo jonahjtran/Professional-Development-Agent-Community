@@ -239,3 +239,26 @@ def test_every_schema_can_describe_itself_as_json_schema(model: Any) -> None:
 
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
+
+
+def test_a_long_adr_title_gives_a_short_file_name() -> None:
+    title = "Use RSVP updates allowed by re-entering the same email with a confirmation sent"
+    adr = ADR(number=7, title=title, context="c", decision="d", consequences="e")
+
+    assert adr.filename.startswith("007-use-rsvp-updates-allowed")
+    assert adr.filename.endswith(".md")
+    assert len(adr.filename) <= 4 + 50 + 3
+    assert "--" not in adr.filename and "-.md" not in adr.filename
+
+
+def test_a_short_adr_title_is_not_shortened() -> None:
+    adr = ADR(number=1, title="Use SQLite", context="c", decision="d", consequences="e")
+
+    assert adr.filename == "001-use-sqlite.md"
+
+
+def test_a_cut_that_lands_on_a_hyphen_leaves_no_trailing_hyphen() -> None:
+    title = "a" * 49 + " bbb"  # the 50th slug character is the hyphen between the words
+    adr = ADR(number=1, title=title, context="c", decision="d", consequences="e")
+
+    assert adr.filename == "001-" + "a" * 49 + ".md"

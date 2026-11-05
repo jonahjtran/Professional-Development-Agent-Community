@@ -91,3 +91,15 @@ def test_the_architect_prompt_names_every_architecture_and_task_field() -> None:
 
     fields = [*ArchitectOutput.model_fields, *Architecture.model_fields, *Task.model_fields]
     assert [f for f in fields if f not in text] == []
+
+
+def test_the_architect_prompt_says_what_counts_as_a_tech_choice() -> None:
+    prompt = load_prompt("architect", DEFAULT_PROMPTS_DIR)
+
+    assert prompt.version == "v2"
+    assert "short" in prompt.text.lower()
+    assert "technology" in prompt.text.lower()
+
+
+def test_the_first_architect_prompt_is_kept_for_comparison() -> None:
+    assert load_prompt("architect", DEFAULT_PROMPTS_DIR, version="v1").version == "v1"

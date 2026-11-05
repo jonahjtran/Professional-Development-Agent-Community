@@ -21,7 +21,11 @@ class ScriptedRunner:
     def run(self, request: AgentRequest) -> AgentResult:
         self.requests.append(request)
         return AgentResult(
-            output=self.outputs.pop(0), cost_usd=self.cost, tokens_in=10, tokens_out=5
+            output=self.outputs.pop(0),
+            cost_usd=self.cost,
+            tokens_in=10,
+            tokens_out=5,
+            web_searches=2,
         )
 
 
@@ -131,3 +135,9 @@ def test_stages_without_a_schema_pass_through_unchanged() -> None:
     result = validating(inner).run(request(stage=Stage.QA))
 
     assert result.output == "free text"
+
+
+def test_searches_from_both_calls_are_summed() -> None:
+    result = validating(ScriptedRunner(BAD, GOOD)).run(request())
+
+    assert result.web_searches == 4
