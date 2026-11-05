@@ -344,14 +344,22 @@ def _store_artifacts(
     """
     model = spec.schema.model_validate_json(output)
     store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    inputs = stage_inputs(state, state.stage, store) if state.stage in STAGE_INPUTS else {}
     previous_md = (
         store.read(state.artifacts[spec.md_name]) if spec.md_name in state.artifacts else None
     )
-    revision = 1 + max((a.revision for a in state.artifacts.values()), default=0)
+    previous_json = state.artifacts.get(spec.json_name)
+    revision = previous_json.revision + 1 if previous_json else 1
     written = {
-        name: store.write(name, text, revision=revision) for name, text in spec.build(model).items()
+        name: store.write(name, text, revision=revision)
+        for name, text in spec.build(model, inputs).items()
     }
-    state = record_artifacts(state, written)
+    kept = {
+        name: a
+        for name, a in state.artifacts.items()
+        if not any(name.startswith(prefix) for prefix in spec.replaces)
+    }
+    state = record_artifacts(state.evolve(artifacts=kept), written)
     new_md = store.read(written[spec.md_name])
     return state, f"{new_md}\n\n---\n{_changes_since(previous_md, new_md)}"
 

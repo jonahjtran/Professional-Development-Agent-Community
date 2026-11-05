@@ -10,9 +10,9 @@ from pathlib import Path
 from orchestrator.api_runner import ApiAgentSpec
 from orchestrator.prompts import DEFAULT_PROMPTS_DIR, load_prompt
 from orchestrator.runner import AgentSpec
-from orchestrator.stages import StageSpec, prd_stage
+from orchestrator.stages import StageSpec, architect_stage, prd_stage
 from orchestrator.state import Stage
-from schemas import PRD
+from schemas import PRD, ArchitectOutput
 from schemas._base import Schema
 
 
@@ -51,6 +51,12 @@ def default_api_specs(prompts_dir: Path = DEFAULT_PROMPTS_DIR) -> tuple[ApiAgent
             schema=PRD,
             web_search=True,
         ),
+        ApiAgentSpec(
+            stage=Stage.ARCHITECT,
+            prompt=load_prompt("architect", prompts_dir),
+            tier="strong",
+            schema=ArchitectOutput,
+        ),
     )
 
 
@@ -60,4 +66,4 @@ def default_api_schemas() -> dict[Stage, type[Schema]]:
 
 def default_stage_specs() -> dict[Stage, StageSpec]:
     """How each API-run stage's validated output becomes stored artifacts."""
-    return {Stage.PRODUCT_OWNER: prd_stage()}
+    return {Stage.PRODUCT_OWNER: prd_stage(), Stage.ARCHITECT: architect_stage()}
