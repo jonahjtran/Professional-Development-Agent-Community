@@ -5,7 +5,8 @@
     uv run --env-file .env pytest tests/live/test_live_developer.py --live -s -k throwaway
 
 2. The full path on THIS repository: a real branch is pushed and a real pull request is opened,
-   CI is waited for, then the PR is closed and the branch deleted. Needs GITHUB_TOKEN, and you must
+   CI is waited for, then the PR is closed and the branch deleted. Needs GITHUB_TOKEN (Contents and
+   Pull requests: read and write) and a signed-in `gh` (to read CI results), and you must
    opt in explicitly with AGENT_STUDIO_LIVE_GITHUB=1:
 
     AGENT_STUDIO_LIVE_GITHUB=1 uv run --env-file .env pytest tests/live --live -s -k github
@@ -142,9 +143,9 @@ def test_the_developer_builds_a_task_in_a_throwaway_repo(tmp_path: Path) -> None
 
 
 def _wait_for_ci(repo: Path, pr_url: str, timeout: float = 900) -> bool:
-    # The token is read here and never passed around: pytest prints the arguments of a failed
-    # call, so a token passed as an argument would be shown in the failure output.
-    env = {**os.environ, "GH_TOKEN": load_token()}
+    # Reading CI results does not need the agents' token: use your own `gh` login instead. gh
+    # prefers GH_TOKEN/GITHUB_TOKEN over its stored login, so they are removed from this call.
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         done = subprocess.run(
