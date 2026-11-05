@@ -8,7 +8,6 @@ and turn limit) and afterwards checks the repository itself instead of trusting 
 import asyncio
 import json
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +17,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClie
 from pydantic import ValidationError
 
 from orchestrator.config import Config
+from orchestrator.envsafe import SECRET_ENV_NAME
 from orchestrator.halt import halt_requested
 from orchestrator.permissions import PolicyContext
 from orchestrator.pipeline import AgentError, AgentRequest, AgentResult
@@ -41,7 +41,6 @@ from schemas import DevReport, DevResult, TaskList
 from schemas.tasks import Task
 
 _TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
-SECRET_ENV_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL|PRIVATE_?KEY", re.I)
 _STUDIO_ROOT = Path(__file__).resolve().parent.parent
 _FOLLOW_UP = (
     "Your last message was not a valid report. Reply with only a JSON object with the fields "

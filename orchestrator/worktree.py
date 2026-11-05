@@ -196,3 +196,34 @@ def commit_all(path: Path, message: str) -> None:
     """Stage everything in a worktree and commit it, as the person running the orchestrator."""
     _git(path, "add", "-A")
     _git(path, "commit", "-m", message)
+
+
+def checkout_detached(
+    repo: Path, name: str, *, base: str = "main", root: Path | None = None
+) -> Path:
+    """A throwaway folder holding the latest `base` from the remote, on no branch.
+
+    Used by QA, which only reads and runs the finished project. Any leftover folder with the same
+    name from an earlier run is replaced.
+    """
+    if not _TASK_ID.match(name):
+        raise WorktreeError(f"unsafe name: {name!r}")
+    repo = repo.resolve()
+    path = (root or default_worktree_root(repo)) / name
+    ref = base
+    if _ok(repo, "remote", "get-url", "origin"):
+        fetched = _git(repo, "fetch", "--quiet", "origin", base, check=False)
+        if fetched.returncode != 0:
+            raise WorktreeError(f"could not fetch {base} from origin: {fetched.stderr.strip()}")
+        ref = f"origin/{base}"
+    if path.exists():
+        remove_checkout(repo, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo, "worktree", "add", "--quiet", "--detach", str(path), ref)
+    return path
+
+
+def remove_checkout(repo: Path, path: Path) -> None:
+    """Delete a folder made by `checkout_detached`, and forget it."""
+    _git(repo, "worktree", "remove", "--force", str(path), check=False)
+    _git(repo, "worktree", "prune")

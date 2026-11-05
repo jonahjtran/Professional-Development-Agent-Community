@@ -11,6 +11,7 @@ from orchestrator import __version__
 from orchestrator.api_runner import ApiRunner, ValidatingRunner
 from orchestrator.cli_cap import CliCapBackend
 from orchestrator.cli_gate import CliGateBackend
+from orchestrator.cli_merge import CliMergeBackend
 from orchestrator.cli_tool import CliToolBackend
 from orchestrator.config import Config, load_config
 from orchestrator.default_specs import (
@@ -26,6 +27,7 @@ from orchestrator.newproject import NewProjectError, create_project, default_pro
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
 from orchestrator.prompts import load_prompt
 from orchestrator.publish import Publisher, PublishError, load_token, strip_credentials
+from orchestrator.qa_prepare import GitQaPreparer
 from orchestrator.runner import SdkRunner
 from orchestrator.state import ProjectState, Stage, Status, load_state, state_path
 from schemas import Track
@@ -104,6 +106,7 @@ def make_runner(
                 Stage.PRODUCT_OWNER: planner,
                 Stage.ARCHITECT: planner,
                 Stage.DEVELOPER: developer,
+                Stage.QA: planner,
             }
         )
     return EchoAgent()
@@ -189,6 +192,8 @@ def _context(
         stages=default_stage_specs() if agent in (AgentKind.API, AgentKind.FULL) else {},
         publisher=publisher,
         repo=repo.resolve() if (agent == AgentKind.FULL and repo is not None) else None,
+        qa=GitQaPreparer(repo.resolve(), publisher, config.qa) if publisher and repo else None,
+        merges=CliMergeBackend() if publisher else None,
     )
 
 

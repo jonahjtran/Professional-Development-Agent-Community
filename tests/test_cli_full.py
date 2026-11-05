@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from orchestrator.cli import AgentKind, _context, app, make_runner
 from orchestrator.pipeline import RoutingRunner
 from orchestrator.publish import Publisher
+from orchestrator.state import Stage
 from tests.factories import make_config
 
 runner = CliRunner()
@@ -95,3 +96,25 @@ def test_resume_also_accepts_the_repo_option(tmp_path: Path, git_repo: Path) -> 
     )
 
     assert "No project named ghost" in result.output
+
+
+def test_the_full_option_runs_qa_with_the_real_tools_and_asks_about_merges(
+    tmp_path: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.cli_merge import CliMergeBackend
+    from orchestrator.qa_prepare import GitQaPreparer
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_not_real")
+
+    ctx = _context(REPO_CONFIG, tmp_path, AgentKind.FULL, git_repo, URL)
+
+    assert isinstance(ctx.qa, GitQaPreparer)
+    assert isinstance(ctx.merges, CliMergeBackend)
+    assert Stage.QA in ctx.stages
+
+
+def test_the_other_options_have_no_qa_tools(tmp_path: Path, git_repo: Path) -> None:
+    for kind in (AgentKind.ECHO, AgentKind.CLAUDE):
+        ctx = _context(REPO_CONFIG, tmp_path, kind, git_repo, URL)
+        assert ctx.qa is None and ctx.merges is None
