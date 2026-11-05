@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+from contextlib import AbstractContextManager, nullcontext
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -27,6 +28,14 @@ from orchestrator.default_specs import (
 from orchestrator.dev_runner import DevRunner
 from orchestrator.echo_agent import EchoAgent
 from orchestrator.halt import request_halt
+from orchestrator.inbox import (
+    FileCapBackend,
+    FileGateBackend,
+    FileMergeBackend,
+    FileToolBackend,
+    Inbox,
+    run_marker,
+)
 from orchestrator.newproject import NewProjectError, create_project, default_projects_dir
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
 from orchestrator.profile import ProfileError, load_profile, profile_dir
@@ -36,6 +45,7 @@ from orchestrator.qa_prepare import GitQaPreparer
 from orchestrator.runner import SdkRunner
 from orchestrator.stages import StageSpec, career_stage
 from orchestrator.state import ProjectState, Stage, Status, load_state, state_path
+from orchestrator.tool_hooks import ToolPermissionBackend
 from schemas import Track
 
 app = typer.Typer(
@@ -59,6 +69,12 @@ RepoOption = Annotated[
     typer.Option("--repo", help="The project's own git repository (required for --agent full)."),
 ]
 RunsDirOption = Annotated[Path, typer.Option("--runs-dir", help="Where projects are stored.")]
+UiOption = Annotated[
+    bool,
+    typer.Option(
+        "--ui", help="Ask questions through files (for the web UI) instead of at the terminal."
+    ),
+]
 
 _MAX_SLUG_LENGTH = 40
 _HALTED_EXIT_CODE = 2
@@ -94,7 +110,11 @@ def _fail(message: str) -> typer.Exit:
 
 
 def make_runner(
-    kind: AgentKind, config: Config, runs_dir: Path, repo: Path | None = None
+    kind: AgentKind,
+    config: Config,
+    runs_dir: Path,
+    repo: Path | None = None,
+    tools: ToolPermissionBackend | None = None,
 ) -> AgentRunner:
     if kind == AgentKind.CLAUDE:
         return SdkRunner(config, runs_dir, default_specs())
@@ -107,7 +127,7 @@ def make_runner(
         if repo is None:
             raise ValueError("the full pipeline needs the project's repository")
         developer = DevRunner(
-            config, runs_dir, repo.resolve(), CliToolBackend(), load_prompt("developer")
+            config, runs_dir, repo.resolve(), tools or CliToolBackend(), load_prompt("developer")
         )
         return RoutingRunner(
             {
@@ -177,6 +197,9 @@ def _context(
     agent: AgentKind,
     repo: Path | None = None,
     repo_url: str | None = None,
+    *,
+    project: str | None = None,
+    ui: bool = False,
 ) -> PipelineContext:
     try:
         config = load_config(config_path)
@@ -184,6 +207,7 @@ def _context(
         raise _fail(f"Config file not found: {config_path}") from None
     except ValidationError as error:
         raise _fail(f"Invalid config {config_path}:\n{error}") from None
+    inbox = Inbox(runs_dir, project) if ui and project else None
     publisher: Publisher | None = None
     career: GitCareerPreparer | None = None
     career_publisher: GitCareerPublisher | None = None
@@ -202,14 +226,16 @@ def _context(
     return PipelineContext(
         config=config,
         runs_dir=runs_dir,
-        runner=make_runner(agent, config, runs_dir, repo),
-        gates=CliGateBackend(),
-        caps=CliCapBackend(),
+        runner=make_runner(
+            agent, config, runs_dir, repo, FileToolBackend(inbox) if inbox else None
+        ),
+        gates=FileGateBackend(inbox) if inbox else CliGateBackend(),
+        caps=FileCapBackend(inbox) if inbox else CliCapBackend(),
         stages=_stages(agent),
         publisher=publisher,
         repo=repo.resolve() if (agent == AgentKind.FULL and repo is not None) else None,
         qa=GitQaPreparer(repo.resolve(), publisher, config.qa) if publisher and repo else None,
-        merges=CliMergeBackend() if publisher else None,
+        merges=(FileMergeBackend(inbox) if inbox else CliMergeBackend()) if publisher else None,
         career=career,
         career_publisher=career_publisher,
     )
@@ -263,6 +289,11 @@ def _show_career_results(state: ProjectState, runs_dir: Path) -> None:
     typer.echo("Merge the pull requests yourself; nothing was merged for you.")
 
 
+def _marked(runs_dir: Path, project: str, ui: bool) -> AbstractContextManager[None]:
+    """While a run answers through files, keep a heartbeat so the UI can tell it is alive."""
+    return run_marker(runs_dir, project) if ui else nullcontext()
+
+
 def _finish(state: ProjectState, runs_dir: Path) -> None:
     if state.status == Status.DONE:
         typer.echo(f"Project {state.project_slug} is done. Spent ${state.total_cost_usd:.2f}.")
@@ -281,6 +312,7 @@ def run(
     agent: AgentOption = AgentKind.ECHO,
     repo: RepoOption = None,
     track: Annotated[Track, typer.Option(help="Which kind of PRD to write.")] = Track.ENGINEERING,
+    ui: UiOption = False,
 ) -> None:
     """Start a new project and run it until it is done or halted."""
     project = _new_project(idea, slug, track, agent, repo)
@@ -289,8 +321,12 @@ def run(
             f"Project {project.project_slug} already exists. "
             f"Continue it with: studio resume {project.project_slug}"
         )
-    ctx = _context(config, runs_dir, agent, repo, project.repo_url)
-    _finish(run_pipeline(project, ctx), runs_dir)
+    ctx = _context(
+        config, runs_dir, agent, repo, project.repo_url, project=project.project_slug, ui=ui
+    )
+    with _marked(runs_dir, project.project_slug, ui):
+        finished = run_pipeline(project, ctx)
+    _finish(finished, runs_dir)
 
 
 @app.command()
@@ -300,6 +336,7 @@ def resume(
     runs_dir: RunsDirOption = Path("runs"),
     agent: AgentOption = AgentKind.ECHO,
     repo: RepoOption = None,
+    ui: UiOption = False,
 ) -> None:
     """Continue a project from its last saved step, after a crash or Ctrl-C."""
     try:
