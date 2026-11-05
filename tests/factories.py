@@ -20,6 +20,7 @@ def make_config() -> Config:
             "limits": {
                 "max_revisions": 3,
                 "max_qa_loops": 2,
+                "max_web_searches": 5,
                 "max_turns": {
                     "product_owner": 20,
                     "architect": 20,
@@ -27,6 +28,11 @@ def make_config() -> Config:
                     "qa": 20,
                     "career_coach": 20,
                 },
+            },
+            "pricing": {
+                "strong": {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0},
+                "fast": {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125},
+                "web_search_usd_per_request": 0.01,
             },
         }
     )
