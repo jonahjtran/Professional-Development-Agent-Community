@@ -77,6 +77,7 @@ class AgentRequest(BaseModel):
     comments: str | None = None
     revision: int = 0
     track: str = "engineering"
+    task_id: str | None = None  # the Developer builds one task per run
     inputs: dict[str, str] = Field(default_factory=dict)  # approved artifacts, by name
 
     model_config = ConfigDict(frozen=True)

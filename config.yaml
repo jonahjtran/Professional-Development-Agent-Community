@@ -14,13 +14,14 @@ budget:
   stage_caps_usd:
     product_owner: 1.5
     architect: 2.5
-    developer: 10.0
+    developer: 3.0
     qa: 2.5
     career_coach: 2.0
 
 limits:
   max_revisions: 3 # per stage, then ask the human
   max_qa_loops: 2 # QA -> Developer round trips before the human gate
+  max_task_usd: 2.0 # one Developer task; the SDK stops the run at this spend
   max_web_searches: 5 # per agent call, for agents allowed to search the web
   max_turns: # per agent run
     product_owner: 20

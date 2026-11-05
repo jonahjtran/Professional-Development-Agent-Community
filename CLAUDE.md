@@ -57,4 +57,7 @@ git-ignored. Never stage, commit, or push anything in it.
 ## Layout
 
 The layout is fixed in the build plan ("Repo layout and tech stack"). Directories are added as
-the phases need them. Agents work in a separate target repo's worktree, never in this repo.
+the phases need them. Agents work in a git worktree of the target repository (this repo by default) on an
+`agent/<task-id>` branch, never in your checkout. The orchestrator, not the agent, pushes and opens
+the PR. When the target is this repo, the agent cannot edit its control files (see
+`orchestrator/worktree.py`).

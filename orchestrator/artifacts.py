@@ -15,6 +15,7 @@ from orchestrator.state import Artifact, ProjectState, Stage, atomic_write
 STAGE_INPUTS: dict[Stage, tuple[str, ...]] = {
     Stage.PRODUCT_OWNER: (),
     Stage.ARCHITECT: ("prd.json",),
+    Stage.DEVELOPER: ("tasks.json", "architecture.md"),
 }
 
 

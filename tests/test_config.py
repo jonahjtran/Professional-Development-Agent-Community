@@ -27,6 +27,7 @@ def valid_config() -> dict[str, Any]:
         "limits": {
             "max_revisions": 3,
             "max_qa_loops": 2,
+            "max_task_usd": 2.0,
             "max_web_searches": 5,
             "max_turns": {
                 "product_owner": 20,
@@ -156,3 +157,9 @@ def test_the_shipped_config_has_pricing_for_both_tiers() -> None:
 
     assert config.pricing.for_tier("strong").input > config.pricing.for_tier("fast").input
     assert config.limits.max_web_searches >= 0
+
+
+def test_the_shipped_config_limits_one_developer_task() -> None:
+    config = load_config(REPO_ROOT / "config.yaml")
+
+    assert 0 < config.limits.max_task_usd <= config.budget.stage_caps_usd.developer
