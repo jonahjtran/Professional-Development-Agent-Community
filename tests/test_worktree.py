@@ -241,3 +241,21 @@ def test_an_existing_folder_is_refused_even_without_a_branch(repo: Path) -> None
         create_worktree(repo, "T1")
 
     assert (target / "leftover.txt").exists()
+
+
+def test_resuming_checks_out_the_existing_branch_with_its_commits(repo: Path) -> None:
+    first = create_worktree(repo, "T1")
+    (first.path / "b.py").write_text("y = 2\n")
+    git(first.path, "add", "-A")
+    git(first.path, "commit", "-q", "-m", "work")
+    remove_worktree(first)
+
+    again = create_worktree(repo, "T1", resume=True)
+
+    assert (again.path / "b.py").exists()
+    assert commits_ahead(again) == 1
+    assert git(again.path, "rev-parse", "--abbrev-ref", "HEAD") == "agent/T1"
+
+
+def test_resuming_with_no_existing_branch_just_creates_it(repo: Path) -> None:
+    assert create_worktree(repo, "T1", resume=True).branch == "agent/T1"

@@ -57,9 +57,18 @@ def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
 
 
 def create_worktree(
-    repo: Path, task_id: str, *, base: str = "main", root: Path | None = None
+    repo: Path,
+    task_id: str,
+    *,
+    base: str = "main",
+    root: Path | None = None,
+    resume: bool = False,
 ) -> Worktree:
-    """Create `agent/<task_id>` in a new worktree, cut from the latest `base`."""
+    """Create `agent/<task_id>` in a new worktree, cut from the latest `base`.
+
+    With `resume`, an existing task branch is checked out again (for a revision) instead of
+    being created.
+    """
     if not _TASK_ID.match(task_id):
         raise WorktreeError(f"unsafe task id: {task_id!r}")
     repo = repo.resolve()
@@ -85,7 +94,10 @@ def create_worktree(
         raise WorktreeError(f"base branch {base_ref} does not exist")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    _git(repo, "worktree", "add", "--quiet", "-b", branch, str(path), base_ref)
+    if resume and _ok(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
+        _git(repo, "worktree", "add", "--quiet", str(path), branch)
+    else:
+        _git(repo, "worktree", "add", "--quiet", "-b", branch, str(path), base_ref)
     return Worktree(repo=repo, path=path, branch=branch, base=base_ref)
 
 
@@ -111,3 +123,21 @@ def protected_for(repo: Path, *, studio_root: Path) -> tuple[str, ...]:
     if repo.resolve() == studio_root.resolve():
         return SELF_PROTECTED
     return ()
+
+
+def head_sha(path: Path) -> str:
+    return _git(path, "rev-parse", "HEAD").stdout.strip()
+
+
+def branch_sha(repo: Path, branch: str) -> str | None:
+    """The commit a local branch points at, or None if there is no such branch."""
+    result = _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def local_branches(repo: Path) -> set[str]:
+    return set(_git(repo, "branch", "--format=%(refname:short)").stdout.split())
+
+
+def delete_branch(repo: Path, branch: str) -> None:
+    _git(repo, "branch", "-D", branch)

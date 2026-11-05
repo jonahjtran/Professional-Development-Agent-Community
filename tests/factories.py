@@ -20,6 +20,7 @@ def make_config() -> Config:
             "limits": {
                 "max_revisions": 3,
                 "max_qa_loops": 2,
+                "max_task_usd": 2.0,
                 "max_web_searches": 5,
                 "max_turns": {
                     "product_owner": 20,
