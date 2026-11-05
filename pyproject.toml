@@ -26,7 +26,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["orchestrator"]
+packages = ["orchestrator", "schemas"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -41,7 +41,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["orchestrator", "tests"]
+files = ["orchestrator", "schemas", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["yaml"]
