@@ -9,6 +9,7 @@ the work back to the developer, up to `limits.max_qa_loops` times, then goes to 
 """
 
 import difflib
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ from orchestrator.budget import (
 )
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
 from orchestrator.config import Config
+from orchestrator.designrecord import DesignRecordError, publish_design_record
 from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
 from orchestrator.halt import halt_requested
 from orchestrator.publish import PublishError
@@ -47,6 +49,7 @@ from orchestrator.state import (
     save_state,
 )
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
+from orchestrator.worktree import WorktreeError
 from schemas import DevResult, TaskList
 from schemas.tasks import Task
 
@@ -153,6 +156,8 @@ class PipelineContext:
     # When set, the Developer stage becomes a loop: one task at a time, each published as a pull
     # request and reviewed at a gate. When None, the Developer stage is a plain agent call.
     publisher: TaskPublisher | None = None
+    # The project's own repository; with a publisher it receives the design record as a first PR.
+    repo: Path | None = None
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -390,6 +395,12 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
             current_task_id=None,
             revisions={**state.revisions, Stage.DEVELOPER: 0},
         )
+    if state.stage == Stage.ARCHITECT and ctx.publisher is not None and ctx.repo is not None:
+        try:
+            state = _publish_design_record(state, ctx)
+        except (DesignRecordError, PublishError, WorktreeError) as error:
+            _trace(ctx, state, EventType.TRANSITION, details={"error": str(error)})
+            return state.evolve(status=Status.HALTED)
     if state.stage == Stage.CAREER_COACH:
         _trace(ctx, state, EventType.TRANSITION, details={"to": "done"})
         return state.evolve(status=Status.DONE)
@@ -462,6 +473,23 @@ def _trace_agent_end(
         latency_ms=int((time.monotonic() - started) * 1000),
         details={**details, "web_searches": result.web_searches},
     )
+
+
+def _publish_design_record(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """Open the approved PRD, architecture and decisions as the project repo's first PR."""
+    assert ctx.publisher is not None and ctx.repo is not None
+    url = publish_design_record(
+        state,
+        repo=ctx.repo,
+        runs_dir=ctx.runs_dir,
+        publisher=ctx.publisher,
+    )
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    artifact = store.write("design_record.json", json.dumps({"pr_url": url}, indent=2), revision=1)
+    state = record_artifacts(state, {"design_record.json": artifact})
+    state = approve_artifacts(state, ["design_record.json"], now=datetime.now(UTC))
+    _trace(ctx, state, EventType.TRANSITION, details={"design_record_pr": url})
+    return state
 
 
 def _next_task(state: ProjectState, ctx: PipelineContext) -> Task | None:
