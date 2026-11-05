@@ -172,6 +172,7 @@ def _new_project(
             track=track,
             repo_path=repo_path,
             repo_url=repo_url,
+            agent=agent.value,
         )
     except (ValueError, ValidationError) as error:
         raise _fail(f"Invalid project name: {error}") from None
@@ -361,6 +362,9 @@ def ui(
     open_browser: Annotated[
         bool, typer.Option("--open/--no-open", help="Open the browser.")
     ] = True,
+    mac_notify: Annotated[
+        bool, typer.Option("--mac-notify", help="Also raise macOS notifications.")
+    ] = False,
 ) -> None:
     """Open the web UI. It listens on this machine only."""
     import threading
@@ -368,6 +372,7 @@ def ui(
 
     import uvicorn
 
+    from orchestrator.ui import notify
     from orchestrator.ui.app import create_app
 
     try:
@@ -380,7 +385,20 @@ def ui(
     typer.echo(f"Agent Studio UI at {url} (Ctrl-C to stop)")
     if open_browser:
         threading.Timer(1.0, webbrowser.open, args=[url]).start()
-    uvicorn.run(create_app(runs_dir, loaded), host="127.0.0.1", port=port, log_level="warning")
+    stop = threading.Event()
+    if mac_notify:
+        threading.Thread(
+            target=notify.watch, args=(runs_dir, notify.mac_notify, stop), daemon=True
+        ).start()
+    try:
+        uvicorn.run(
+            create_app(runs_dir, loaded, config_path=config),
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+        )
+    finally:
+        stop.set()
 
 
 @app.command()

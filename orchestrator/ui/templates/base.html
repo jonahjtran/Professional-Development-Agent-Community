@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf" content="{{ csrf }}">
   <title>{% block title %}Agent Studio{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -10,7 +11,10 @@
   <header>
     <a href="/">Agent Studio</a>
     <a class="muted" href="/">Projects</a>
+    <a class="muted" href="/inbox">Inbox <span id="badge"></span></a>
+    <button id="notify" style="margin-left:auto" hidden>Enable notifications</button>
   </header>
   <main>{% block body %}{% endblock %}</main>
+<script src="/static/notify.js"></script>
 </body>
 </html>

@@ -5,9 +5,19 @@
 <h1>{{ s.slug }}
   <span class="pill {{ s.status.value|replace('awaiting_human', 'waiting') }}">{{ s.status.value|replace('_', ' ') }}</span></h1>
 <p class="muted">{{ s.idea }}</p>
-{% if s.detail %}<div class="banner">{{ s.detail }}</div>{% endif %}
-{% if s.status.value == 'running' and not s.alive %}
-<div class="banner">The run is not active. Resume it with <code>studio resume {{ s.slug }} --agent full --ui</code>.</div>
+{% for q in pending %}
+<div class="banner"><a href="/p/{{ s.slug }}/q/{{ q.id }}">{{ describe(q)[0] }}</a> — {{ describe(q)[1] }}</div>
+{% endfor %}
+{% if s.detail and not pending %}<div class="banner">{{ s.detail }}</div>{% endif %}
+{% if s.status.value in ('running', 'awaiting_human') and not s.alive %}
+<div class="banner">The run is not active (it stopped, or it was never started from here).
+  <form method="post" action="/p/{{ s.slug }}/resume" style="display:inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume</button></form>
+  <span class="muted">or <code>studio resume {{ s.slug }} --agent full --ui</code></span></div>
+{% endif %}
+{% if s.status.value in ('running', 'awaiting_human') %}
+<form method="post" action="/p/{{ s.slug }}/halt" onsubmit="return confirm('Stop {{ s.slug }} before its next step?')">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><button>Halt (kill switch)</button></form>
 {% endif %}
 
 <div class="steps">
