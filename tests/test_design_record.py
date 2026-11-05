@@ -28,6 +28,14 @@ def git(path: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+@pytest.fixture(autouse=True)
+def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orchestrator commits as whoever is running it. CI has no git identity, so give one."""
+    for key in ("GIT_AUTHOR", "GIT_COMMITTER"):
+        monkeypatch.setenv(f"{key}_NAME", "Test User")
+        monkeypatch.setenv(f"{key}_EMAIL", "test@example.invalid")
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     path = tmp_path / "project"
