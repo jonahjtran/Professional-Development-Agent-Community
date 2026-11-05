@@ -171,7 +171,7 @@ def test_the_agent_is_confined_to_its_worktree_with_a_strict_setup(
     harness.runner().run(request())
 
     options = harness.options[0]
-    assert Path(str(options.cwd)) == tmp_path / "project-worktrees" / "T1"
+    assert Path(str(options.cwd)) == tmp_path / "worktrees" / "project" / "T1"
     assert options.model == "strong-model-id"
     assert options.max_turns == 40
     assert options.max_budget_usd == 2.0
@@ -290,7 +290,7 @@ def test_the_branch_keeps_the_work_and_the_worktree_is_cleaned_up(
 
     assert git(repo, "rev-list", "--count", "main..agent/T1") == "1"
     assert git(repo, "show", "agent/T1:events.py") == "TABLE = 'events'"
-    assert not (tmp_path / "project-worktrees" / "T1").exists()
+    assert not (tmp_path / "worktrees" / "project" / "T1").exists()
     assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
 
 
@@ -317,7 +317,7 @@ def test_no_commits_is_an_error_even_if_the_agent_says_it_is_done(
         Harness(repo, tmp_path, lazy).runner().run(request())
 
     assert error.value.cost_usd == pytest.approx(0.5)  # the call still cost money
-    assert not (tmp_path / "project-worktrees" / "T1").exists()
+    assert not (tmp_path / "worktrees" / "project" / "T1").exists()
 
 
 def test_uncommitted_changes_are_an_error_because_they_would_be_lost(
@@ -444,7 +444,7 @@ def test_an_unknown_task_is_an_error_before_anything_is_created(repo: Path, tmp_
     with pytest.raises(AgentError, match="T9"):
         Harness(repo, tmp_path).runner().run(request(task_id="T9"))
 
-    assert not (tmp_path / "project-worktrees").exists()
+    assert not (tmp_path / "worktrees" / "project").exists()
 
 
 def test_a_request_with_no_task_is_an_error(repo: Path, tmp_path: Path) -> None:
@@ -459,7 +459,7 @@ def test_a_crash_in_the_session_still_removes_the_worktree(repo: Path, tmp_path:
     with pytest.raises(RuntimeError):
         Harness(repo, tmp_path, crash).runner().run(request())
 
-    assert not (tmp_path / "project-worktrees" / "T1").exists()
+    assert not (tmp_path / "worktrees" / "project" / "T1").exists()
 
 
 def test_a_worktree_problem_becomes_an_agent_error(repo: Path, tmp_path: Path) -> None:

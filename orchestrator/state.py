@@ -103,6 +103,8 @@ class ProjectState(BaseModel):
     gate_history: list[GateRecord] = Field(default_factory=list)
     allowances: Allowances = Field(default_factory=Allowances)
     track: Track = Track.ENGINEERING
+    repo_path: str | None = None  # the project's own git repository (set for --agent full)
+    repo_url: str | None = None  # its origin address, with no credentials in it
     artifacts: dict[str, Artifact] = Field(default_factory=dict)
     completed_tasks: list[str] = Field(default_factory=list)  # Developer tasks approved so far
     qa_loops: Annotated[int, Field(ge=0)] = 0  # times QA has sent the work back to the Developer

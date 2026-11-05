@@ -11,6 +11,7 @@ from tests.factories import make_config
 
 runner = CliRunner()
 REPO_CONFIG = Path(__file__).parent.parent / "config.yaml"
+URL = "https://github.com/me/project.git"
 
 
 @pytest.fixture
@@ -18,6 +19,11 @@ def git_repo(tmp_path: Path) -> Path:
     path = tmp_path / "project"
     path.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/me/project.git"],
+        cwd=path,
+        check=True,
+    )
     return path
 
 
@@ -35,7 +41,7 @@ def test_the_full_option_publishes_pull_requests_and_stores_documents(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_not_real")
 
-    ctx = _context(REPO_CONFIG, tmp_path, AgentKind.FULL, git_repo)
+    ctx = _context(REPO_CONFIG, tmp_path, AgentKind.FULL, git_repo, URL)
 
     assert isinstance(ctx.publisher, Publisher)
     assert set(ctx.stages) >= {"product_owner", "architect"}
@@ -43,7 +49,7 @@ def test_the_full_option_publishes_pull_requests_and_stores_documents(
 
 def test_the_other_options_have_no_publisher(tmp_path: Path, git_repo: Path) -> None:
     for kind in (AgentKind.ECHO, AgentKind.CLAUDE):
-        assert _context(REPO_CONFIG, tmp_path, kind, git_repo).publisher is None
+        assert _context(REPO_CONFIG, tmp_path, kind, git_repo, URL).publisher is None
 
 
 def test_full_stops_early_without_a_github_token(

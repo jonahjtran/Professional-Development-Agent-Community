@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,12 @@ def live_skip_reason(*, live_flag: bool, api_key: str | None) -> str | None:
     if not api_key:
         return "live tests need ANTHROPIC_API_KEY to be set"
     return None
+
+
+@pytest.fixture(autouse=True)
+def _worktrees_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never create worktrees in the real ~/.cache; they go under the test's tmp folder."""
+    monkeypatch.setenv("AGENT_STUDIO_WORKTREES", str(tmp_path / "worktrees"))
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -8,6 +8,7 @@ from orchestrator.worktree import (
     WorktreeError,
     commits_ahead,
     create_worktree,
+    default_worktree_root,
     discard_unused,
     has_uncommitted_changes,
     protected_for,
@@ -54,7 +55,7 @@ def test_a_worktree_is_a_new_branch_cut_from_main(repo: Path) -> None:
 def test_the_worktree_lives_outside_the_repo_next_to_it(repo: Path) -> None:
     wt = create_worktree(repo, "T1")
 
-    assert wt.path == repo.parent / "project-worktrees" / "T1"
+    assert wt.path == repo.parent / "worktrees" / "project" / "T1"
     assert repo not in wt.path.parents
 
 
@@ -235,7 +236,7 @@ def test_a_symlinked_path_to_the_studio_repo_still_counts_as_it(tmp_path: Path) 
 
 
 def test_an_existing_folder_is_refused_even_without_a_branch(repo: Path) -> None:
-    target = repo.parent / "project-worktrees" / "T1"
+    target = repo.parent / "worktrees" / "project" / "T1"
     target.mkdir(parents=True)
     (target / "leftover.txt").write_text("someone's files")
 
@@ -315,3 +316,29 @@ def test_real_files_are_reported_by_name_even_next_to_caches(repo: Path) -> None
     (wt.path / "app.py").write_text("changed\n")
 
     assert sorted(uncommitted_paths(wt)) == ["app.py", "forgotten.py"]
+
+
+def test_worktrees_default_to_a_cache_folder_outside_the_repos(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_STUDIO_WORKTREES")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    root = default_worktree_root(repo)
+
+    assert root == tmp_path / "home" / ".cache" / "agent-studio" / "worktrees" / "project"
+
+
+def test_the_worktree_folder_can_be_overridden_with_an_environment_variable(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_STUDIO_WORKTREES", str(tmp_path / "elsewhere"))
+
+    assert default_worktree_root(repo) == tmp_path / "elsewhere" / "project"
+    assert create_worktree(repo, "T1").path == tmp_path / "elsewhere" / "project" / "T1"
+
+
+def test_each_project_gets_its_own_worktree_folder(tmp_path: Path) -> None:
+    one, two = tmp_path / "one", tmp_path / "two"
+
+    assert default_worktree_root(one) != default_worktree_root(two)
