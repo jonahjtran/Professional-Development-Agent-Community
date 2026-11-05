@@ -1,0 +1,2 @@
+timestamp,git_sha,prompt_version,model,dataset,runs,accuracy,false_passes,reports_correct,cost_usd,mean_latency_s
+2026-11-05T19:53:11+00:00,57a242e,v1,claude-haiku-5-5,qa,3,1.000,0,36/36,0.0145,2.49

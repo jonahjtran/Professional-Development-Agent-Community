@@ -53,6 +53,15 @@ report goes to you at the gate, never back to the Developer automatically. Insta
 (`brew install gitleaks`) or the secret scan is skipped and the report fails. QA live test:
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
 
+## Evals
+
+`uv run --env-file .env python -m evals.run --agent qa [--prompt-version v1] [--tier fast] [--runs 3]`
+runs the real QA agent on 12 tiny projects with known-right verdicts (`evals/qa_cases.py`) and
+appends a row to `evals/results.csv`: accuracy, false passes (the dangerous error: calling an
+unproven criterion pass), reports correct, cost, latency. Cost is a cent or two. Change one thing
+at a time (prompt version or model tier), rerun, and compare rows. Add a case whenever a real run
+shows the agent getting something wrong. There is an eval for QA only so far.
+
 The end-to-end live test creates and deletes a real repository on your account, so it needs its own
 switch: `AGENT_STUDIO_LIVE_E2E=1 uv run --env-file .env pytest tests/live --live -s -k end_to_end`.
 
