@@ -42,6 +42,17 @@ only ever pushes `agent/` branches to that recorded repository. Worktrees live i
 `~/.cache/agent-studio/worktrees` (override with `AGENT_STUDIO_WORKTREES`); projects are cloned to
 `~/Desktop/Github` (override with `AGENT_STUDIO_PROJECTS`).
 
+## QA
+
+After the last Developer task is approved, merge its pull requests on GitHub. QA asks you to confirm
+the merges, then runs the real tools (tests, lint, types, dependency audit, secret scan; set in
+`config.yaml` under `qa:`) in a throwaway checkout of `main`. The QA agent only judges whether each
+acceptance criterion has a test that proves it. `passed` is computed by rule: any failed or skipped
+tool, or any `fail` verdict, fails the report; `untested` is shown but does not fail it. A failing
+report goes to you at the gate, never back to the Developer automatically. Install `gitleaks`
+(`brew install gitleaks`) or the secret scan is skipped and the report fails. QA live test:
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
+
 The end-to-end live test creates and deletes a real repository on your account, so it needs its own
 switch: `AGENT_STUDIO_LIVE_E2E=1 uv run --env-file .env pytest tests/live --live -s -k end_to_end`.
 
