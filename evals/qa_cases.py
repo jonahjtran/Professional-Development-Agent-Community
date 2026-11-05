@@ -34,6 +34,7 @@ class QaCase:
     expected: tuple[Verdict, Verdict]  # for GREET, then DOUBLE
     tests_status: CheckStatus  # what the real pytest run should report
     passed: bool  # whether the whole report should pass
+    criteria: tuple[str, str] = (GREET, DOUBLE)
 
 
 P, F, U = Verdict.PASS, Verdict.FAIL, Verdict.UNTESTED
@@ -158,5 +159,54 @@ CASES: tuple[QaCase, ...] = (
         (P, U),
         CheckStatus.PASSED,
         True,
+    ),
+    QaCase(
+        "skipped_test",
+        "The only test of double() is marked skip: the suite is green but nothing ran.",
+        {
+            "pyproject.toml": PYPROJECT,
+            "app.py": APP_OK,
+            "tests/test_greet.py": TEST_GREET,
+            "tests/test_double.py": (
+                "import pytest\nfrom app import double\n\n\n"
+                '@pytest.mark.skip(reason="flaky")\n'
+                "def test_double():\n    assert double(4) == 8\n"
+            ),
+        },
+        (P, U),
+        CheckStatus.PASSED,
+        True,
+    ),
+    QaCase(
+        "no_assertion",
+        "A test calls double() but asserts nothing about the result.",
+        {
+            "pyproject.toml": PYPROJECT,
+            "app.py": APP_OK,
+            "tests/test_greet.py": TEST_GREET,
+            "tests/test_double.py": (
+                "from app import double\n\n\ndef test_double():\n    double(4)\n"
+            ),
+        },
+        (P, U),
+        CheckStatus.PASSED,
+        True,
+    ),
+    QaCase(
+        "edge_not_covered",
+        "The criterion includes negative numbers, but the only test uses a positive one "
+        "(and the code is wrong for negatives).",
+        {
+            "pyproject.toml": PYPROJECT,
+            "app.py": APP_OK.replace("n * 2", "abs(n) * 2"),
+            "tests/test_greet.py": TEST_GREET,
+            "tests/test_double.py": (
+                "from app import double\n\n\ndef test_double():\n    assert double(4) == 8\n"
+            ),
+        },
+        (P, U),
+        CheckStatus.PASSED,
+        True,
+        (GREET, DOUBLE + ", including negative numbers"),
     ),
 )

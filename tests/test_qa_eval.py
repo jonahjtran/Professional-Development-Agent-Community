@@ -232,3 +232,12 @@ def test_each_run_appends_one_row_and_the_header_is_written_once(tmp_path: Path)
     assert rows[0]["prompt_version"] == "v1" and rows[0]["model"] == "fast-model-id"
     assert rows[0]["timestamp"] == "2026-11-05T12:00:00+00:00"
     assert rows[0]["reports_correct"] == "2/2"
+
+
+def test_a_case_can_set_its_own_criteria() -> None:
+    oracle = Oracle()
+    case = next(c for c in CASES if c.name == "edge_not_covered")
+
+    run_case(case, oracle)
+
+    assert "including negative numbers" in oracle.requests[0].inputs["tasks.json"]

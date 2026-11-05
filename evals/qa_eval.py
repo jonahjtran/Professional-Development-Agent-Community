@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from evals.qa_cases import DOUBLE, GREET, QaCase
+from evals.qa_cases import QaCase
 from orchestrator.config import CheckCommand, QaConfig
 from orchestrator.pipeline import AgentError, AgentRequest, AgentRunner
 from orchestrator.qa_checks import collect_tests, run_checks
@@ -133,7 +133,7 @@ def run_case(case: QaCase, runner: AgentRunner) -> CaseRun:
                     "id": "T1",
                     "title": "Greeting and doubling",
                     "description": "Two small functions.",
-                    "acceptance_criteria": [GREET, DOUBLE],
+                    "acceptance_criteria": list(case.criteria),
                     "depends_on": [],
                     "size": "S",
                 }
