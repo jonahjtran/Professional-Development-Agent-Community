@@ -241,3 +241,45 @@ def test_a_case_can_set_its_own_criteria() -> None:
     run_case(case, oracle)
 
     assert "including negative numbers" in oracle.requests[0].inputs["tasks.json"]
+
+
+# --- the command line ------------------------------------------------------------------------
+
+
+def test_the_command_runs_the_eval_prints_the_summary_and_appends_a_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from evals import run as run_module
+
+    monkeypatch.setattr(
+        run_module, "qa_runner", lambda *_args: Scripted(Verdict.PASS, Verdict.PASS)
+    )
+    out = tmp_path / "results.csv"
+
+    result = CliRunner().invoke(run_module.app, ["--agent", "qa", "--output", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert "accuracy" in result.output and "Appended a row" in result.output
+    assert len(list(csv.DictReader(out.open()))) == 1
+
+
+def test_an_agent_without_an_eval_is_rejected_before_anything_is_spent(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from evals import run as run_module
+
+    result = CliRunner().invoke(run_module.app, ["--agent", "architect"])
+
+    assert result.exit_code == 1 and "only 'qa' exists" in result.output
+
+
+def test_the_runner_pins_the_prompt_version_and_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from evals import run as run_module
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    runner = run_module.qa_runner(run_module.ROOT / "config.yaml", "v1", "strong")
+
+    qa_spec = runner._inner._specs[run_module.Stage.QA]  # type: ignore[attr-defined]
+    assert (qa_spec.prompt.version, qa_spec.tier) == ("v1", "strong")
