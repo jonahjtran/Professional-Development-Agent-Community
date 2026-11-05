@@ -17,6 +17,8 @@ every place it appears:
 The coach is allowed to say "this does not belong on your resume." Skipping is a normal outcome and
 comes with a reason.
 
+The coach knows how consulting resumes are read: one page, results and leadership first, and a technical side project often earns one line or none. It can recommend the website and GitHub only, which is a good outcome.
+
 Out of scope for this phase: the gap analysis, project recommendations and the job-postings MCP
 server from the build plan. They feed the Product Owner, not the career material, so they get their
 own phase later.
@@ -42,10 +44,10 @@ own phase later.
 | # | Decision | Recommendation | Why |
 |---|----------|----------------|-----|
 | C1 | Where does your resume data live? | A **private** repo `career-profile`, cloned next to your other repos, found through `AGENT_STUDIO_PROFILE`. It holds `resume.yaml`, `goals.yaml` and later the gap reports. | This repository is public, and a resume holds contact details. A private repo is versioned, backed up and keeps the history of what was proposed. |
-| C2 | What is the resume "source"? | Start with `resume.yaml` (a structured copy made from your PDF) plus a Markdown diff of proposed changes. Add a patch for the real source once you tell me what makes the PDF (LaTeX, Overleaf, Word). | The PDF cannot be edited reliably. Structured data lets code check page budget and evidence. |
+| C2 | What is the resume "source"? | **LaTeX on Overleaf, downloaded as a PDF.** There is no local `.tex`, so the coach does not edit a file. It produces **paste-ready LaTeX snippets** in your template's own macros (you give me one sample entry so the snippets match), plus a plain-language list of what to add, replace or cut. You paste them into Overleaf and compile. `resume.yaml` in the private profile repo (seeded from your PDF) is the data the coach validates against. If you later turn on Overleaf's GitHub sync, the snippets can become a PR. | There is nothing local to patch. Snippets in your own macros are the nearest thing to a safe edit, and the structured copy keeps the claim checks working. |
 | C3 | How does the website change? | A **pull request** on `jonahjtran.github.io` that adds an entry to `src/data/projects.js`, in the shape your entries already use. You merge it to publish. | Merge equals deploy, so you keep the final say after the in-pipeline approval. |
 | C4 | Approval style | One checklist gate for the stage: approve or skip each item (resume change, README, case study, website entry, description and topics). "Request changes" re-runs the coach. | The current gates are all-or-nothing. This changes gate behavior, so it needs your sign-off. |
-| C5 | Resume variants | Start with the consulting variant you gave me. The AI-engineering variant is added once you confirm you want one. | Your goals have two tracks, but only one resume exists. |
+| C5 | Resume variants and tracks | One consulting resume (the file you gave me). The two career tracks are **strategy consulting** (MBB and strategy firms such as Strategy&, EY-Parthenon) and **tech consulting**; the coach judges a project against each. | Your goals are consulting only. A technical project may matter for tech consulting and be a skip for a strategy resume. |
 | C6 | Model | Strong tier for the judgement and writing, one call. Code builds the evidence. | Writing quality matters here, and one call per project costs well under a dollar. |
 | C7 | GitHub profile extras | Ask first, each time. They use your own `gh` login, not the agent token. | Repository settings need permissions the token does not have, and a new repo is a visible action. |
 
@@ -97,7 +99,7 @@ All target `main`, merged in order.
 - Declining an item at the gate publishes nothing for it. Approving opens one PR per target and
   nothing else.
 - The website PR changes only `src/data/projects.js`, builds, and is not merged by the orchestrator.
-- The resume change names what it replaces, and the original resume data is never overwritten.
+- The resume change names what it replaces, and the original resume data is never overwritten, and the snippets use only macros from your template.
 - ruff, mypy and pytest are green on every PR, and no personal contact detail is committed here.
 
 ## Risks
