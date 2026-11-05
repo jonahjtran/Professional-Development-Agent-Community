@@ -501,3 +501,17 @@ def test_token_counts_reach_the_trace(tmp_path: Path) -> None:
     lines = [json.loads(x) for x in trace_path(tmp_path, "demo").read_text().splitlines()]
     end = next(e for e in lines if e["event"] == "agent_end")
     assert (end["tokens_in"], end["tokens_out"]) == (11, 7)
+
+
+def test_the_search_count_reaches_the_trace(tmp_path: Path) -> None:
+    import json
+
+    class Searching(FakeAgent):
+        def run(self, request: AgentRequest) -> AgentResult:
+            return AgentResult(output="x", cost_usd=0.1, web_searches=4)
+
+    run_pipeline(start(), make_ctx(tmp_path, Searching()))
+
+    lines = [json.loads(x) for x in trace_path(tmp_path, "demo").read_text().splitlines()]
+    end = next(e for e in lines if e["event"] == "agent_end")
+    assert end["details"]["web_searches"] == 4

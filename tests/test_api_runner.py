@@ -298,3 +298,27 @@ def test_an_api_error_after_a_paused_turn_keeps_the_cost_already_spent() -> None
         runner(client).run(request())
 
     assert error.value.cost_usd == pytest.approx(4.0)
+
+
+# --- search count ------------------------------------------------------------------------------
+
+
+def test_the_result_reports_how_many_web_searches_were_run() -> None:
+    result = runner(FakeClient(response(searches=3))).run(request())
+
+    assert result.web_searches == 3
+
+
+def test_no_server_tool_usage_means_zero_searches() -> None:
+    result = runner(FakeClient(response())).run(request())
+
+    assert result.web_searches == 0
+
+
+def test_searches_are_summed_across_a_paused_turn() -> None:
+    paused = response("", stop_reason="pause_turn", searches=2)
+    done = response("{}", searches=1)
+
+    result = runner(FakeClient(paused, done)).run(request())
+
+    assert result.web_searches == 3
