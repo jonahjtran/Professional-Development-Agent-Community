@@ -1,6 +1,6 @@
 # Phase 6: career coach (sub-plan)
 
-Status: draft for review. Nothing here is built yet.
+Status: approved (all recommendations accepted; the resume is written in LaTeX). Nothing here is built yet.
 
 ## Goal
 
@@ -42,7 +42,7 @@ own phase later.
 | # | Decision | Recommendation | Why |
 |---|----------|----------------|-----|
 | C1 | Where does your resume data live? | A **private** repo `career-profile`, cloned next to your other repos, found through `AGENT_STUDIO_PROFILE`. It holds `resume.yaml`, `goals.yaml` and later the gap reports. | This repository is public, and a resume holds contact details. A private repo is versioned, backed up and keeps the history of what was proposed. |
-| C2 | What is the resume "source"? | Start with `resume.yaml` (a structured copy made from your PDF) plus a Markdown diff of proposed changes. Add a patch for the real source once you tell me what makes the PDF (LaTeX, Overleaf, Word). | The PDF cannot be edited reliably. Structured data lets code check page budget and evidence. |
+| C2 | What is the resume "source"? | **LaTeX.** Keep a structured `resume.yaml` in the private profile repo as the data the coach reasons over and validates (evidence, one-page budget). Once approved, code patches your `.tex` source: it inserts or replaces `\resumeItem`-style entries in your own template and never rewrites the template. You compile the PDF yourself. | The `.tex` is the real source, so the coach should edit it instead of a copy that drifts. The structured data is what lets code check claims. |
 | C3 | How does the website change? | A **pull request** on `jonahjtran.github.io` that adds an entry to `src/data/projects.js`, in the shape your entries already use. You merge it to publish. | Merge equals deploy, so you keep the final say after the in-pipeline approval. |
 | C4 | Approval style | One checklist gate for the stage: approve or skip each item (resume change, README, case study, website entry, description and topics). "Request changes" re-runs the coach. | The current gates are all-or-nothing. This changes gate behavior, so it needs your sign-off. |
 | C5 | Resume variants | Start with the consulting variant you gave me. The AI-engineering variant is added once you confirm you want one. | Your goals have two tracks, but only one resume exists. |
@@ -83,7 +83,7 @@ All target `main`, merged in order.
    renders the plan, and the inputs it may read.
 3. **The checklist gate.** Per-item approve or skip, answers to questions saved as `human`
    evidence, and the pipeline moving from QA to the coach to done. Needs your sign-off (C4).
-4. **Publishing.** The project docs PR, the career-profile PR, the website PR (deterministic
+4. **Publishing.** The `.tex` patch goes with the resume change, in the private repo. The project docs PR, the career-profile PR, the website PR (deterministic
    insertion into `projects.js`, a build check, and the push guard widened from one repo to a short
    allowlist: the project, the website, the profile repo), and the optional GitHub extras.
 5. **Evals, live test and docs.** Programmatic checks on the coach (every bullet has evidence, no
