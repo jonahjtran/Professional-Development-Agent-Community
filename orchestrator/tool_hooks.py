@@ -85,6 +85,7 @@ class ToolPermissionHooks:
         project: str,
         task_id: str,
         branch: Callable[[], str | None] | None = None,
+        halt_check: Callable[[], bool] | None = None,
     ) -> None:
         self._policy = policy
         self._backend = backend
@@ -92,6 +93,7 @@ class ToolPermissionHooks:
         self._project = project
         self._task_id = task_id
         self._branch = branch or (lambda: git_current_branch(policy.worktree))
+        self._halt_check = halt_check or (lambda: False)
 
     def sdk_options(self) -> dict[str, Any]:
         """Keyword arguments to merge into `ClaudeAgentOptions`."""
@@ -136,6 +138,18 @@ class ToolPermissionHooks:
 
     async def pre_tool_use(self, data: Any, tool_use_id: str | None, context: HookContext) -> Any:
         tool, tool_input = data["tool_name"], data["tool_input"]
+        if self._halt_check():  # `studio halt`: stop the agent at its next tool call
+            reason = "a halt was requested with studio halt"
+            self._record(EventType.TOOL_DENIED, tool, tool_input, "halt", reason)
+            return {
+                "continue_": False,
+                "stopReason": reason,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                },
+            }
         decision = self._decide(tool, tool_input)
         if decision.verdict == Verdict.DENY:
             self._record(EventType.TOOL_DENIED, tool, tool_input, "deny", decision.reason)

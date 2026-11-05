@@ -35,6 +35,7 @@ from orchestrator.budget import (
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
 from orchestrator.config import Config
 from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
+from orchestrator.halt import halt_requested
 from orchestrator.publish import PublishError
 from orchestrator.stages import StageSpec
 from orchestrator.state import (
@@ -165,6 +166,16 @@ def advance(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     """Do one unit of progress and save the result."""
     if state.status in (Status.DONE, Status.HALTED):
         raise ValueError(f"the project is finished ({state.status.value}); nothing to advance")
+    if halt_requested(ctx.runs_dir, state.project_slug):  # `studio halt`: stop before any step
+        _trace(
+            ctx,
+            state,
+            EventType.TRANSITION,
+            details={"to": "halted", "reason": "a halt was requested with studio halt"},
+        )
+        halted = state.evolve(status=Status.HALTED, intervention=None)
+        _save(halted, ctx)
+        return halted
     new = (
         _answer_pause(state, ctx)
         if state.status == Status.AWAITING_HUMAN

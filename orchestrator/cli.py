@@ -20,6 +20,7 @@ from orchestrator.default_specs import (
 )
 from orchestrator.dev_runner import DevRunner
 from orchestrator.echo_agent import EchoAgent
+from orchestrator.halt import request_halt
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
 from orchestrator.prompts import load_prompt
 from orchestrator.publish import Publisher, PublishError, load_token
@@ -180,3 +181,20 @@ def resume(
         typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
         return
     _finish(run_pipeline(state, _context(config, runs_dir, agent, repo)))
+
+
+@app.command()
+def halt(
+    project: Annotated[str, typer.Argument(help="Project name.")],
+    runs_dir: RunsDirOption = Path("runs"),
+) -> None:
+    """Stop a running project: it halts before its next step, and a running Developer stops."""
+    try:
+        state = load_state(runs_dir, project)
+    except FileNotFoundError:
+        raise _fail(f"No project named {project} in {runs_dir}") from None
+    if state.status in (Status.DONE, Status.HALTED):
+        typer.echo(f"Project {project} is {state.status.value}; nothing to stop.")
+        return
+    request_halt(runs_dir, project)
+    typer.echo(f"Halt requested. Project {project} will stop before its next step.")
