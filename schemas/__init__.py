@@ -2,7 +2,7 @@
 
 from schemas.architecture import ADR, Architecture, Component, TechChoice
 from schemas.prd import PRD, SuccessMetric, Track
-from schemas.tasks import Size, Task, TaskList
+from schemas.tasks import Size, Task, TaskList, unmapped_metrics
 
 __all__ = [
     "ADR",
@@ -15,4 +15,5 @@ __all__ = [
     "TaskList",
     "TechChoice",
     "Track",
+    "unmapped_metrics",
 ]
