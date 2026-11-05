@@ -160,7 +160,7 @@ def _wait_for_ci(repo: Path, token: str, pr_url: str, timeout: float = 900) -> b
     os.environ.get("AGENT_STUDIO_LIVE_GITHUB") != "1",
     reason="opens a real pull request on this repository: set AGENT_STUDIO_LIVE_GITHUB=1",
 )
-def test_a_task_becomes_a_pull_request_that_passes_ci_on_this_repo(tmp_path: Path) -> None:
+def test_a_task_becomes_a_github_pull_request_that_passes_ci_on_this_repo(tmp_path: Path) -> None:
     token = load_token()
     config = load_config(ROOT / "config.yaml")
     task_id = f"LIVE-{int(time.time())}"
