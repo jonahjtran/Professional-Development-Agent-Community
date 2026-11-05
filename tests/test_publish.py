@@ -60,7 +60,7 @@ def dev_result(**overrides: Any) -> DevResult:
 
 
 def publisher(run: FakeRun, tmp_path: Path) -> Publisher:
-    return Publisher(tmp_path, TOKEN, run=run)
+    return Publisher(tmp_path, TOKEN, expected_url=HTTPS, run=run)
 
 
 def publish(run: FakeRun, tmp_path: Path, result: DevResult | None = None) -> DevResult:

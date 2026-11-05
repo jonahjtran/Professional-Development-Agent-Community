@@ -1,4 +1,5 @@
 import re
+import subprocess
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -23,7 +24,7 @@ from orchestrator.echo_agent import EchoAgent
 from orchestrator.halt import request_halt
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
 from orchestrator.prompts import load_prompt
-from orchestrator.publish import Publisher, PublishError, load_token
+from orchestrator.publish import Publisher, PublishError, load_token, strip_credentials
 from orchestrator.runner import SdkRunner
 from orchestrator.state import ProjectState, Stage, Status, load_state, state_path
 from schemas import Track
@@ -45,7 +46,8 @@ class AgentKind(StrEnum):
 AgentOption = Annotated[AgentKind, typer.Option("--agent", help="Which agent runs the stages.")]
 ConfigOption = Annotated[Path, typer.Option("--config", help="Path to config.yaml.")]
 RepoOption = Annotated[
-    Path, typer.Option("--repo", help="The git repository the Developer works in.")
+    Path | None,
+    typer.Option("--repo", help="The project's own git repository (required for --agent full)."),
 ]
 RunsDirOption = Annotated[Path, typer.Option("--runs-dir", help="Where projects are stored.")]
 
@@ -83,7 +85,7 @@ def _fail(message: str) -> typer.Exit:
 
 
 def make_runner(
-    kind: AgentKind, config: Config, runs_dir: Path, repo: Path = Path(".")
+    kind: AgentKind, config: Config, runs_dir: Path, repo: Path | None = None
 ) -> AgentRunner:
     if kind == AgentKind.CLAUDE:
         return SdkRunner(config, runs_dir, default_specs())
@@ -91,6 +93,8 @@ def make_runner(
         planner = ValidatingRunner(ApiRunner(config, default_api_specs()), default_api_schemas())
         if kind == AgentKind.API:
             return planner
+        if repo is None:
+            raise ValueError("the full pipeline needs the project's repository")
         developer = DevRunner(
             config, runs_dir, repo.resolve(), CliToolBackend(), load_prompt("developer")
         )
@@ -104,8 +108,62 @@ def make_runner(
     return EchoAgent()
 
 
+def _origin_url(repo: Path) -> str | None:
+    done = subprocess.run(
+        ["git", "-C", str(repo), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return strip_credentials(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+
+
+def _new_project(
+    idea: str, slug: str | None, track: Track, agent: AgentKind, repo: Path | None
+) -> ProjectState:
+    """Validate the arguments and build the state of a new project; stops early on a problem."""
+    repo_path = repo_url = None
+    if agent == AgentKind.FULL:
+        if repo is None:
+            raise _fail("--agent full needs --repo PATH: the project's own git repository")
+        if not (repo / ".git").exists():
+            raise _fail(f"{repo} is not a git repository; pass --repo")
+        repo_url = _origin_url(repo)
+        if repo_url is None:
+            raise _fail(f"{repo} has no 'origin' remote, and pull requests need one")
+        repo_path = str(repo.resolve())
+    try:
+        return ProjectState(
+            project_slug=slug or slugify(idea),
+            idea=idea,
+            track=track,
+            repo_path=repo_path,
+            repo_url=repo_url,
+        )
+    except (ValueError, ValidationError) as error:
+        raise _fail(f"Invalid project name: {error}") from None
+
+
+def _repo_for_resume(state: ProjectState, agent: AgentKind, repo: Path | None) -> Path | None:
+    """The repository to resume in: the one recorded in the project, never a different one."""
+    if agent != AgentKind.FULL:
+        return None
+    if state.repo_path is None:
+        raise _fail(
+            f"Project {state.project_slug} has no repository recorded; it was not a full run"
+        )
+    recorded = Path(state.repo_path)
+    if repo is not None and repo.resolve() != recorded.resolve():
+        raise _fail(f"Project {state.project_slug} belongs to {recorded}, not {repo}")
+    return recorded
+
+
 def _context(
-    config_path: Path, runs_dir: Path, agent: AgentKind, repo: Path = Path(".")
+    config_path: Path,
+    runs_dir: Path,
+    agent: AgentKind,
+    repo: Path | None = None,
+    repo_url: str | None = None,
 ) -> PipelineContext:
     try:
         config = load_config(config_path)
@@ -115,10 +173,10 @@ def _context(
         raise _fail(f"Invalid config {config_path}:\n{error}") from None
     publisher: Publisher | None = None
     if agent == AgentKind.FULL:
-        if not (repo / ".git").exists():
-            raise _fail(f"{repo} is not a git repository; pass --repo")
+        if repo is None or repo_url is None:
+            raise _fail("--agent full needs the project's repository")
         try:
-            publisher = Publisher(repo.resolve(), load_token())
+            publisher = Publisher(repo.resolve(), load_token(), expected_url=repo_url)
         except PublishError as error:
             raise _fail(str(error)) from None
     return PipelineContext(
@@ -147,20 +205,17 @@ def run(
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
     agent: AgentOption = AgentKind.ECHO,
-    repo: RepoOption = Path("."),
+    repo: RepoOption = None,
     track: Annotated[Track, typer.Option(help="Which kind of PRD to write.")] = Track.ENGINEERING,
 ) -> None:
     """Start a new project and run it until it is done or halted."""
-    try:
-        project = ProjectState(project_slug=slug or slugify(idea), idea=idea, track=track)
-    except (ValueError, ValidationError) as error:
-        raise _fail(f"Invalid project name: {error}") from None
+    project = _new_project(idea, slug, track, agent, repo)
     if state_path(runs_dir, project.project_slug).exists():
         raise _fail(
             f"Project {project.project_slug} already exists. "
             f"Continue it with: studio resume {project.project_slug}"
         )
-    ctx = _context(config, runs_dir, agent, repo)
+    ctx = _context(config, runs_dir, agent, repo, project.repo_url)
     _finish(run_pipeline(project, ctx))
 
 
@@ -170,7 +225,7 @@ def resume(
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
     agent: AgentOption = AgentKind.ECHO,
-    repo: RepoOption = Path("."),
+    repo: RepoOption = None,
 ) -> None:
     """Continue a project from its last saved step, after a crash or Ctrl-C."""
     try:
@@ -180,7 +235,8 @@ def resume(
     if state.status in (Status.DONE, Status.HALTED):
         typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
         return
-    _finish(run_pipeline(state, _context(config, runs_dir, agent, repo)))
+    project_repo = _repo_for_resume(state, agent, repo)
+    _finish(run_pipeline(state, _context(config, runs_dir, agent, project_repo, state.repo_url)))
 
 
 @app.command()

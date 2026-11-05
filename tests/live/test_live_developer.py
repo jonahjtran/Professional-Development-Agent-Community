@@ -184,7 +184,8 @@ def test_a_task_becomes_a_github_pull_request_that_passes_ci_on_this_repo(tmp_pa
         "size": "S",
     }
     runner = DevRunner(config, tmp_path / "runs", ROOT, RecordingHuman(), load_prompt("developer"))
-    publisher = Publisher(ROOT, load_token())
+    origin = git(ROOT, "remote", "get-url", "origin")
+    publisher = Publisher(ROOT, load_token(), expected_url=origin)
     pr_url = None
     try:
         result = DevResult.model_validate_json(runner.run(request_for(task, "live-gh")).output)

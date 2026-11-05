@@ -26,6 +26,17 @@ SELF_PROTECTED = (
 )
 
 
+def default_worktree_root(repo: Path) -> Path:
+    """Where a repo's task worktrees live: outside the repo and outside your Github folder.
+
+    `~/.cache/agent-studio/worktrees/<repo name>`, or under $AGENT_STUDIO_WORKTREES if set.
+    """
+    base = os.environ.get("AGENT_STUDIO_WORKTREES") or str(
+        Path.home() / ".cache" / "agent-studio" / "worktrees"
+    )
+    return Path(base) / repo.name
+
+
 class WorktreeError(Exception):
     """A worktree could not be created or inspected; the message says why."""
 
@@ -76,7 +87,7 @@ def create_worktree(
         raise WorktreeError(f"{repo} is not a git repository")
 
     branch = f"{BRANCH_PREFIX}{task_id}"
-    path = (root or repo.parent / f"{repo.name}-worktrees") / task_id
+    path = (root or default_worktree_root(repo)) / task_id
     # git itself refuses an existing branch or a non-empty folder, with a clear message.
     base_ref = base
     if _ok(repo, "remote", "get-url", "origin"):

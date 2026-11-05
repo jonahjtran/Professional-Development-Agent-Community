@@ -7,6 +7,7 @@ argument list, which other programs can read), and is scrubbed from every error 
 
 import base64
 import os
+import re
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -35,6 +36,20 @@ def run_command(
     )
 
 
+def strip_credentials(url: str) -> str:
+    """The address without any user:password@ part, so it is safe to store and print."""
+    return re.sub(r"^([a-z][a-z0-9+.-]*://)[^/@]*@", r"\1", url.strip(), flags=re.I)
+
+
+def normalize_repo_url(url: str) -> str:
+    """One form for every spelling of a repository address, e.g. `github.com/me/project`."""
+    text = strip_credentials(url).lower().strip()
+    text = re.sub(r"^[a-z][a-z0-9+.-]*://", "", text)  # drop the scheme
+    text = re.sub(r"^[^/@:]+@", "", text)  # drop git@ in the ssh form
+    text = re.sub(r"^([^/:]+):(?!\d+/)", r"\1/", text)  # host:path -> host/path
+    return re.sub(r"(\.git)?/*$", "", text)
+
+
 def load_token(env: Mapping[str, str] = os.environ) -> str:
     token = env.get("GITHUB_TOKEN", "").strip()
     if not token:
@@ -44,10 +59,17 @@ def load_token(env: Mapping[str, str] = os.environ) -> str:
 
 class Publisher:
     def __init__(
-        self, repo: Path, token: str, *, run: Run = run_command, base: str = "main"
+        self,
+        repo: Path,
+        token: str,
+        *,
+        expected_url: str,
+        run: Run = run_command,
+        base: str = "main",
     ) -> None:
         self._repo = repo
         self._token = token
+        self._expected = normalize_repo_url(expected_url)
         self._run = run
         self._base = base
 
@@ -74,6 +96,13 @@ class Publisher:
 
     def _push(self, branch: str) -> None:
         remote = self._call(["git", "remote", "get-url", "origin"], {}, "reading the remote")
+        actual = normalize_repo_url(remote.stdout)
+        if actual != self._expected:
+            # The token may reach many repositories, so only the project's own one is ever pushed.
+            raise PublishError(
+                f"origin is {actual}, but this project's repository is {self._expected}; "
+                "refusing to push"
+            )
         env = {"GIT_TERMINAL_PROMPT": "0"}
         if remote.stdout.strip().startswith("https://"):
             basic = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
