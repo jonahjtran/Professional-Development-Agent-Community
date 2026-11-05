@@ -22,6 +22,7 @@ from orchestrator.default_specs import (
 from orchestrator.dev_runner import DevRunner
 from orchestrator.echo_agent import EchoAgent
 from orchestrator.halt import request_halt
+from orchestrator.newproject import NewProjectError, create_project, default_projects_dir
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
 from orchestrator.prompts import load_prompt
 from orchestrator.publish import Publisher, PublishError, load_token, strip_credentials
@@ -254,3 +255,38 @@ def halt(
         return
     request_halt(runs_dir, project)
     typer.echo(f"Halt requested. Project {project} will stop before its next step.")
+
+
+@app.command()
+def new(
+    name: Annotated[str, typer.Argument(help="Project name (also the repository name).")],
+    public: Annotated[bool, typer.Option("--public", help="Make the repository public.")] = False,
+    projects_dir: Annotated[
+        Path | None, typer.Option(help="Where to clone it (default: ~/Desktop/Github).")
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask for confirmation.")] = False,
+) -> None:
+    """Create a new GitHub repository for a project, with your own gh login, and clone it."""
+
+    def confirm(question: str) -> bool:
+        return yes or typer.confirm(question, default=False)
+
+    try:
+        project = create_project(
+            name, projects_dir or default_projects_dir(), public=public, confirm=confirm
+        )
+    except NewProjectError as error:
+        raise _fail(str(error)) from None
+    visibility = "public" if project.public else "private"
+    typer.echo(f"Created {visibility} repository {project.owner}/{project.name} at {project.path}")
+    typer.echo("Start building in it with:")
+    typer.echo(
+        f'  studio run "<your idea>" --slug {project.name} --agent full --repo {project.path}'
+    )
+    if project.public:
+        typer.echo("Remember to enable branch protection on main (Settings, Rules, Rulesets).")
+    else:
+        typer.echo(
+            "Note: private repositories have no branch protection on GitHub's free plan; "
+            "the orchestrator only pushes agent/ branches and never forces."
+        )
