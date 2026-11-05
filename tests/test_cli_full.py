@@ -23,6 +23,12 @@ def _profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     folder.mkdir()
     for name, text in PROFILE_FILES.items():
         (folder / name).write_text(text)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=folder, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/me/career-profile.git"],
+        cwd=folder,
+        check=True,
+    )
     monkeypatch.setenv("AGENT_STUDIO_PROFILE", str(folder))
 
 

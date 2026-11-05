@@ -35,6 +35,7 @@ from orchestrator.budget import (
     write_cost_report,
 )
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
+from orchestrator.career_publish import CareerPublisher
 from orchestrator.career_stage import CareerError, CareerPreparer, gate_items, human_evidence
 from orchestrator.config import Config
 from orchestrator.designrecord import DesignRecordError, publish_design_record
@@ -176,6 +177,8 @@ class PipelineContext:
     merges: MergeBackend | None = None
     # When set, the career stage first prepares the coach's inputs (profile, website, README).
     career: CareerPreparer | None = None
+    # When set, approved career items are published as pull requests (see career_publish).
+    career_publisher: CareerPublisher | None = None
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -440,6 +443,7 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
             _trace(ctx, state, EventType.TRANSITION, details={"error": str(error)})
             return state.evolve(status=Status.HALTED)
     if state.stage == Stage.CAREER_COACH:
+        state = _publish_career(state, ctx)
         _trace(ctx, state, EventType.TRANSITION, details={"to": "done"})
         return state.evolve(status=Status.DONE)
     return _move(state.evolve(qa_loops=0), ctx, _next_stage(state.stage))
@@ -786,3 +790,28 @@ def _record_career_decision(
         text = json.dumps({"approved_items": decision.approved_items}, indent=2)
         written["career_approved.json"] = store.write("career_approved.json", text, revision=1)
     return record_artifacts(state, written) if written else state
+
+
+def _publish_career(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """Open a pull request for each approved career item, and record where each one went.
+
+    A failure in one target is recorded and never stops the others or the project finishing.
+    """
+    publisher = ctx.career_publisher
+    plan_artifact = state.artifacts.get("career_plan.json")
+    approved_artifact = state.artifacts.get("career_approved.json")
+    if publisher is None or plan_artifact is None or approved_artifact is None:
+        return state
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    plan = CareerPlan.model_validate_json(store.read(plan_artifact))
+    approved = set(json.loads(store.read(approved_artifact))["approved_items"])
+    results = publisher.publish(slug=state.project_slug, plan=plan, approved=approved)
+    _trace(ctx, state, EventType.TRANSITION, details={"career_published": results})
+    if not results:
+        return state
+    artifact = store.write("career_published.json", json.dumps(results, indent=2), revision=1)
+    return approve_artifacts(
+        record_artifacts(state, {"career_published.json": artifact}),
+        ["career_published.json"],
+        now=datetime.now(UTC),
+    )
