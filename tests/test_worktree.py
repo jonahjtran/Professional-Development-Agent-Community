@@ -8,6 +8,7 @@ from orchestrator.worktree import (
     WorktreeError,
     commits_ahead,
     create_worktree,
+    discard_unused,
     has_uncommitted_changes,
     protected_for,
     remove_worktree,
@@ -259,3 +260,32 @@ def test_resuming_checks_out_the_existing_branch_with_its_commits(repo: Path) ->
 
 def test_resuming_with_no_existing_branch_just_creates_it(repo: Path) -> None:
     assert create_worktree(repo, "T1", resume=True).branch == "agent/T1"
+
+
+def test_a_task_id_may_contain_a_hyphen_after_its_first_character(repo: Path) -> None:
+    assert create_worktree(repo, "T1-r2").branch == "agent/T1-r2"
+
+
+def test_leftovers_of_a_crashed_run_with_no_work_in_them_can_be_discarded(repo: Path) -> None:
+    create_worktree(repo, "T1")  # a run that died: folder and branch left behind, no commits
+
+    assert discard_unused(repo, "T1") is True
+
+    assert "agent/T1" not in branches(repo)
+    assert create_worktree(repo, "T1").path.exists()
+
+
+def test_a_branch_with_commits_is_never_discarded(repo: Path) -> None:
+    wt = create_worktree(repo, "T1")
+    (wt.path / "b.py").write_text("y = 2\n")
+    git(wt.path, "add", "-A")
+    git(wt.path, "commit", "-q", "-m", "real work")
+    remove_worktree(wt)
+
+    assert discard_unused(repo, "T1") is False
+
+    assert "agent/T1" in branches(repo)
+
+
+def test_discarding_when_there_is_nothing_left_over_does_nothing(repo: Path) -> None:
+    assert discard_unused(repo, "T1") is False

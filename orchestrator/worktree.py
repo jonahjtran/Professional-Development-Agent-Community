@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BRANCH_PREFIX = "agent/"
-_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._]*$")
+_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # When the target is the orchestrator's own repository, these cannot be edited by the agent.
 SELF_PROTECTED = (
@@ -141,3 +141,22 @@ def local_branches(repo: Path) -> set[str]:
 
 def delete_branch(repo: Path, branch: str) -> None:
     _git(repo, "branch", "-D", branch)
+
+
+def discard_unused(repo: Path, task_id: str) -> bool:
+    """Remove the folder and branch of a crashed run that never made a commit.
+
+    Returns True if something was removed. A branch that has any commits is never touched.
+    """
+    branch = f"{BRANCH_PREFIX}{task_id}"
+    if branch_sha(repo, branch) is None:
+        return False
+    base = "main" if branch_sha(repo, "main") else "HEAD"
+    if int(_git(repo, "rev-list", "--count", f"{base}..{branch}").stdout.strip()) > 0:
+        return False
+    for line in _git(repo, "worktree", "list", "--porcelain").stdout.splitlines():
+        if line.startswith("worktree ") and line.endswith(f"/{task_id}"):
+            _git(repo, "worktree", "remove", "--force", line.removeprefix("worktree "))
+    _git(repo, "worktree", "prune")
+    delete_branch(repo, branch)
+    return True

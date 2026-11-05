@@ -35,6 +35,7 @@ from orchestrator.budget import (
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
 from orchestrator.config import Config
 from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
+from orchestrator.publish import PublishError
 from orchestrator.stages import StageSpec
 from orchestrator.state import (
     GateOutcome,
@@ -45,6 +46,8 @@ from orchestrator.state import (
     save_state,
 )
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
+from schemas import DevResult, TaskList
+from schemas.tasks import Task
 
 __all__ = [
     "AgentError",
@@ -78,6 +81,7 @@ class AgentRequest(BaseModel):
     revision: int = 0
     track: str = "engineering"
     task_id: str | None = None  # the Developer builds one task per run
+    attempt: int = 0  # 0 for the first try at a task; 1, 2, ... after each rejection
     inputs: dict[str, str] = Field(default_factory=dict)  # approved artifacts, by name
 
     model_config = ConfigDict(frozen=True)
@@ -112,6 +116,28 @@ class AgentRunner(Protocol):
     def run(self, request: AgentRequest) -> AgentResult: ...
 
 
+class TaskPublisher(Protocol):
+    """Publishes a finished Developer task as a pull request (see publish.Publisher)."""
+
+    def publish(self, result: DevResult, *, title: str) -> DevResult: ...
+
+    def diff_stat(self, branch: str) -> str: ...
+
+
+class RoutingRunner:
+    """Sends each stage to its own runner, for when stages use different kinds of agent."""
+
+    def __init__(self, runners: Mapping[Stage, AgentRunner], default: AgentRunner | None = None):
+        self._runners = dict(runners)
+        self._default = default
+
+    def run(self, request: AgentRequest) -> AgentResult:
+        runner = self._runners.get(request.stage, self._default)
+        if runner is None:
+            raise AgentError(f"no agent is set up for the {request.stage.value} stage")
+        return runner.run(request)
+
+
 @dataclass(frozen=True)
 class PipelineContext:
     """Everything the pipeline needs from the outside world, passed in so tests can fake it."""
@@ -123,6 +149,9 @@ class PipelineContext:
     caps: CapBackend
     # Stages whose output is a validated document stored as artifacts. Others stay plain text.
     stages: Mapping[Stage, StageSpec] = field(default_factory=dict)
+    # When set, the Developer stage becomes a loop: one task at a time, each published as a pull
+    # request and reviewed at a gate. When None, the Developer stage is a plain agent call.
+    publisher: TaskPublisher | None = None
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -154,12 +183,20 @@ def _run_stage(
     if state.stage == Stage.INTAKE:
         return _move(state, ctx, Stage.PRODUCT_OWNER)
 
+    stage = state.stage
+    loop = stage == Stage.DEVELOPER and ctx.publisher is not None
+    task: Task | None = None
+    if loop:
+        task = _next_task(state, ctx)
+        if task is None:  # every task is built and approved
+            return _move(state, ctx, Stage.QA)
+        state = state.evolve(current_task_id=task.id)
+
     if not budget_checked:
         state = _check_budget(state, ctx)
         if state.status != Status.RUNNING:
             return state
 
-    stage = state.stage
     request = _build_request(state, ctx)
     _trace(ctx, state, EventType.AGENT_START, agent=stage.value)
     started = time.monotonic()
@@ -180,21 +217,20 @@ def _run_stage(
     state = record_cost(state, stage, result.cost_usd)
     spec = ctx.stages.get(stage)
     summary: str | None = None
-    artifact_names: list[str] = []
-    if spec is not None:
-        try:
+    details: dict[str, object] = {}
+    try:
+        if spec is not None:
             state, summary = _store_artifacts(state, ctx, spec, result.output)
-        except ValidationError as error:
-            _trace_agent_end(ctx, state, result, started, details={"error": f"not valid: {error}"})
-            return state.evolve(status=Status.HALTED)
-        artifact_names = sorted(state.artifacts)
-    _trace_agent_end(
-        ctx,
-        state,
-        result,
-        started,
-        details={"artifacts": artifact_names} if spec is not None else {},
-    )
+            details = {"artifacts": sorted(state.artifacts)}
+        elif task is not None:
+            state, summary, details = _publish_task(state, ctx, task, result.output)
+    except ValidationError as error:
+        _trace_agent_end(ctx, state, result, started, details={"error": f"not valid: {error}"})
+        return state.evolve(status=Status.HALTED)
+    except PublishError as error:
+        _trace_agent_end(ctx, state, result, started, details={"error": str(error)})
+        return state.evolve(status=Status.HALTED)
+    _trace_agent_end(ctx, state, result, started, details=details)
 
     if stage == Stage.QA and result.passed is False:
         if state.qa_loops < ctx.config.limits.max_qa_loops:
@@ -208,7 +244,7 @@ def _run_stage(
         output = summary if summary is not None else result.output
     _write_draft(ctx, state, output)
 
-    if stage not in _GATED:
+    if stage not in _GATED and not loop:
         return _move(state, ctx, _next_stage(stage))
 
     waiting = open_gate(state, title=f"Review the {stage.value} output")
@@ -221,9 +257,12 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
     spec = ctx.stages.get(stage)
     store = ArtifactStore(ctx.runs_dir, state.project_slug)
     draft = _read_draft(ctx, state, stage)
+    loop = stage == Stage.DEVELOPER and ctx.publisher is not None
     if spec is not None and spec.json_name in state.artifacts:
         # Revise the document itself, not the version rendered for the human.
         draft = store.read(state.artifacts[spec.json_name])
+    if loop and f"dev/{state.current_task_id}.json" in state.artifacts:
+        draft = store.read(state.artifacts[f"dev/{state.current_task_id}.json"])
     last = state.gate_history[-1] if state.gate_history else None
     previous: str | None = None
     comments: str | None = None
@@ -242,7 +281,11 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
         comments=comments,
         revision=state.revisions.get(stage, 0),
         track=state.track.value,
-        inputs=stage_inputs(state, stage, store) if spec and stage in STAGE_INPUTS else {},
+        inputs=stage_inputs(state, stage, store)
+        if (spec or loop) and stage in STAGE_INPUTS
+        else {},
+        task_id=state.current_task_id if loop else None,
+        attempt=_attempt(state) if loop else 0,
     )
 
 
@@ -328,6 +371,14 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
         return state
     unapproved = [name for name, a in state.artifacts.items() if a.approved_at is None]
     state = approve_artifacts(state, unapproved, now=datetime.now(UTC))
+    if state.stage == Stage.DEVELOPER and ctx.publisher is not None:
+        # One task approved: record it and stay on the Developer for the next one.
+        assert state.current_task_id is not None
+        return state.evolve(
+            completed_tasks=[*state.completed_tasks, state.current_task_id],
+            current_task_id=None,
+            revisions={**state.revisions, Stage.DEVELOPER: 0},
+        )
     if state.stage == Stage.CAREER_COACH:
         _trace(ctx, state, EventType.TRANSITION, details={"to": "done"})
         return state.evolve(status=Status.DONE)
@@ -400,6 +451,67 @@ def _trace_agent_end(
         latency_ms=int((time.monotonic() - started) * 1000),
         details={**details, "web_searches": result.web_searches},
     )
+
+
+def _next_task(state: ProjectState, ctx: PipelineContext) -> Task | None:
+    """The task to build now: the one in progress, else the first one not yet approved.
+
+    TaskList guarantees tasks are listed after everything they depend on, so the first
+    unfinished task always has its dependencies done.
+    """
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    raw = stage_inputs(state, Stage.DEVELOPER, store)["tasks.json"]
+    tasks = TaskList.model_validate_json(raw).tasks
+    if state.current_task_id is not None:
+        return next(t for t in tasks if t.id == state.current_task_id)
+    done = set(state.completed_tasks)
+    return next((t for t in tasks if t.id not in done), None)
+
+
+def _attempt(state: ProjectState) -> int:
+    """How many times the current task was rejected since the last approval (0 on a first try)."""
+    rejected = 0
+    for record in reversed(state.gate_history):
+        if record.stage != Stage.DEVELOPER:
+            continue
+        if record.outcome == GateOutcome.APPROVE:
+            break
+        if record.outcome == GateOutcome.REJECT:
+            rejected += 1
+    return rejected
+
+
+def _publish_task(
+    state: ProjectState, ctx: PipelineContext, task: Task, output: str
+) -> tuple[ProjectState, str, dict[str, object]]:
+    """Publish a finished task as a pull request, record it, and build the text for the gate.
+
+    Raises pydantic.ValidationError for a malformed result and PublishError if publishing fails.
+    """
+    assert ctx.publisher is not None
+    result = DevResult.model_validate_json(output)
+    result = ctx.publisher.publish(result, title=f"{task.id}: {task.title}")
+    stat = ctx.publisher.diff_stat(result.branch)
+    name = f"dev/{task.id}.json"
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    previous = state.artifacts.get(name)
+    artifact = store.write(
+        name, result.model_dump_json(indent=2), revision=previous.revision + 1 if previous else 1
+    )
+    state = record_artifacts(state, {name: artifact})
+
+    def bullets(items: list[str]) -> str:
+        return "\n".join(f"- {i}" for i in items) or "None"
+
+    summary = (
+        f"Pull request: {result.pr_url}\n"
+        f"Branch: {result.branch}\n\n"
+        f"## Summary\n{result.summary}\n\n"
+        f"## Deviations from the plan\n{bullets(result.deviations_from_plan)}\n\n"
+        f"## Known gaps\n{bullets(result.known_gaps)}\n\n"
+        f"## Changes\n{stat}\n"
+    )
+    return state, summary, {"task_id": task.id, "pr_url": result.pr_url, "artifacts": [name]}
 
 
 def _next_stage(stage: Stage) -> Stage:

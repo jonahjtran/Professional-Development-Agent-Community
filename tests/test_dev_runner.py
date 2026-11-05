@@ -449,10 +449,11 @@ def test_a_crash_in_the_session_still_removes_the_worktree(repo: Path, tmp_path:
 
 
 def test_a_worktree_problem_becomes_an_agent_error(repo: Path, tmp_path: Path) -> None:
-    git(repo, "branch", "agent/T1")  # a leftover branch from an earlier, unfinished run
+    not_a_repo = tmp_path / "plain-folder"
+    not_a_repo.mkdir()
 
     with pytest.raises(AgentError, match="worktree"):
-        Harness(repo, tmp_path).runner().run(request())
+        Harness(not_a_repo, tmp_path).runner().run(request())
 
 
 def test_nothing_in_the_environment_is_changed_for_the_orchestrator_itself(
@@ -463,3 +464,40 @@ def test_nothing_in_the_environment_is_changed_for_the_orchestrator_itself(
     Harness(repo, tmp_path).runner().run(request())
 
     assert os.environ["GITHUB_TOKEN"] == "ghp_fake"
+
+
+def test_a_rejected_task_is_rebuilt_on_a_fresh_branch(repo: Path, tmp_path: Path) -> None:
+    harness = Harness(repo, tmp_path)
+
+    result = harness.runner().run(request(attempt=1))
+
+    assert DevResult.model_validate_json(result.output).branch == "agent/T1-r1"
+    assert git(repo, "rev-list", "--count", "main..agent/T1-r1") == "1"
+    assert "agent/T1-r1" in harness.prompts[0]
+
+
+def test_leftovers_of_a_crashed_run_are_cleaned_up_before_starting(
+    repo: Path, tmp_path: Path
+) -> None:
+    from orchestrator.worktree import create_worktree
+
+    create_worktree(repo, "T1")  # as if an earlier run was killed before it did anything
+
+    result = Harness(repo, tmp_path).runner().run(request())
+
+    assert DevResult.model_validate_json(result.output).branch == "agent/T1"
+
+
+def test_a_leftover_branch_that_has_real_work_is_never_thrown_away(
+    repo: Path, tmp_path: Path
+) -> None:
+    git(repo, "checkout", "-q", "-b", "agent/T1")
+    (repo / "precious.py").write_text("x = 1\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "work from an earlier run")
+    git(repo, "checkout", "-q", "main")
+
+    with pytest.raises(AgentError, match="worktree"):
+        Harness(repo, tmp_path).runner().run(request())
+
+    assert "precious.py" in git(repo, "ls-tree", "--name-only", "agent/T1")

@@ -65,6 +65,13 @@ class Publisher:
 
     # --- steps -----------------------------------------------------------------------------
 
+    def diff_stat(self, branch: str) -> str:
+        """A short summary of what the branch changes compared with the base branch."""
+        done = self._call(
+            ["git", "diff", "--stat", f"{self._base}...{branch}"], {}, "summarizing the changes"
+        )
+        return done.stdout.strip() or "(no file changes)"
+
     def _push(self, branch: str) -> None:
         remote = self._call(["git", "remote", "get-url", "origin"], {}, "reading the remote")
         env = {"GIT_TERMINAL_PROMPT": "0"}
