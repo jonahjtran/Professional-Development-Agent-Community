@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.budget import (
     BudgetLevel,
@@ -65,6 +65,8 @@ class AgentRequest(BaseModel):
     previous_draft: str | None = None
     comments: str | None = None
     revision: int = 0
+    track: str = "engineering"
+    inputs: dict[str, str] = Field(default_factory=dict)  # approved artifacts, by name
 
     model_config = ConfigDict(frozen=True)
 
