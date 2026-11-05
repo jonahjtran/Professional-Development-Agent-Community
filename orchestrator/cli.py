@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 from enum import StrEnum
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 from orchestrator import __version__
 from orchestrator.api_runner import ApiRunner, ValidatingRunner
+from orchestrator.career_publish import GitCareerPublisher, repo_owner
 from orchestrator.career_stage import GitCareerPreparer, website_dir
 from orchestrator.cli_cap import CliCapBackend
 from orchestrator.cli_gate import CliGateBackend
@@ -184,6 +186,7 @@ def _context(
         raise _fail(f"Invalid config {config_path}:\n{error}") from None
     publisher: Publisher | None = None
     career: GitCareerPreparer | None = None
+    career_publisher: GitCareerPublisher | None = None
     if agent == AgentKind.FULL:
         if repo is None or repo_url is None:
             raise _fail("--agent full needs the project's repository")
@@ -193,7 +196,9 @@ def _context(
             load_profile(folder)  # fail now, not hours later at the career stage
         except (PublishError, ProfileError) as error:
             raise _fail(str(error)) from None
-        career = GitCareerPreparer(folder, repo.resolve(), website_dir())
+        site = website_dir()
+        career = GitCareerPreparer(folder, repo.resolve(), site)
+        career_publisher = _career_publisher(publisher, repo, repo_url, folder, site)
     return PipelineContext(
         config=config,
         runs_dir=runs_dir,
@@ -206,6 +211,38 @@ def _context(
         qa=GitQaPreparer(repo.resolve(), publisher, config.qa) if publisher and repo else None,
         merges=CliMergeBackend() if publisher else None,
         career=career,
+        career_publisher=career_publisher,
+    )
+
+
+def _career_publisher(
+    project_publisher: Publisher, repo: Path, repo_url: str, profile: Path, site: Path | None
+) -> GitCareerPublisher:
+    """Pull-request publishers for the profile and website repos, which must be your own."""
+    token = load_token()
+    profile_url = _origin_url(profile)
+    if profile_url is None:
+        raise _fail(
+            f"{profile} needs to be a git clone with an origin, so the resume can be proposed"
+        )
+    site_url = _origin_url(site) if site is not None else None
+    if site is not None and site_url is None:
+        raise _fail(f"{site} needs to be a git clone with an origin")
+    owners = {repo_owner(u) for u in (repo_url, profile_url, site_url) if u is not None}
+    if len(owners) != 1 or None in owners:
+        raise _fail("the project, profile and website repositories must all be on your own account")
+    return GitCareerPublisher(
+        project_repo=repo.resolve(),
+        project_url=repo_url,
+        project_pulls=project_publisher,
+        profile_repo=profile.resolve(),
+        profile_pulls=Publisher(profile.resolve(), token, expected_url=profile_url),
+        website_repo=site.resolve() if site is not None else None,
+        website_pulls=(
+            Publisher(site.resolve(), token, expected_url=site_url)
+            if site is not None and site_url is not None
+            else None
+        ),
     )
 
 
@@ -215,9 +252,21 @@ def _stages(agent: AgentKind) -> dict[Stage, StageSpec]:
     return default_stage_specs() if agent == AgentKind.API else {}
 
 
-def _finish(state: ProjectState) -> None:
+def _show_career_results(state: ProjectState, runs_dir: Path) -> None:
+    artifact = state.artifacts.get("career_published.json")
+    if artifact is None:
+        return
+    results = json.loads((runs_dir / state.project_slug / artifact.path).read_text())
+    typer.echo("Career items:")
+    for target, outcome in results.items():
+        typer.echo(f"  {target}: {outcome}")
+    typer.echo("Merge the pull requests yourself; nothing was merged for you.")
+
+
+def _finish(state: ProjectState, runs_dir: Path) -> None:
     if state.status == Status.DONE:
         typer.echo(f"Project {state.project_slug} is done. Spent ${state.total_cost_usd:.2f}.")
+        _show_career_results(state, runs_dir)
         return
     typer.echo(f"Project {state.project_slug} halted. Spent ${state.total_cost_usd:.2f}.")
     raise typer.Exit(_HALTED_EXIT_CODE)
@@ -241,7 +290,7 @@ def run(
             f"Continue it with: studio resume {project.project_slug}"
         )
     ctx = _context(config, runs_dir, agent, repo, project.repo_url)
-    _finish(run_pipeline(project, ctx))
+    _finish(run_pipeline(project, ctx), runs_dir)
 
 
 @app.command()
@@ -261,7 +310,10 @@ def resume(
         typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
         return
     project_repo = _repo_for_resume(state, agent, repo)
-    _finish(run_pipeline(state, _context(config, runs_dir, agent, project_repo, state.repo_url)))
+    _finish(
+        run_pipeline(state, _context(config, runs_dir, agent, project_repo, state.repo_url)),
+        runs_dir,
+    )
 
 
 @app.command()
