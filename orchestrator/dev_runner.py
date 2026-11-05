@@ -41,7 +41,7 @@ from schemas import DevReport, DevResult, TaskList
 from schemas.tasks import Task
 
 _TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
-_SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL|PRIVATE_?KEY", re.I)
+SECRET_ENV_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIAL|PRIVATE_?KEY", re.I)
 _STUDIO_ROOT = Path(__file__).resolve().parent.parent
 _FOLLOW_UP = (
     "Your last message was not a valid report. Reply with only a JSON object with the fields "
@@ -245,7 +245,7 @@ def _hidden_env() -> dict[str, str]:
     hidden = {
         name: ""
         for name in os.environ
-        if _SECRET_NAME.search(name) and not name.startswith(("ANTHROPIC_", "CLAUDE"))
+        if SECRET_ENV_NAME.search(name) and not name.startswith(("ANTHROPIC_", "CLAUDE"))
     }
     return {**hidden, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"}
 

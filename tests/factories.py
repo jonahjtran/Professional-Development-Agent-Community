@@ -35,6 +35,11 @@ def make_config() -> Config:
                 "fast": {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125},
                 "web_search_usd_per_request": 0.01,
             },
+            "qa": {
+                "timeout_seconds": 60,
+                "tail_lines": 10,
+                "checks": [{"name": "tests", "command": "true"}],
+            },
         }
     )
 

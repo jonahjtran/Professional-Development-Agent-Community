@@ -44,3 +44,17 @@ pricing:
     cache_read: 0.01
     cache_write: 0.125
   web_search_usd_per_request: 0.01 # $10 per 1,000 searches
+
+qa:
+  # The tools the QA stage runs in a throwaway worktree of the finished project (Python projects).
+  # `uv run --with X` adds a tool next to the project's own dependencies without changing them.
+  # A check whose `requires` program is not installed is "skipped", and a skipped check fails the
+  # report, so a missing scanner is never mistaken for a clean scan.
+  timeout_seconds: 300 # per check
+  tail_lines: 40 # lines of each check's output kept in the report
+  checks:
+    - {name: tests, command: "uv run pytest -q", requires: uv}
+    - {name: lint, command: "uv run --with ruff ruff check .", requires: uv}
+    - {name: types, command: "uv run --with mypy mypy .", requires: uv}
+    - {name: dependency audit, command: "uv run --with pip-audit pip-audit", requires: uv}
+    - {name: secret scan, command: "gitleaks detect --no-banner --redact", requires: gitleaks}
