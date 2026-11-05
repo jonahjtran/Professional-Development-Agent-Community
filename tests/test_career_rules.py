@@ -51,7 +51,7 @@ def resume(max_bullets: int = 2, bullets: int = 2) -> ResumeData:
 
 
 def bullet(text: str = "Built a pipeline", ids: list[str] | None = None) -> ResumeBullet:
-    return ResumeBullet(text=text, track=CareerTrack.AI_ENGINEERING, evidence_ids=ids or ["pr-T1"])
+    return ResumeBullet(text=text, track=CareerTrack.TECH_CONSULTING, evidence_ids=ids or ["pr-T1"])
 
 
 def change(
@@ -70,7 +70,7 @@ def change(
 def plan(*changes: ResumeChange, website: WebsiteEntry | None = None) -> CareerPlan:
     return CareerPlan.model_validate(
         {
-            "fit": [{"track": "ai_engineering", "decision": "include", "reason": "fits"}],
+            "fit": [{"track": "tech_consulting", "decision": "include", "reason": "fits"}],
             "readme_md": "# R",
             "case_study_md": "# C",
             "resume_changes": [c.model_dump() for c in changes],
@@ -117,7 +117,7 @@ def test_numbers_are_read_as_plain_digits(text: str, expected: set[str]) -> None
 
 def test_a_bullet_without_evidence_is_rejected() -> None:
     with pytest.raises(ValidationError):
-        ResumeBullet(text="Did a thing", track=CareerTrack.CONSULTING, evidence_ids=[])
+        ResumeBullet(text="Did a thing", track=CareerTrack.STRATEGY_CONSULTING, evidence_ids=[])
 
 
 def test_a_skipped_change_carries_no_bullets_and_other_actions_need_them() -> None:

@@ -7,8 +7,8 @@ from schemas._base import Schema, Text
 
 
 class CareerTrack(StrEnum):
-    CONSULTING = "consulting"
-    AI_ENGINEERING = "ai_engineering"
+    STRATEGY_CONSULTING = "strategy_consulting"  # MBB and strategy firms
+    TECH_CONSULTING = "tech_consulting"  # technology and digital consulting
 
 
 class EvidenceType(StrEnum):

@@ -15,11 +15,11 @@ sections:
 """
 GOALS = """
 tracks:
-  consulting:
+  strategy_consulting:
     target_roles: [technology consulting]
     emphasis: [client impact]
-  ai_engineering:
-    target_roles: [AI engineer]
+  tech_consulting:
+    target_roles: [technology consultant]
 timeline: "Summer 2027 recruiting"
 """
 
@@ -36,7 +36,7 @@ def test_the_resume_and_goals_are_loaded_from_the_profile_folder(tmp_path: Path)
 
     section = resume.section("projects")
     assert section is not None and section.bullet_count == 1 and section.max_bullets == 4
-    assert goals.tracks["ai_engineering"].target_roles == ["AI engineer"]
+    assert goals.tracks["tech_consulting"].target_roles == ["technology consultant"]
     assert goals.timeline == "Summer 2027 recruiting"
 
 
