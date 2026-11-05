@@ -354,6 +354,36 @@ def resume(
 
 
 @app.command()
+def ui(
+    config: ConfigOption = Path("config.yaml"),
+    runs_dir: RunsDirOption = Path("runs"),
+    port: Annotated[int, typer.Option(help="Port to listen on (this machine only).")] = 8765,
+    open_browser: Annotated[
+        bool, typer.Option("--open/--no-open", help="Open the browser.")
+    ] = True,
+) -> None:
+    """Open the web UI. It listens on this machine only."""
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from orchestrator.ui.app import create_app
+
+    try:
+        loaded = load_config(config)
+    except FileNotFoundError:
+        raise _fail(f"Config file not found: {config}") from None
+    except ValidationError as error:
+        raise _fail(f"Invalid config {config}:\n{error}") from None
+    url = f"http://127.0.0.1:{port}"
+    typer.echo(f"Agent Studio UI at {url} (Ctrl-C to stop)")
+    if open_browser:
+        threading.Timer(1.0, webbrowser.open, args=[url]).start()
+    uvicorn.run(create_app(runs_dir, loaded), host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command()
 def halt(
     project: Annotated[str, typer.Argument(help="Project name.")],
     runs_dir: RunsDirOption = Path("runs"),

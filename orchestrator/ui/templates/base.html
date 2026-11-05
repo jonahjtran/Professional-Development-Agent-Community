@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Agent Studio{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <a href="/">Agent Studio</a>
+    <a class="muted" href="/">Projects</a>
+  </header>
+  <main>{% block body %}{% endblock %}</main>
+</body>
+</html>
