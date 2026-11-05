@@ -17,6 +17,16 @@ from tests.test_career_stage import good_plan
 from tests.test_pipeline import FakeGates
 
 GIT = ["git", "-c", "user.email=a@b.c", "-c", "user.name=tester"]
+
+
+@pytest.fixture(autouse=True)
+def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The code under test commits, and CI has no git identity of its own."""
+    for who in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{who}_NAME", "tester")
+        monkeypatch.setenv(f"GIT_{who}_EMAIL", "tester@example.com")
+
+
 RESUME_TEXT = "# header comment\n" + yaml.safe_dump(resume(3, 2).model_dump(mode="json"))
 PROJECTS_JS = 'export const projects = [\n    {\n        slug: "jamtown",\n    },\n];\n'
 
