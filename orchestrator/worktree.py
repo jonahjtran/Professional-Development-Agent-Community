@@ -114,8 +114,18 @@ def commits_ahead(worktree: Worktree) -> int:
     return int(out)
 
 
+_CACHE_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis"}
+
+
+def uncommitted_paths(worktree: Worktree) -> list[str]:
+    """Files with uncommitted work, ignoring the cache folders that running tests creates."""
+    out = _git(worktree.path, "status", "--porcelain", "--untracked-files=all").stdout
+    paths = [line[3:] for line in out.splitlines()]
+    return [p for p in paths if not _CACHE_DIRS & set(Path(p).parts) and not p.endswith(".pyc")]
+
+
 def has_uncommitted_changes(worktree: Worktree) -> bool:
-    return bool(_git(worktree.path, "status", "--porcelain").stdout.strip())
+    return bool(uncommitted_paths(worktree))
 
 
 def protected_for(repo: Path, *, studio_root: Path) -> tuple[str, ...]:

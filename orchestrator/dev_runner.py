@@ -30,11 +30,11 @@ from orchestrator.worktree import (
     create_worktree,
     delete_branch,
     discard_unused,
-    has_uncommitted_changes,
     head_sha,
     local_branches,
     protected_for,
     remove_worktree,
+    uncommitted_paths,
 )
 from schemas import DevReport, DevResult, TaskList
 from schemas.tasks import Task
@@ -192,8 +192,10 @@ class DevRunner:
             raise fail(f"the Developer left its branch {worktree.branch}")
         if head_sha(worktree.path) == head_before or commits_ahead(worktree) == 0:
             raise fail("the Developer made no commits")
-        if has_uncommitted_changes(worktree):
-            raise fail("the Developer left uncommitted changes, which would be lost")
+        left_over = uncommitted_paths(worktree)
+        if left_over:
+            shown = ", ".join(left_over[:5])
+            raise fail(f"the Developer left uncommitted changes, which would be lost: {shown}")
 
     def _task_prompt(self, request: AgentRequest, task: Task, worktree: Worktree) -> str:
         parts = [

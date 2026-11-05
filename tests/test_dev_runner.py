@@ -328,8 +328,22 @@ def test_uncommitted_changes_are_an_error_because_they_would_be_lost(
         (cwd / "forgotten.py").write_text("x = 1\n")
         return [result_message()]
 
-    with pytest.raises(AgentError, match="uncommitted"):
+    with pytest.raises(AgentError, match="uncommitted.*forgotten.py"):
         Harness(repo, tmp_path, messy).runner().run(request())
+
+
+def test_cache_folders_left_by_running_tests_do_not_count_as_uncommitted_work(
+    repo: Path, tmp_path: Path
+) -> None:
+    def tidy(cwd: Path) -> list[Any]:
+        commit_a_file(cwd)
+        (cwd / "__pycache__").mkdir()
+        (cwd / "__pycache__" / "events.cpython-312.pyc").write_text("x")
+        return [result_message()]
+
+    result = Harness(repo, tmp_path, tidy).runner().run(request())
+
+    assert DevResult.model_validate_json(result.output).task_id == "T1"
 
 
 def test_leaving_the_task_branch_is_an_error(repo: Path, tmp_path: Path) -> None:
