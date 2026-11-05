@@ -272,7 +272,7 @@ def test_an_agent_without_an_eval_is_rejected_before_anything_is_spent(tmp_path:
 
     result = CliRunner().invoke(run_module.app, ["--agent", "architect"])
 
-    assert result.exit_code == 1 and "only 'qa' exists" in result.output
+    assert result.exit_code == 1 and "only 'qa' and 'career_coach' exist" in result.output
 
 
 def test_the_runner_pins_the_prompt_version_and_tier(monkeypatch: pytest.MonkeyPatch) -> None:

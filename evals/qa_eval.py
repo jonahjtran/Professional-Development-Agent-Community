@@ -236,6 +236,11 @@ def append_result(
         "cost_usd": f"{summary.cost_usd:.4f}",
         "mean_latency_s": f"{summary.mean_latency_s:.2f}",
     }
+    append_row(path, row)
+
+
+def append_row(path: Path, row: dict[str, object]) -> None:
+    """Add one row to a results table, writing the header the first time."""
     new = not path.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", newline="") as f:
