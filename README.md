@@ -64,6 +64,11 @@ follows, and how to run the live tests and evals.
 
 `--agent echo` is a free dummy agent for trying the flow without spending anything.
 
+Prefer a browser to the terminal? `uv run --env-file .env studio ui` opens a local control panel:
+start projects, see where each one is and what it has cost, and answer every approval in one
+inbox. Each resume bullet in the career gate is shown next to the evidence behind it. It listens on
+your machine only.
+
 ## How it is verified
 
 - **Tests:** over a thousand unit and integration tests, many against real git repositories

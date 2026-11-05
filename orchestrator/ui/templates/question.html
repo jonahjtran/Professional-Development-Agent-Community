@@ -11,7 +11,12 @@
 
 {% if q.kind.value == 'gate' %}
   <p class="muted">Spent so far ${{ '%.2f'|format(r.cost_usd) }}</p>
+  {% if wb %}
+  {% include "workbench.html" %}
+  <details><summary>The plain-text version the terminal shows</summary><div class="card md">{{ summary_html|safe }}</div></details>
+  {% else %}
   <div class="card md">{{ summary_html|safe }}</div>
+  {% endif %}
   {% if r.questions %}
   <h2>Questions for you</h2>
   <p class="muted">Answer what you know and leave the rest blank. Your answers become evidence the next draft can use.</p>

@@ -32,3 +32,14 @@
   check();
   setInterval(check, 5000);
 })();
+
+// "Copy" buttons next to LaTeX snippets.
+document.querySelectorAll("button.copy").forEach(function (button) {
+  button.addEventListener("click", function () {
+    var text = button.parentElement.querySelector("pre.latex").textContent;
+    navigator.clipboard.writeText(text).then(function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+    });
+  });
+});

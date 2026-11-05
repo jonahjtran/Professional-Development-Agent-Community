@@ -53,6 +53,29 @@ report goes to you at the gate, never back to the Developer automatically. Insta
 (`brew install gitleaks`) or the secret scan is skipped and the report fails. QA live test:
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
 
+## Web UI
+
+`uv run --env-file .env studio ui` opens a local control panel (it listens on 127.0.0.1 only; add
+`--mac-notify` for macOS notifications). From it you can start a project, see every project's
+stage, spend against its caps and past decisions, read the documents and the trace, and answer
+every question the pipeline asks (gates with per-item approvals, budget and revision caps, the
+merge check, Developer tool requests) from one inbox. The career gate shows each resume bullet
+next to its evidence, a copy button for each LaTeX snippet, and a preview of the website entry.
+Halt and Resume are buttons on the project page, and `/health` checks the keys, token expiry,
+tools and folders before a run.
+
+How it works: `studio run --ui` and `studio resume --ui` (the UI uses them) answer through files.
+A question is written to `runs/<project>/pending/<id>.json`; an answer to
+`runs/<project>/answers/<id>.json` is validated with the same models the terminal uses, then the
+question moves to `done/` with who answered. A run keeps `run.json` fresh with a heartbeat so the
+UI can tell a live run from a dead one. The terminal still works without `--ui`.
+
+Rules that must keep holding: the server only binds to 127.0.0.1 and rejects any other Host
+header; every POST needs the per-process form token and a matching Origin; agent-written text is
+shown escaped (Markdown without raw HTML); only documents a project recorded can be opened; no
+secret value is ever put on a page. Approving can publish pull requests, so never expose the UI
+to a network without adding real authentication first.
+
 ## Career coach
 
 After QA is approved the coach turns the finished project into career material. Everything it says
