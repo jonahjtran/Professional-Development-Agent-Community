@@ -55,7 +55,7 @@ def test_the_api_product_owner_uses_web_search_the_strong_tier_and_the_prd_schem
     from orchestrator.default_specs import default_api_specs
     from schemas import PRD
 
-    [spec] = default_api_specs()
+    spec = default_api_specs()[0]
 
     assert (spec.stage, spec.tier, spec.web_search, spec.schema) == (
         Stage.PRODUCT_OWNER,
@@ -64,3 +64,18 @@ def test_the_api_product_owner_uses_web_search_the_strong_tier_and_the_prd_schem
         PRD,
     )
     assert spec.prompt.version == "v1"
+
+
+def test_the_api_architect_uses_the_strong_tier_the_architect_schema_and_no_web_search() -> None:
+    from orchestrator.default_specs import (
+        default_api_schemas,
+        default_api_specs,
+        default_stage_specs,
+    )
+    from schemas import ArchitectOutput
+
+    spec = next(s for s in default_api_specs() if s.stage == Stage.ARCHITECT)
+
+    assert (spec.tier, spec.web_search, spec.schema) == ("strong", False, ArchitectOutput)
+    assert default_api_schemas()[Stage.ARCHITECT] is ArchitectOutput
+    assert Stage.ARCHITECT in default_stage_specs()
