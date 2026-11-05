@@ -10,9 +10,9 @@ from pathlib import Path
 from orchestrator.api_runner import ApiAgentSpec
 from orchestrator.prompts import DEFAULT_PROMPTS_DIR, load_prompt
 from orchestrator.runner import AgentSpec
-from orchestrator.stages import StageSpec, architect_stage, prd_stage
+from orchestrator.stages import StageSpec, architect_stage, prd_stage, qa_stage
 from orchestrator.state import Stage
-from schemas import PRD, ArchitectOutput
+from schemas import PRD, ArchitectOutput, QaAssessment
 from schemas._base import Schema
 
 
@@ -57,6 +57,12 @@ def default_api_specs(prompts_dir: Path = DEFAULT_PROMPTS_DIR) -> tuple[ApiAgent
             tier="strong",
             schema=ArchitectOutput,
         ),
+        ApiAgentSpec(
+            stage=Stage.QA,
+            prompt=load_prompt("qa", prompts_dir),
+            tier="fast",
+            schema=QaAssessment,
+        ),
     )
 
 
@@ -66,4 +72,8 @@ def default_api_schemas() -> dict[Stage, type[Schema]]:
 
 def default_stage_specs() -> dict[Stage, StageSpec]:
     """How each API-run stage's validated output becomes stored artifacts."""
-    return {Stage.PRODUCT_OWNER: prd_stage(), Stage.ARCHITECT: architect_stage()}
+    return {
+        Stage.PRODUCT_OWNER: prd_stage(),
+        Stage.ARCHITECT: architect_stage(),
+        Stage.QA: qa_stage(),
+    }

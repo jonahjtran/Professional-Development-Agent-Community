@@ -1,6 +1,6 @@
 """Turns validated documents into Markdown a human reads at a gate."""
 
-from schemas import ADR, PRD, ArchitectOutput
+from schemas import ADR, PRD, ArchitectOutput, QaReport
 
 
 def _bullets(items: list[str]) -> str:
@@ -72,3 +72,30 @@ def render_adr(adr: ADR) -> str:
         f"## Decision\n{adr.decision}\n\n"
         f"## Consequences\n{adr.consequences}\n"
     )
+
+
+_CHECK_MARK = {"passed": "PASS", "failed": "FAIL", "skipped": "SKIPPED"}
+_VERDICT_MARK = {"pass": "PASS", "fail": "FAIL", "untested": "UNTESTED"}
+
+
+def render_qa_report(report: QaReport) -> str:
+    """Markdown for the QA gate: the verdict, the tool results, then each criterion."""
+    counts = {v: sum(1 for c in report.criteria if c.verdict.value == v) for v in _VERDICT_MARK}
+    sections = [
+        f"# QA report: {'PASSED' if report.passed else 'FAILED'}",
+        report.summary,
+        "## Checks\n"
+        + "\n".join(
+            f"- **{_CHECK_MARK[c.status.value]}** {c.name} (`{c.command}`)" for c in report.checks
+        ),
+        f"## Acceptance criteria\n{counts['pass']} pass, {counts['fail']} fail, "
+        f"{counts['untested']} untested\n\n"
+        + "\n".join(
+            f"- **{_VERDICT_MARK[c.verdict.value]}** {c.task_id}: {c.criterion}\n  - {c.evidence}"
+            for c in report.criteria
+        ),
+    ]
+    problems = [c for c in report.checks if c.status.value != "passed"]
+    for check in problems:
+        sections.append(f"## Output of {check.name}\n```\n{check.output_tail}\n```")
+    return "\n\n".join(sections) + "\n"
