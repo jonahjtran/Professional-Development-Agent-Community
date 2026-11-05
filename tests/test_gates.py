@@ -327,3 +327,26 @@ def test_extra_revisions_for_one_stage_do_not_help_another() -> None:
 
     assert state.intervention is not None
     assert state.intervention.kind == InterventionKind.REVISION_CAP
+
+
+# --- approving items one by one --------------------------------------------------------------
+
+
+def test_items_can_only_be_approved_when_the_stage_is_approved() -> None:
+    import pytest as _pytest
+
+    assert GateDecision(outcome=GateOutcome.APPROVE, approved_items=["readme"]).approved_items == [
+        "readme"
+    ]
+    with _pytest.raises(ValueError, match="items can only be approved"):
+        GateDecision(outcome=GateOutcome.REJECT, approved_items=["readme"])
+    with _pytest.raises(ValueError, match="items can only be approved"):
+        GateDecision(outcome=GateOutcome.REQUEST_CHANGES, comments="x", approved_items=["a"])
+
+
+def test_a_decision_can_carry_answers_to_questions_with_any_outcome() -> None:
+    decision = GateDecision(
+        outcome=GateOutcome.REQUEST_CHANGES, comments="x", answers={"How many users?": "40"}
+    )
+
+    assert decision.answers == {"How many users?": "40"}

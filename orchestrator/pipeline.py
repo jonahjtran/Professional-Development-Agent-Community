@@ -35,9 +35,18 @@ from orchestrator.budget import (
     write_cost_report,
 )
 from orchestrator.caps import CapAction, CapBackend, cap_request, resolve_cap
+from orchestrator.career_stage import CareerError, CareerPreparer, gate_items, human_evidence
 from orchestrator.config import Config
 from orchestrator.designrecord import DesignRecordError, publish_design_record
-from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
+from orchestrator.evidence import build_evidence
+from orchestrator.gates import (
+    GateBackend,
+    GateDecision,
+    GateItem,
+    GateRequest,
+    apply_decision,
+    open_gate,
+)
 from orchestrator.halt import halt_requested
 from orchestrator.publish import PublishError
 from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
@@ -53,7 +62,7 @@ from orchestrator.state import (
 )
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 from orchestrator.worktree import WorktreeError
-from schemas import DevResult, QaReport, TaskList
+from schemas import CareerPlan, DevResult, EvidenceSet, QaReport, TaskList
 from schemas.tasks import Task
 
 __all__ = [
@@ -165,6 +174,8 @@ class PipelineContext:
     # tools on the merged project and hands their results to the QA agent.
     qa: QaPreparer | None = None
     merges: MergeBackend | None = None
+    # When set, the career stage first prepares the coach's inputs (profile, website, README).
+    career: CareerPreparer | None = None
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -222,6 +233,10 @@ def _run_stage(
 
     if stage == Stage.QA and ctx.qa is not None:
         state = _prepare_qa(state, ctx, ctx.qa)
+        if state.status != Status.RUNNING:
+            return state
+    if stage == Stage.CAREER_COACH and ctx.career is not None:
+        state = _prepare_career(state, ctx, ctx.career)
         if state.status != Status.RUNNING:
             return state
 
@@ -370,14 +385,18 @@ def _answer_pause(state: ProjectState, ctx: PipelineContext) -> ProjectState:
 
 def _ask_gate(waiting: ProjectState, ctx: PipelineContext) -> ProjectState:
     assert waiting.intervention is not None
+    items, questions = _career_extras(waiting, ctx)
     request = GateRequest(
         stage=waiting.stage,
         title=waiting.intervention.detail,
         summary=_read_draft(ctx, waiting, waiting.stage) or "",
         cost_usd=waiting.total_cost_usd,
+        items=items,
+        questions=questions,
     )
     decision = ctx.gates.decide(request)
     state = apply_decision(waiting, ctx.config, decision)
+    state = _record_career_decision(state, ctx, decision)
     _trace(
         ctx,
         state,
@@ -677,3 +696,93 @@ def _task_pr_urls(state: ProjectState, store: ArtifactStore) -> list[str]:
         if pr_url:
             urls.append(pr_url)
     return urls
+
+
+# --- the career stage ------------------------------------------------------------------------
+
+
+def _career_answers(state: ProjectState, store: ArtifactStore) -> list[tuple[str, str]]:
+    artifact = state.artifacts.get("career_answers.json")
+    if artifact is None:
+        return []
+    return [(item["question"], item["answer"]) for item in json.loads(store.read(artifact))]
+
+
+def _prepare_career(
+    state: ProjectState, ctx: PipelineContext, career: CareerPreparer
+) -> ProjectState:
+    """Gather everything the career coach may read, as approved inputs.
+
+    Evidence is rebuilt on every run so the person's answers at the gate (kept in
+    career_answers.json) become evidence the next draft can use.
+    """
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    try:
+        materials = career.materials()
+    except CareerError as error:
+        _trace(ctx, state, EventType.TRANSITION, details={"error": str(error)})
+        return state.evolve(status=Status.HALTED)
+    eval_results = ctx.repo / "evals" / "results.csv" if ctx.repo is not None else None
+    base = build_evidence(state, ctx.runs_dir, eval_results=eval_results)
+    evidence = EvidenceSet(items=[*base.items, *human_evidence(_career_answers(state, store))])
+    texts = {
+        "evidence.json": evidence.model_dump_json(indent=2),
+        "resume.yaml": materials.resume_yaml,
+        "goals.yaml": materials.goals_yaml,
+        "website_projects.js": materials.website_projects_js,
+        "current_readme.md": materials.current_readme,
+    }
+    previous = state.artifacts.get("evidence.json")
+    revision = previous.revision + 1 if previous else 1
+    written = {n: store.write(n, text, revision=revision) for n, text in texts.items()}
+    state = approve_artifacts(
+        record_artifacts(state, written), list(written), now=datetime.now(UTC)
+    )
+    _trace(ctx, state, EventType.TRANSITION, details={"career_inputs": sorted(written)})
+    return state
+
+
+def _career_extras(state: ProjectState, ctx: PipelineContext) -> tuple[list[GateItem], list[str]]:
+    """The items to approve and the questions to ask at the career gate (none at other gates)."""
+    artifact = state.artifacts.get("career_plan.json")
+    if state.stage != Stage.CAREER_COACH or artifact is None:
+        return [], []
+    plan = CareerPlan.model_validate_json(
+        ArtifactStore(ctx.runs_dir, state.project_slug).read(artifact)
+    )
+    return gate_items(plan, website=bool(_website_projects(state, ctx))), list(plan.questions)
+
+
+def _website_projects(state: ProjectState, ctx: PipelineContext) -> str:
+    artifact = state.artifacts.get("website_projects.js")
+    if artifact is None:
+        return ""
+    return ArtifactStore(ctx.runs_dir, state.project_slug).read(artifact).strip()
+
+
+def _record_career_decision(
+    state: ProjectState, ctx: PipelineContext, decision: GateDecision
+) -> ProjectState:
+    """Keep the person's answers (they become evidence) and which items they approved."""
+    if (
+        state.stage != Stage.CAREER_COACH
+        or "career_plan.json" not in state.artifacts
+        or state.status == Status.HALTED
+    ):
+        return state
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    written = {}
+    if decision.answers:
+        answers = [
+            *_career_answers(state, store),
+            *((q, a) for q, a in decision.answers.items()),
+        ]
+        previous = state.artifacts.get("career_answers.json")
+        text = json.dumps([{"question": q, "answer": a} for q, a in answers], indent=2)
+        written["career_answers.json"] = store.write(
+            "career_answers.json", text, revision=previous.revision + 1 if previous else 1
+        )
+    if decision.outcome == GateOutcome.APPROVE:
+        text = json.dumps({"approved_items": decision.approved_items}, indent=2)
+        written["career_approved.json"] = store.write("career_approved.json", text, revision=1)
+    return record_artifacts(state, written) if written else state

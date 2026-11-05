@@ -10,6 +10,22 @@ from orchestrator.publish import Publisher
 from orchestrator.state import Stage
 from tests.factories import make_config
 
+PROFILE_FILES = {
+    "resume.yaml": "sections:\n  - {name: Projects, max_bullets: 2, entries: []}\n",
+    "goals.yaml": "tracks:\n  tech_consulting: {target_roles: [consultant]}\n",
+}
+
+
+@pytest.fixture(autouse=True)
+def _profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full runs need the private profile folder, so give every test in this file one."""
+    folder = tmp_path / "career-profile"
+    folder.mkdir()
+    for name, text in PROFILE_FILES.items():
+        (folder / name).write_text(text)
+    monkeypatch.setenv("AGENT_STUDIO_PROFILE", str(folder))
+
+
 runner = CliRunner()
 REPO_CONFIG = Path(__file__).parent.parent / "config.yaml"
 URL = "https://github.com/me/project.git"
@@ -118,3 +134,42 @@ def test_the_other_options_have_no_qa_tools(tmp_path: Path, git_repo: Path) -> N
     for kind in (AgentKind.ECHO, AgentKind.CLAUDE):
         ctx = _context(REPO_CONFIG, tmp_path, kind, git_repo, URL)
         assert ctx.qa is None and ctx.merges is None
+
+
+def test_full_stops_early_without_a_profile_folder(
+    tmp_path: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_STUDIO_PROFILE")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_not_real")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+
+    result = runner.invoke(
+        app,
+        ["run", "An idea", "--slug", "demo", "--agent", "full", "--repo", str(git_repo)]
+        + ["--runs-dir", str(tmp_path / "runs"), "--config", str(REPO_CONFIG)],
+    )
+
+    assert result.exit_code == 1 and "AGENT_STUDIO_PROFILE" in result.output
+    assert not (tmp_path / "runs" / "demo").exists()
+
+
+def test_the_full_option_prepares_and_runs_the_career_coach(
+    tmp_path: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.career_stage import GitCareerPreparer
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_not_real")
+
+    ctx = _context(REPO_CONFIG, tmp_path, AgentKind.FULL, git_repo, URL)
+
+    assert isinstance(ctx.career, GitCareerPreparer)
+    assert Stage.CAREER_COACH in ctx.stages
+    assert isinstance(ctx.runner, RoutingRunner)
+    assert Stage.CAREER_COACH in ctx.runner._runners  # routed: the coach has an agent
+
+
+def test_the_other_options_do_not_run_the_career_coach(tmp_path: Path, git_repo: Path) -> None:
+    for kind in (AgentKind.ECHO, AgentKind.CLAUDE, AgentKind.API):
+        ctx = _context(REPO_CONFIG, tmp_path, kind, git_repo, URL)
+        assert ctx.career is None and Stage.CAREER_COACH not in ctx.stages

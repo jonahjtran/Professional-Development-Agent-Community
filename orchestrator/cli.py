@@ -9,12 +9,14 @@ from pydantic import ValidationError
 
 from orchestrator import __version__
 from orchestrator.api_runner import ApiRunner, ValidatingRunner
+from orchestrator.career_stage import GitCareerPreparer, website_dir
 from orchestrator.cli_cap import CliCapBackend
 from orchestrator.cli_gate import CliGateBackend
 from orchestrator.cli_merge import CliMergeBackend
 from orchestrator.cli_tool import CliToolBackend
 from orchestrator.config import Config, load_config
 from orchestrator.default_specs import (
+    default_api_checks,
     default_api_schemas,
     default_api_specs,
     default_specs,
@@ -25,10 +27,12 @@ from orchestrator.echo_agent import EchoAgent
 from orchestrator.halt import request_halt
 from orchestrator.newproject import NewProjectError, create_project, default_projects_dir
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
+from orchestrator.profile import ProfileError, load_profile, profile_dir
 from orchestrator.prompts import load_prompt
 from orchestrator.publish import Publisher, PublishError, load_token, strip_credentials
 from orchestrator.qa_prepare import GitQaPreparer
 from orchestrator.runner import SdkRunner
+from orchestrator.stages import StageSpec, career_stage
 from orchestrator.state import ProjectState, Stage, Status, load_state, state_path
 from schemas import Track
 
@@ -93,7 +97,9 @@ def make_runner(
     if kind == AgentKind.CLAUDE:
         return SdkRunner(config, runs_dir, default_specs())
     if kind in (AgentKind.API, AgentKind.FULL):
-        planner = ValidatingRunner(ApiRunner(config, default_api_specs()), default_api_schemas())
+        planner = ValidatingRunner(
+            ApiRunner(config, default_api_specs()), default_api_schemas(), default_api_checks()
+        )
         if kind == AgentKind.API:
             return planner
         if repo is None:
@@ -107,6 +113,7 @@ def make_runner(
                 Stage.ARCHITECT: planner,
                 Stage.DEVELOPER: developer,
                 Stage.QA: planner,
+                Stage.CAREER_COACH: planner,
             }
         )
     return EchoAgent()
@@ -176,25 +183,36 @@ def _context(
     except ValidationError as error:
         raise _fail(f"Invalid config {config_path}:\n{error}") from None
     publisher: Publisher | None = None
+    career: GitCareerPreparer | None = None
     if agent == AgentKind.FULL:
         if repo is None or repo_url is None:
             raise _fail("--agent full needs the project's repository")
         try:
             publisher = Publisher(repo.resolve(), load_token(), expected_url=repo_url)
-        except PublishError as error:
+            folder = profile_dir()
+            load_profile(folder)  # fail now, not hours later at the career stage
+        except (PublishError, ProfileError) as error:
             raise _fail(str(error)) from None
+        career = GitCareerPreparer(folder, repo.resolve(), website_dir())
     return PipelineContext(
         config=config,
         runs_dir=runs_dir,
         runner=make_runner(agent, config, runs_dir, repo),
         gates=CliGateBackend(),
         caps=CliCapBackend(),
-        stages=default_stage_specs() if agent in (AgentKind.API, AgentKind.FULL) else {},
+        stages=_stages(agent),
         publisher=publisher,
         repo=repo.resolve() if (agent == AgentKind.FULL and repo is not None) else None,
         qa=GitQaPreparer(repo.resolve(), publisher, config.qa) if publisher and repo else None,
         merges=CliMergeBackend() if publisher else None,
+        career=career,
     )
+
+
+def _stages(agent: AgentKind) -> dict[Stage, StageSpec]:
+    if agent == AgentKind.FULL:
+        return {**default_stage_specs(), Stage.CAREER_COACH: career_stage()}
+    return default_stage_specs() if agent == AgentKind.API else {}
 
 
 def _finish(state: ProjectState) -> None:
