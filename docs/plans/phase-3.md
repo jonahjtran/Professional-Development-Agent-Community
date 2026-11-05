@@ -44,7 +44,7 @@ run, what it can see, and how much it can spend.
 | D3 | GitHub credentials. | **DECIDED: you add `GITHUB_TOKEN` to `.env`.** Use a fine-grained token limited to this one repository (contents and pull requests: read and write, nothing else). The real repo is now the target, so **branch protection on `main` is the key backstop** and is required before the first live run: require a pull request, require the `check` status, and block force-pushes. Only you can set that. |
 | D4 | The permission rules (allow, ask, deny). | Proposed in the table below. The **ask** column is the one that needs your judgment. |
 | D5 | Spending limits for Developer runs. | **DECIDED: $2 per task, 40 turns, $3 Developer stage cap**, and **keep the code minimal**. The per-task limit is one config number (`limits.max_task_usd`) passed to the SDK's own `max_budget_usd`; the SDK stops the run and the orchestrator halts and bills it. No new warning, allowance or raise-the-cap machinery for the Developer. The existing stage and project cap checks stay as they are. The stage cap change is a one-line `config.yaml` edit. |
-| D6 | State change: remember finished tasks. | Add `completed_tasks` (list of task ids) to `ProjectState` so the per-task loop can resume after a crash. **Still needs your explicit OK.** |
+| D6 | State change: remember finished tasks. | Add `completed_tasks` (list of task ids) to `ProjectState` so the per-task loop can resume after a crash. **DECIDED: yes** (schema change approved). |
 | D7 | Where does the human review the PR? | **DECIDED: the terminal gate.** In Phase 3 the gate after the Developer shows the PR link, the summary and the diff stat, and you approve in the terminal (merging stays your job on GitHub). Polling `gh pr view` for review state comes later. Until QA exists in Phase 4, this gate replaces the QA gate; Phase 4 moves it. |
 
 | D8 | A future monitoring UI. | **Not built now.** Phase 3 only keeps the seams a UI will need (see "Designing for a future UI"). No web server, database or API is added. |
@@ -65,7 +65,7 @@ and the policy still denies reading the main checkout's copy by absolute path.
 | Decision | Examples |
 | --- | --- |
 | **Allow** | Read, Edit, Write, Glob, Grep inside the worktree; `git` status, diff, add, commit, log, branch, checkout on the task branch; running the project's tests and linters (`pytest`, `ruff`, `mypy`, `python -m ...`) |
-| **Ask the human** | installing packages (`pip`, `uv add`); any command not on the allow list; deleting files; network access to any host |
+| **Ask the human** | installing packages (`pip`, `uv add`); any command not on the allow list; deleting files; network access to any host; **anything that needs a new environment variable** (see below) |
 | **Deny** | any write or read outside the worktree (including `..` and symlink escapes); `.env`, `.env.*`, key files, `~/.ssh`, `~/.aws`, `~/.config`; `git push`, `git remote`, `git config`, force flags; checkout or commit on `main`; `rm -rf`; `curl` or `wget` piped to a shell; `sudo`; reading environment variables with `env`, `printenv` or `echo $VAR`; edits to `.github/` (the agent must not rewrite CI to make itself pass) |
 
 ## PR breakdown
@@ -82,6 +82,21 @@ questions the docs do not settle, in a scratch directory, for a few cents:
 The results decide the details of 3.1 and 3.2. If the sandbox or environment behave worse than
 expected, the plan changes here, not after the code is written.
 
+### New environment variables always ask the human
+
+If a task needs a setting that does not exist yet (an API key, a URL, a feature flag), the agent must
+not invent a value or write it anywhere. It has to stop and ask, naming the variable and why it is
+needed. You then add it to your own `.env` or CI secrets, or tell it no, and it adapts. The policy
+treats these as **ask**:
+- An edit or new file that adds a reference to an environment variable that was not in that file
+  before, for example `os.environ["X"]`, `os.getenv("X")`, `process.env.X`, or `${{ secrets.X }}` in
+  a workflow. The question names the variable.
+- Any shell command that sets one (`export X=...`, `X=... command`, `setx`).
+- Any write to a file named `.env*`, which is otherwise denied outright. The agent can ask, but it
+  never writes secrets itself; the human adds the value.
+The developer prompt also says to stop and ask in these cases. This is a best-effort check: it
+catches the common ways of introducing a variable, so the PR gate remains the final review.
+
 ### 3.1 The permission policy (pure code, no SDK)
 - `evaluate(tool_name, tool_input, worktree) -> Allow | Ask | Deny` with a human-readable reason.
 - Path rules: resolve `..` and symlinks, then require the real path to be inside the worktree.
@@ -89,6 +104,8 @@ expected, the plan changes here, not after the code is written.
 - Bash rules: split the command with `shlex` and on `;`, `&&`, `||`, `|`, `$(...)` and backticks,
   then judge **every** piece. A command that cannot be parsed is not allowed. Matching on text is
   inherently leaky, so this is one layer of several, not the whole defense.
+- New-environment-variable detection as described above (added references and shell assignments ask;
+  names already present in the file do not).
 - Tests are a big table of allowed, asked and denied cases, including tricks (`git push` hidden after
   `&&`, `cat .e""nv`, a symlink to `/etc`). This PR is where "a test proves pushes to `main` and
   reads of `.env` are denied" is satisfied.
