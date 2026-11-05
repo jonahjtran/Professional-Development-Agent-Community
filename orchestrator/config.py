@@ -45,6 +45,20 @@ class Limits(_Strict):
     max_turns: StageValues[Annotated[int, Field(ge=1)]]
 
 
+class CheckCommand(_Strict):
+    """One tool the QA stage runs. It is skipped if the `requires` program is not on PATH."""
+
+    name: str = Field(min_length=1)
+    command: str = Field(min_length=1)  # split like a shell would, but run without a shell
+    requires: str | None = None
+
+
+class QaConfig(_Strict):
+    timeout_seconds: int = Field(gt=0)  # per check
+    tail_lines: int = Field(gt=0)  # how much of each check's output the report keeps
+    checks: list[CheckCommand] = Field(min_length=1)
+
+
 class TierPricing(_Strict):
     """Dollars per million tokens for one model tier."""
 
@@ -68,6 +82,7 @@ class Config(_Strict):
     budget: Budget
     limits: Limits
     pricing: Pricing
+    qa: QaConfig
 
 
 def load_config(path: Path) -> Config:
