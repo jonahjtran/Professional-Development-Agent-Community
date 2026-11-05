@@ -16,6 +16,7 @@ STAGE_INPUTS: dict[Stage, tuple[str, ...]] = {
     Stage.PRODUCT_OWNER: (),
     Stage.ARCHITECT: ("prd.json",),
     Stage.DEVELOPER: ("tasks.json", "architecture.md"),
+    Stage.QA: ("tasks.json", "qa_checks.json", "qa_tests.md"),
 }
 
 

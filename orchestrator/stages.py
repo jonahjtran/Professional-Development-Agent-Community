@@ -1,11 +1,24 @@
 """How a stage's validated output becomes stored artifacts."""
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from orchestrator.render import render_adr, render_architecture, render_prd
-from schemas import ADR, PRD, ArchitectOutput, unmapped_metrics
+from orchestrator.render import render_adr, render_architecture, render_prd, render_qa_report
+from schemas import (
+    ADR,
+    PRD,
+    ArchitectOutput,
+    CheckResult,
+    CriterionVerdict,
+    QaAssessment,
+    QaReport,
+    TaskList,
+    Verdict,
+    passes,
+    unmapped_metrics,
+)
 from schemas._base import Schema
 
 
@@ -65,4 +78,54 @@ def architect_stage() -> StageSpec:
         md_name="architecture.md",
         build=_build_architect,
         replaces=("adr/",),
+    )
+
+
+def _build_qa(assessment: QaAssessment, inputs: dict[str, str]) -> dict[str, str]:
+    """Combine the agent's verdicts with the orchestrator's check results into the QA report.
+
+    The task list is the source of truth for which criteria exist: a criterion the agent skipped
+    is recorded as untested, and a verdict for a criterion that is not in the plan is dropped.
+    """
+    plan = TaskList.model_validate_json(inputs["tasks.json"])
+    checks = [CheckResult.model_validate(c) for c in json.loads(inputs["qa_checks.json"])]
+    given = {(v.task_id, _key(v.criterion)): v for v in assessment.criteria}
+    criteria = [
+        _with_plan_wording(given[(task.id, _key(text))], text)
+        if (task.id, _key(text)) in given
+        else CriterionVerdict(
+            task_id=task.id,
+            criterion=text,
+            verdict=Verdict.UNTESTED,
+            evidence="The QA agent did not judge this criterion.",
+        )
+        for task in plan.tasks
+        for text in task.acceptance_criteria
+    ]
+    report = QaReport(
+        checks=checks,
+        criteria=criteria,
+        summary=assessment.summary,
+        passed=passes(checks, criteria),
+    )
+    return {
+        "test_report.json": report.model_dump_json(indent=2),
+        "test_report.md": render_qa_report(report),
+    }
+
+
+def _with_plan_wording(found: CriterionVerdict, text: str) -> CriterionVerdict:
+    return found.model_copy(update={"criterion": text})
+
+
+def _key(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def qa_stage() -> StageSpec:
+    return StageSpec(
+        schema=QaAssessment,
+        json_name="test_report.json",
+        md_name="test_report.md",
+        build=_build_qa,
     )
