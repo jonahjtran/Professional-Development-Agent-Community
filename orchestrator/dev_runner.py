@@ -18,6 +18,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClie
 from pydantic import ValidationError
 
 from orchestrator.config import Config
+from orchestrator.halt import halt_requested
 from orchestrator.permissions import PolicyContext
 from orchestrator.pipeline import AgentError, AgentRequest, AgentResult
 from orchestrator.prompts import Prompt
@@ -111,6 +112,7 @@ class DevRunner:
             runs_dir=self._runs_dir,
             project=request.project,
             task_id=task.id,
+            halt_check=lambda: halt_requested(self._runs_dir, request.project),
         )
         return ClaudeAgentOptions(
             model=self._config.models.for_tier("strong"),

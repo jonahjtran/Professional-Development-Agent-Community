@@ -5,7 +5,8 @@
     uv run --env-file .env pytest tests/live/test_live_developer.py --live -s -k throwaway
 
 2. The full path on THIS repository: a real branch is pushed and a real pull request is opened,
-   CI is waited for, then the PR is closed and the branch deleted. Needs GITHUB_TOKEN, and you must
+   CI is waited for, then the PR is closed and the branch deleted. Needs GITHUB_TOKEN (Contents and
+   Pull requests: read and write) and a signed-in `gh` (to read CI results), and you must
    opt in explicitly with AGENT_STUDIO_LIVE_GITHUB=1:
 
     AGENT_STUDIO_LIVE_GITHUB=1 uv run --env-file .env pytest tests/live --live -s -k github
@@ -141,8 +142,10 @@ def test_the_developer_builds_a_task_in_a_throwaway_repo(tmp_path: Path) -> None
         print(f"  denied: {details['tool']}: {details['summary']} ({details['reason']})")
 
 
-def _wait_for_ci(repo: Path, token: str, pr_url: str, timeout: float = 900) -> bool:
-    env = {**os.environ, "GH_TOKEN": token}
+def _wait_for_ci(repo: Path, pr_url: str, timeout: float = 900) -> bool:
+    # Reading CI results does not need the agents' token: use your own `gh` login instead. gh
+    # prefers GH_TOKEN/GITHUB_TOKEN over its stored login, so they are removed from this call.
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         done = subprocess.run(
@@ -160,8 +163,7 @@ def _wait_for_ci(repo: Path, token: str, pr_url: str, timeout: float = 900) -> b
     os.environ.get("AGENT_STUDIO_LIVE_GITHUB") != "1",
     reason="opens a real pull request on this repository: set AGENT_STUDIO_LIVE_GITHUB=1",
 )
-def test_a_task_becomes_a_pull_request_that_passes_ci_on_this_repo(tmp_path: Path) -> None:
-    token = load_token()
+def test_a_task_becomes_a_github_pull_request_that_passes_ci_on_this_repo(tmp_path: Path) -> None:
     config = load_config(ROOT / "config.yaml")
     task_id = f"LIVE-{int(time.time())}"
     task = {
@@ -182,17 +184,18 @@ def test_a_task_becomes_a_pull_request_that_passes_ci_on_this_repo(tmp_path: Pat
         "size": "S",
     }
     runner = DevRunner(config, tmp_path / "runs", ROOT, RecordingHuman(), load_prompt("developer"))
-    publisher = Publisher(ROOT, token)
+    publisher = Publisher(ROOT, load_token())
     pr_url = None
     try:
         result = DevResult.model_validate_json(runner.run(request_for(task, "live-gh")).output)
         published = publisher.publish(result, title=f"{task_id}: live smoke test")
         pr_url = published.pr_url
         assert pr_url and pr_url.startswith("https://github.com/")
-        assert _wait_for_ci(ROOT, token, pr_url), f"CI did not pass for {pr_url}"
+        ci_passed = _wait_for_ci(ROOT, pr_url)
+        assert ci_passed, f"CI did not pass for {pr_url}"
         print(f"\nlive pull request passed CI: {pr_url}")
     finally:
-        env = {**os.environ, "GH_TOKEN": token}
+        env = {**os.environ, "GH_TOKEN": load_token()}
         if pr_url:
             subprocess.run(
                 ["gh", "pr", "close", pr_url, "--delete-branch"], cwd=ROOT, env=env, check=False
