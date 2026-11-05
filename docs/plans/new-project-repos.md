@@ -34,17 +34,18 @@ run records.
    project repo, nothing on GitHub stops a leaked token pushing to `main`; the code-level guards above
    are the defense. GitHub Pro would add real protection and is worth considering.
 5. **CI for the new repo.** The Developer may never edit `.github/` in this repo, but a brand-new
-   project needs a workflow file from somewhere. See D7.
+   project needs a workflow file from somewhere. In a project repo, creating or changing `.github/`
+   asks you first (D7).
 6. **The plan documents get committed.** The approved PRD, architecture and ADRs are opened as the new
    repo's first pull request, so the project carries its own design record.
 
-## Open decisions
+## Further decisions (answered by the owner)
 
-| # | Decision | Recommendation |
+| # | Decision | Answer |
 | --- | --- | --- |
 | D6 | State change: `repo_path`, `repo_url` in `ProjectState`. | Yes. |
-| D7 | In a project repo, should edits to `.github/` ask the human instead of being denied? The Architect picks the tech stack, so the right CI workflow is only known after that, and the Developer is the one who can write it. | Yes: in project repos, creating or changing `.github/` is an **ask**, so you review that exact change before it happens. In this repo it stays an outright deny. This changes the permission policy (3.1), so it needs your OK. |
-| D8 | Worktree folders. They currently go next to the repo as `<repo>-worktrees`, which would clutter `~/Desktop/Github`. | Put them under a hidden `~/Desktop/Github/.agent-worktrees/<project>/`. |
+| D7 | In a project repo, edits to `.github/` ask the human instead of being denied. In this repo they stay an outright deny. | Yes. |
+| D8 | Worktree folders. | `~/.cache/agent-studio/worktrees/<project>/<task>`, outside the synced Desktop and your Github folder. Overridable with the `AGENT_STUDIO_WORKTREES` environment variable. |
 
 ## PR breakdown
 
@@ -52,7 +53,7 @@ Each is small and tests-first, and targets `main`.
 
 1. **Repo in state, and the push guard.** `repo_path` and `repo_url` in state. `--repo` required for
    `--agent full`. `Publisher` refuses to push unless `origin` matches the recorded repo. Worktrees move
-   to the hidden folder (D8).
+   to `~/.cache/agent-studio/worktrees` (D8).
 2. **`studio new <name> [--public]`.** Using your `gh` login: create the private repo, clone it to
    `~/Desktop/Github/<name>`, write a first commit (`README.md`, `.gitignore`), push `main`, record the
    repo in a new project's state, and print the steps to enable branch protection if the repo is public
