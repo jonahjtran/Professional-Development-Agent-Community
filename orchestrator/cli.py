@@ -10,6 +10,7 @@ from orchestrator import __version__
 from orchestrator.api_runner import ApiRunner, ValidatingRunner
 from orchestrator.cli_cap import CliCapBackend
 from orchestrator.cli_gate import CliGateBackend
+from orchestrator.cli_tool import CliToolBackend
 from orchestrator.config import Config, load_config
 from orchestrator.default_specs import (
     default_api_schemas,
@@ -17,10 +18,13 @@ from orchestrator.default_specs import (
     default_specs,
     default_stage_specs,
 )
+from orchestrator.dev_runner import DevRunner
 from orchestrator.echo_agent import EchoAgent
-from orchestrator.pipeline import AgentRunner, PipelineContext, run_pipeline
+from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
+from orchestrator.prompts import load_prompt
+from orchestrator.publish import Publisher, PublishError, load_token
 from orchestrator.runner import SdkRunner
-from orchestrator.state import ProjectState, Status, load_state, state_path
+from orchestrator.state import ProjectState, Stage, Status, load_state, state_path
 from schemas import Track
 
 app = typer.Typer(
@@ -34,10 +38,14 @@ class AgentKind(StrEnum):
     ECHO = "echo"  # the free dummy agent, for trying the flow
     CLAUDE = "claude"  # real Claude calls through the Agent SDK (costs money)
     API = "api"  # real Claude calls through the Messages API (costs money)
+    FULL = "full"  # API for planning, then the Developer builds tasks and opens pull requests
 
 
 AgentOption = Annotated[AgentKind, typer.Option("--agent", help="Which agent runs the stages.")]
 ConfigOption = Annotated[Path, typer.Option("--config", help="Path to config.yaml.")]
+RepoOption = Annotated[
+    Path, typer.Option("--repo", help="The git repository the Developer works in.")
+]
 RunsDirOption = Annotated[Path, typer.Option("--runs-dir", help="Where projects are stored.")]
 
 _MAX_SLUG_LENGTH = 40
@@ -73,28 +81,53 @@ def _fail(message: str) -> typer.Exit:
     return typer.Exit(1)
 
 
-def make_runner(kind: AgentKind, config: Config, runs_dir: Path) -> AgentRunner:
+def make_runner(
+    kind: AgentKind, config: Config, runs_dir: Path, repo: Path = Path(".")
+) -> AgentRunner:
     if kind == AgentKind.CLAUDE:
         return SdkRunner(config, runs_dir, default_specs())
-    if kind == AgentKind.API:
-        return ValidatingRunner(ApiRunner(config, default_api_specs()), default_api_schemas())
+    if kind in (AgentKind.API, AgentKind.FULL):
+        planner = ValidatingRunner(ApiRunner(config, default_api_specs()), default_api_schemas())
+        if kind == AgentKind.API:
+            return planner
+        developer = DevRunner(
+            config, runs_dir, repo.resolve(), CliToolBackend(), load_prompt("developer")
+        )
+        return RoutingRunner(
+            {
+                Stage.PRODUCT_OWNER: planner,
+                Stage.ARCHITECT: planner,
+                Stage.DEVELOPER: developer,
+            }
+        )
     return EchoAgent()
 
 
-def _context(config_path: Path, runs_dir: Path, agent: AgentKind) -> PipelineContext:
+def _context(
+    config_path: Path, runs_dir: Path, agent: AgentKind, repo: Path = Path(".")
+) -> PipelineContext:
     try:
         config = load_config(config_path)
     except FileNotFoundError:
         raise _fail(f"Config file not found: {config_path}") from None
     except ValidationError as error:
         raise _fail(f"Invalid config {config_path}:\n{error}") from None
+    publisher: Publisher | None = None
+    if agent == AgentKind.FULL:
+        if not (repo / ".git").exists():
+            raise _fail(f"{repo} is not a git repository; pass --repo")
+        try:
+            publisher = Publisher(repo.resolve(), load_token())
+        except PublishError as error:
+            raise _fail(str(error)) from None
     return PipelineContext(
         config=config,
         runs_dir=runs_dir,
-        runner=make_runner(agent, config, runs_dir),
+        runner=make_runner(agent, config, runs_dir, repo),
         gates=CliGateBackend(),
         caps=CliCapBackend(),
-        stages=default_stage_specs() if agent == AgentKind.API else {},
+        stages=default_stage_specs() if agent in (AgentKind.API, AgentKind.FULL) else {},
+        publisher=publisher,
     )
 
 
@@ -113,6 +146,7 @@ def run(
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
     agent: AgentOption = AgentKind.ECHO,
+    repo: RepoOption = Path("."),
     track: Annotated[Track, typer.Option(help="Which kind of PRD to write.")] = Track.ENGINEERING,
 ) -> None:
     """Start a new project and run it until it is done or halted."""
@@ -125,7 +159,7 @@ def run(
             f"Project {project.project_slug} already exists. "
             f"Continue it with: studio resume {project.project_slug}"
         )
-    ctx = _context(config, runs_dir, agent)
+    ctx = _context(config, runs_dir, agent, repo)
     _finish(run_pipeline(project, ctx))
 
 
@@ -135,6 +169,7 @@ def resume(
     config: ConfigOption = Path("config.yaml"),
     runs_dir: RunsDirOption = Path("runs"),
     agent: AgentOption = AgentKind.ECHO,
+    repo: RepoOption = Path("."),
 ) -> None:
     """Continue a project from its last saved step, after a crash or Ctrl-C."""
     try:
@@ -144,4 +179,4 @@ def resume(
     if state.status in (Status.DONE, Status.HALTED):
         typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
         return
-    _finish(run_pipeline(state, _context(config, runs_dir, agent)))
+    _finish(run_pipeline(state, _context(config, runs_dir, agent, repo)))

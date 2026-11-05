@@ -12,6 +12,7 @@ from orchestrator.worktree import (
     has_uncommitted_changes,
     protected_for,
     remove_worktree,
+    uncommitted_paths,
 )
 
 GIT = ["git", "-c", "user.email=a@b.c", "-c", "user.name=tester"]
@@ -289,3 +290,28 @@ def test_a_branch_with_commits_is_never_discarded(repo: Path) -> None:
 
 def test_discarding_when_there_is_nothing_left_over_does_nothing(repo: Path) -> None:
     assert discard_unused(repo, "T1") is False
+
+
+def test_cache_folders_made_by_running_tests_are_not_uncommitted_work(repo: Path) -> None:
+    wt = create_worktree(repo, "T1")
+    for cache in (
+        "__pycache__/a.cpython-312.pyc",
+        ".pytest_cache/v/cache",
+        "pkg/__pycache__/b.pyc",
+    ):
+        target = wt.path / cache
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x")
+
+    assert not has_uncommitted_changes(wt)
+    assert uncommitted_paths(wt) == []
+
+
+def test_real_files_are_reported_by_name_even_next_to_caches(repo: Path) -> None:
+    wt = create_worktree(repo, "T1")
+    (wt.path / "__pycache__").mkdir()
+    (wt.path / "__pycache__" / "x.pyc").write_text("x")
+    (wt.path / "forgotten.py").write_text("y = 1\n")
+    (wt.path / "app.py").write_text("changed\n")
+
+    assert sorted(uncommitted_paths(wt)) == ["app.py", "forgotten.py"]
