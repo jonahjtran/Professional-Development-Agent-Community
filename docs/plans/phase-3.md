@@ -1,12 +1,12 @@
 # Phase 3 sub-plan: the Developer agent
 
-Status: DRAFT for review. Nothing here is built yet.
+Status: DRAFT, updated with the owner's answers (2026-11-04). Nothing here is built yet.
 
 ## Goal
 
-Given one task from the approved `tasks.json`, a Developer agent writes the code in an isolated
-copy of a separate target repo, commits it on its own branch, and the orchestrator opens a pull
-request. A permission layer decides what the agent may do. Every denied or asked action is traced.
+Given one task from the approved `tasks.json`, a Developer agent writes the code in a git worktree
+of the project's own repository (this repo by default), commits it on its own branch, and the
+orchestrator opens a pull request, the same way a human contributor works with branches and PRs. A permission layer decides what the agent may do. Every denied or asked action is traced.
 
 ## Acceptance criteria (from the build plan)
 
@@ -39,13 +39,26 @@ run, what it can see, and how much it can spend.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
-| D1 | Which repo does the Developer work in? | A new throwaway repo on your account, for example `agent-studio-toy`: a tiny Python package with pytest and a CI workflow, so a PR can actually pass or fail CI. **Never this repo.** You create it (I will not create repos on your account without asking). |
-| D2 | Who pushes the branch and opens the PR? | **The orchestrator, not the agent.** The agent may only commit locally. `git push` and every other network command are denied to it. After the run the orchestrator verifies the commits itself, then pushes and opens the PR with `gh`. The GitHub token never enters the agent's world, which removes the biggest risk. This is a change from the build plan's wording ("branch and PR creation via `gh`"); the result is the same, with a smaller blast radius. |
-| D3 | GitHub credentials. | A fine-grained personal access token limited to the toy repo (contents and pull requests: read and write), stored as `GITHUB_TOKEN` in `.env`. Branch protection on the toy repo's `main` (PR and review required), so even a leaked token cannot merge. You create the token; I will not see it. |
+| D1 | Which repo does the Developer work in? | **DECIDED: the project's own repository, no separate toy repo.** The agent creates a new branch per task and the orchestrator opens the PR, like a human contributor. To keep your checkout safe the agent works in a **git worktree** (a second working folder of the same repo, outside your checkout) on branch `agent/<task-id>`, branched from an up-to-date `main`. The target is a `--repo PATH` option that defaults to the repo you run `studio` from, so it also works on any other repo later. Working on this repo itself is allowed only with protected paths (see below). |
+| D2 | Who pushes the branch and opens the PR? | **DECIDED: the orchestrator, not the agent.** The agent may only commit locally. `git push` and every other network command are denied to it. After the run the orchestrator verifies the commits itself, then pushes and opens the PR with `gh`. The GitHub token never enters the agent's world, which removes the biggest risk. This is a change from the build plan's wording ("branch and PR creation via `gh`"); the result is the same, with a smaller blast radius. |
+| D3 | GitHub credentials. | **DECIDED: you add `GITHUB_TOKEN` to `.env`.** Use a fine-grained token limited to this one repository (contents and pull requests: read and write, nothing else). The real repo is now the target, so **branch protection on `main` is the key backstop** and is required before the first live run: require a pull request, require the `check` status, and block force-pushes. Only you can set that. |
 | D4 | The permission rules (allow, ask, deny). | Proposed in the table below. The **ask** column is the one that needs your judgment. |
-| D5 | Spending limits for Developer runs. | The stage cap is a $10 placeholder. Proposal: **$2 per task** through `max_budget_usd`, 40 turns, and a $3 stage cap for the first live runs. Raise only after seeing real costs. |
-| D6 | State change: remember finished tasks. | Add `completed_tasks` (list of task ids) to `ProjectState` so the per-task loop can resume after a crash (schema change, needs your OK). |
-| D7 | Where does the human review the PR? | In Phase 3 the gate after the Developer shows the PR link, the summary and the diff stat, and you approve in the terminal (merging stays your job on GitHub). Polling `gh pr view` for review state comes later. Until QA exists in Phase 4, this gate replaces the QA gate; Phase 4 moves it. |
+| D5 | Spending limits for Developer runs. | **DECIDED: $2 per task, 40 turns, $3 Developer stage cap**, and **keep the code minimal**. The per-task limit is one config number (`limits.max_task_usd`) passed to the SDK's own `max_budget_usd`; the SDK stops the run and the orchestrator halts and bills it. No new warning, allowance or raise-the-cap machinery for the Developer. The existing stage and project cap checks stay as they are. The stage cap change is a one-line `config.yaml` edit. |
+| D6 | State change: remember finished tasks. | Add `completed_tasks` (list of task ids) to `ProjectState` so the per-task loop can resume after a crash. **Still needs your explicit OK.** |
+| D7 | Where does the human review the PR? | **DECIDED: the terminal gate.** In Phase 3 the gate after the Developer shows the PR link, the summary and the diff stat, and you approve in the terminal (merging stays your job on GitHub). Polling `gh pr view` for review state comes later. Until QA exists in Phase 4, this gate replaces the QA gate; Phase 4 moves it. |
+
+| D8 | A future monitoring UI. | **Not built now.** Phase 3 only keeps the seams a UI will need (see "Designing for a future UI"). No web server, database or API is added. |
+| D9 | Stopping an agent. | Add a small `studio halt <project>` (the build plan's kill switch, not yet built): a flag file checked between agent calls and before each tool call by the same hook, so a running Developer can be stopped from the terminal now and from a UI later. |
+
+### Working in this repository itself
+
+Because the target defaults to this repo, an agent could try to edit the code that controls it. So
+in addition to the rules below, these **protected paths are denied for edit** by the policy:
+`orchestrator/` permission and policy files, `.github/`, `CLAUDE.md`, `config.yaml` (budgets), and
+`.claude/`. Changes to them need a human-authored PR. The agent's worktree is a separate folder, so
+code it changes is not live until you review and merge the PR, and a half-finished edit can never
+break the orchestrator run that started it. `.env` is untracked, so it is not in the worktree at all,
+and the policy still denies reading the main checkout's copy by absolute path.
 
 ### Proposed permission rules (D4)
 
@@ -89,16 +102,19 @@ expected, the plan changes here, not after the code is written.
 - Tests drive the hook and callback directly with fake tool calls.
 
 ### 3.3 The worktree manager
-- Creates a git worktree of the target repo on `agent/<task-id>`, and removes it afterwards.
-- Refuses to run if the target is this repo or lies inside it, or if the working copy is dirty.
-- Scrubs what the agent can see (no `.env` is ever copied in).
+- Creates a git worktree of the target repo (default: this repo) in a folder outside the checkout, on
+  a new branch `agent/<task-id>` cut from an up-to-date `main`, and removes it afterwards.
+- Refuses to start if the branch name already exists or the target is not a git repo. Your own checkout
+  and uncommitted work are never touched.
+- When the target is this repo, turns on the protected paths above.
+- Nothing untracked (so no `.env`) ever appears in the worktree.
 - Tests use real temporary git repositories (git is local, so no network).
 
 ### 3.4 The Developer runner
 - A Developer `AgentSpec` and `developer.v1.md` prompt: one task, the architecture, and the rules.
   Repo files and tool output are data, not instructions.
 - Options: `cwd` = worktree, `setting_sources=[]`, `sandbox` on (if the spike says it works),
-  `permission_mode="dontAsk"`, `max_turns` from config, `max_budget_usd` = what the stage has left,
+  `permission_mode="dontAsk"`, `max_turns` from config, `max_budget_usd` = `limits.max_task_usd` ($2, one config number, no new cap logic),
   and `env` blanking any secret the spike shows would leak.
 - The agent writes `dev_result.json` (`DevResult`: task id, branch, summary, deviations, known gaps).
   The orchestrator **verifies the repo itself** (branch exists, commits exist, nothing on `main`)
@@ -118,18 +134,42 @@ expected, the plan changes here, not after the code is written.
 - Each task has its own revision count and cost line, so a stuck task shows up clearly.
 - Request-changes at the PR gate reruns the Developer on the same branch with your comments.
 
-### 3.7 Live toy-repo test (opt-in, costs money)
-- With the toy repo and token from D1 and D3: one task becomes a PR, the PR's CI is green, cost is
-  recorded, and the trace shows allowed, asked and denied actions.
+### 3.7 Live test on this repo (opt-in, costs money)
+- With your `GITHUB_TOKEN` and branch protection on: one small, harmless fixed task (for example, add a
+  tested helper function) becomes a real PR on this repo, this repo's own `check` CI goes green, cost is
+  recorded, and the trace shows allowed, asked and denied actions. The test then closes the PR and
+  deletes the branch, so nothing lands on `main`.
 - A second live case asks the agent to read `.env` and push to `main`, and checks both are denied and
   traced. Phase 3 is done only if this passes against the real agent.
+
+### 3.8 Halt switch
+- `studio halt <project>` writes a flag file. The pipeline checks it before every agent call, and the
+  tool-call hook checks it before every tool call, so a running Developer stops within one step. State
+  is saved as `halted`. Tests drive the flag with a fake agent.
+
+## Designing for a future UI
+
+A monitoring and control UI is a later project, so nothing is built for it now. The existing design
+already has the seams it needs, and Phase 3 keeps them intact:
+- **One source of truth on disk.** `state.json` (where each project is and what it is waiting for),
+  `trace.jsonl` (every transition, call, gate and tool decision), `cost.json` (spend). A UI only has to
+  read these.
+- **Decisions go through backend interfaces.** Gates, cap pauses, and (new in 3.2) tool permissions each
+  use a small `Backend` protocol, so a UI answers them by implementing the same interface the terminal
+  uses today, with no pipeline changes.
+- **A waiting question survives restarts.** Because a pause is saved as `awaiting_human` with its kind,
+  a UI process can show it and a later process can answer it.
+- **Small additions in this phase, for the UI's sake:** every Developer trace event carries `task_id`,
+  the state records `completed_tasks`, and `studio halt` gives the UI a stop button.
+- **Deliberately not added:** a web server, database, API, authentication, or background worker. If the
+  UI later needs the orchestrator to run as a background service, that is its own design.
 
 ## Defense in depth
 
 No single rule is trusted. The layers, outermost first:
-1. The agent works in a separate repo's worktree, never in this repo.
+1. The agent works in its own worktree on its own branch, never in your checkout.
 2. The orchestrator, not the agent, holds the GitHub token and does the push.
-3. `main` on the toy repo requires a reviewed PR, so nothing can merge itself.
+3. `main` requires a reviewed PR and the `check` status (**you must enable this**), so nothing can merge itself.
 4. The permission policy (hook plus callback) filters each tool call.
 5. The OS-level sandbox, if the spike shows it helps.
 6. Turn, dollar and stage budgets stop a runaway agent.
@@ -139,7 +179,7 @@ No single rule is trusted. The layers, outermost first:
 
 - **The Bash policy is leaky by nature.** Shell syntax has many ways to spell the same command. That is
   why layers 1 to 3 exist: even if layer 4 is fooled, the agent has no token, no access to this repo,
-  and cannot merge.
+  and cannot merge. Branch protection is what makes the real repo safe, so it is a precondition for 3.7.
 - **Prompt injection from the repo.** Text in the toy repo could tell the agent to do something else.
   The prompt says repo content is data, and the policy applies whatever the text says.
 - **Secrets in the environment.** The agent's subprocess inherits our environment. The spike must show
