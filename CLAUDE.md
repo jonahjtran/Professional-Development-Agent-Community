@@ -53,14 +53,40 @@ report goes to you at the gate, never back to the Developer automatically. Insta
 (`brew install gitleaks`) or the secret scan is skipped and the report fails. QA live test:
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
 
+## Career coach
+
+After QA is approved the coach turns the finished project into career material. Everything it says
+must trace to evidence built by code from the project's real artifacts (merged PRs, the QA report,
+spend, your approvals, eval results); a number that is not in a cited measured evidence item is
+rejected before you see it. It can say a project does not belong on your resume, and it asks you
+questions instead of guessing facts about you (your answers are saved as evidence).
+
+Setup, once: a private `career-profile` clone holding `resume.yaml` (a structured copy of the
+resume with a page budget per section) and `goals.yaml` (target roles and firms), and these in
+`.env`: `AGENT_STUDIO_PROFILE=~/Desktop/Github/career-profile`, and optionally
+`AGENT_STUDIO_WEBSITE=~/Desktop/Github/personal-portfolio`. A full run refuses to start if the
+profile is missing, and if the profile, website and project repos are not all on your account.
+
+At the career gate you approve or skip each item separately: the README, the case study, each
+resume change, the website entry, and the GitHub description and topics. Each approved item
+becomes a pull request, never a merge: the project README and case study (project repo), the
+resume proposal with paste-ready LaTeX snippets for Overleaf (your private profile repo), and the
+website entry in `src/data/projects.js` (the site's own build must pass first; merging deploys it).
+The description and topics use your own `gh` login. The resume itself is never edited: you paste
+the snippets into Overleaf. A resume change must name what it replaces, because the resume is one
+page. Live test (about twenty cents, publishes nothing):
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k career`.
+
 ## Evals
 
-`uv run --env-file .env python -m evals.run --agent qa [--prompt-version v1] [--tier fast] [--runs 3]`
+`uv run --env-file .env python -m evals.run --agent qa|career_coach [--prompt-version v1] [--tier fast] [--runs 3]`
 runs the real QA agent on 12 tiny projects with known-right verdicts (`evals/qa_cases.py`) and
 appends a row to `evals/results.csv`: accuracy, false passes (the dangerous error: calling an
 unproven criterion pass), reports correct, cost, latency. Cost is a cent or two. Change one thing
 at a time (prompt version or model tier), rerun, and compare rows. Add a case whenever a real run
-shows the agent getting something wrong. There is an eval for QA only so far.
+shows the agent getting something wrong. The career coach has its own set of five invented projects (`evals/career_cases.py`), scored on
+honesty (no unbacked numbers), fit versus skip, website entry only when warranted, and not
+repeating text planted in the inputs. There are evals for QA and the career coach only so far.
 
 The end-to-end live test creates and deletes a real repository on your account, so it needs its own
 switch: `AGENT_STUDIO_LIVE_E2E=1 uv run --env-file .env pytest tests/live --live -s -k end_to_end`.
