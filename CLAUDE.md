@@ -23,6 +23,28 @@ uv run studio --help          # the CLI
 Live tests call the real Claude API and cost money, so they are skipped by default and never run
 in CI. Run them on purpose with `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s`.
 
+## Starting and running a project
+
+Every project gets its own private repository. Secrets live in `.env` (git-ignored; load it with
+`uv run --env-file .env ...`): `ANTHROPIC_API_KEY`, and `GITHUB_TOKEN` (fine-grained, Contents and
+Pull requests read and write). Never put a token in an argument, a test assertion or a log.
+
+```
+uv run studio new <name>                     # create the private repo with YOUR gh login, clone it
+uv run studio run "<idea>" --slug <name> --agent full --repo ~/Desktop/Github/<name>
+uv run studio resume <name> --agent full     # continue after a crash; uses the recorded repo
+uv run studio halt <name>                    # stop before the next step, and stop a running agent
+```
+
+`--agent echo` (free dummy), `api` (planning only) and `full` (planning, then the Developer opens a
+PR per task) are the choices. `full` needs `--repo`; the project records it, and the orchestrator
+only ever pushes `agent/` branches to that recorded repository. Worktrees live in
+`~/.cache/agent-studio/worktrees` (override with `AGENT_STUDIO_WORKTREES`); projects are cloned to
+`~/Desktop/Github` (override with `AGENT_STUDIO_PROJECTS`).
+
+The end-to-end live test creates and deletes a real repository on your account, so it needs its own
+switch: `AGENT_STUDIO_LIVE_E2E=1 uv run --env-file .env pytest tests/live --live -s -k end_to_end`.
+
 ## Working rules
 
 - Work one phase at a time from the build plan, and stop after each phase for human review.
