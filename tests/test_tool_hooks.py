@@ -300,3 +300,22 @@ def test_markup_in_a_command_is_printed_literally() -> None:
     _, output = ask_terminal(request, "n\n\n")
 
     assert "[bold]hi[/bold]" in output
+
+
+def test_a_repos_own_approval_paths_are_passed_through_to_the_policy(
+    tmp_path: Path, wt: Path
+) -> None:
+    hooks = ToolPermissionHooks(
+        policy=PolicyContext(worktree=wt, ask_paths=("docs",)),
+        backend=ScriptedBackend(),
+        runs_dir=tmp_path / "runs",
+        project="demo",
+        task_id="T1",
+        branch=lambda: "agent/T1",
+    )
+
+    asked = pre(hooks, "Write", {"file_path": "docs/plan.md", "content": "x"})
+    ci = pre(hooks, "Write", {"file_path": ".github/ci.yml", "content": "x"})
+
+    assert decision_of(asked) == "ask"
+    assert decision_of(ci) is None  # not in this repo's approval list, so it is simply allowed

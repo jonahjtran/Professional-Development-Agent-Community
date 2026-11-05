@@ -103,3 +103,16 @@ def test_the_architect_prompt_says_what_counts_as_a_tech_choice() -> None:
 
 def test_the_first_architect_prompt_is_kept_for_comparison() -> None:
     assert load_prompt("architect", DEFAULT_PROMPTS_DIR, version="v1").version == "v1"
+
+
+def test_the_developer_prompt_explains_that_ci_changes_need_the_humans_approval() -> None:
+    prompt = load_prompt("developer", DEFAULT_PROMPTS_DIR)
+
+    assert prompt.version == "v2"
+    assert ".github" in prompt.text
+    assert "approval" in prompt.text.lower()
+    assert "make a failing" in prompt.text.lower() or "make tests pass" in prompt.text.lower()
+
+
+def test_the_first_developer_prompt_is_kept_for_comparison() -> None:
+    assert load_prompt("developer", DEFAULT_PROMPTS_DIR, version="v1").version == "v1"

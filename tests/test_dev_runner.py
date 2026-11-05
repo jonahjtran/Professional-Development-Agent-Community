@@ -515,3 +515,36 @@ def test_a_leftover_branch_that_has_real_work_is_never_thrown_away(
         Harness(repo, tmp_path).runner().run(request())
 
     assert "precious.py" in git(repo, "ls-tree", "--name-only", "agent/T1")
+
+
+def _decision_for(harness: Harness, tool_input: dict[str, str]) -> Any:
+    import asyncio
+
+    assert harness.options[0].hooks is not None
+    hook: Any = harness.options[0].hooks["PreToolUse"][0].hooks[0]
+    data = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": tool_input,
+        "tool_use_id": "t",
+    }
+    output: Any = asyncio.run(hook(data, "t", {"signal": None}))
+    return output["hookSpecificOutput"]["permissionDecision"]
+
+
+def test_in_a_project_repo_changing_ci_asks_the_human(repo: Path, tmp_path: Path) -> None:
+    harness = Harness(repo, tmp_path)
+    harness.runner().run(request())  # studio_root is some other repo
+
+    decision = _decision_for(harness, {"file_path": ".github/workflows/ci.yml", "content": "x"})
+
+    assert decision == "ask"
+
+
+def test_in_the_studio_repo_itself_changing_ci_is_denied(repo: Path, tmp_path: Path) -> None:
+    harness = Harness(repo, tmp_path)
+    harness.runner(studio_root=repo).run(request())
+
+    decision = _decision_for(harness, {"file_path": ".github/workflows/ci.yml", "content": "x"})
+
+    assert decision == "deny"

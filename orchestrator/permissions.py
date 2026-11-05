@@ -39,13 +39,16 @@ class PolicyContext:
     """What the policy needs to know about where the agent is working."""
 
     worktree: Path
-    protected: tuple[str, ...] = ()  # extra paths (relative to the worktree) the agent may not edit
+    protected: tuple[str, ...] = ()  # paths (relative to the worktree) the agent may never edit
+    # Paths the agent may edit only with the human's approval. A path that is also in `protected`
+    # is denied outright. CI files are here by default: in a project repo the agent often has to
+    # write the first workflow, but a human must see that exact change.
+    ask_paths: tuple[str, ...] = (".github",)
     current_branch: str | None = None  # None skips the branch checks
     branch_prefix: str = "agent/"
 
 
 _OK = Decision(Verdict.ALLOW, "allowed")
-_ALWAYS_PROTECTED = (".github",)
 
 # --- names that must never be read ------------------------------------------------------------
 
@@ -113,13 +116,14 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def _is_protected(rel: Path, ctx: PolicyContext) -> bool:
+def _under(rel: Path, prefixes: tuple[str, ...]) -> str | None:
+    """The first of `prefixes` that `rel` is, or is inside, or None."""
     text = rel.as_posix()
-    for prefix in (*_ALWAYS_PROTECTED, *ctx.protected):
+    for prefix in prefixes:
         prefix = prefix.rstrip("/")
         if text == prefix or text.startswith(prefix + "/"):
-            return True
-    return False
+            return prefix
+    return None
 
 
 def _check_path(
@@ -143,8 +147,14 @@ def _check_path(
             return Decision(Verdict.DENY, f"{raw} resolves to a secret ({secret})")
     if ".git" in rel.parts:
         return Decision(Verdict.DENY, f"{raw} is inside git's own files")
-    if write and _is_protected(rel, ctx):
+    if write and _under(rel, ctx.protected):
         return Decision(Verdict.DENY, f"{rel.as_posix()} is a protected path; a human must edit it")
+    if write and (prefix := _under(rel, ctx.ask_paths)):
+        return Decision(
+            Verdict.ASK,
+            f"changing {rel.as_posix()} (under {prefix}/) needs your approval: these files "
+            "decide whether a change is accepted, so you review that exact change",
+        )
     return None
 
 

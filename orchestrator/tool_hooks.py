@@ -110,6 +110,7 @@ class ToolPermissionHooks:
             policy = PolicyContext(
                 worktree=self._policy.worktree,
                 protected=self._policy.protected,
+                ask_paths=self._policy.ask_paths,
                 current_branch=self._branch(),
                 branch_prefix=self._policy.branch_prefix,
             )
