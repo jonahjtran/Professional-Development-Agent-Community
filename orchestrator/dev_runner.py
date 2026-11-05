@@ -29,6 +29,7 @@ from orchestrator.worktree import (
     commits_ahead,
     create_worktree,
     delete_branch,
+    discard_unused,
     has_uncommitted_changes,
     head_sha,
     local_branches,
@@ -82,9 +83,13 @@ class DevRunner:
     def run(self, request: AgentRequest) -> AgentResult:
         task = _find_task(request)
         revising = request.previous_draft is not None
-        branches_before = local_branches(self._repo)
+        # A rejected task starts again on a fresh branch, so the earlier pull request is untouched.
+        branch_id = task.id if request.attempt == 0 else f"{task.id}-r{request.attempt}"
         try:
-            worktree = create_worktree(self._repo, task.id, base=self._base, resume=revising)
+            if not revising:
+                discard_unused(self._repo, branch_id)  # leftovers of a crash, with no work in them
+            branches_before = local_branches(self._repo)
+            worktree = create_worktree(self._repo, branch_id, base=self._base, resume=revising)
         except WorktreeError as error:
             raise AgentError(f"worktree problem: {error}") from error
         try:

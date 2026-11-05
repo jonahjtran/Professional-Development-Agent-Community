@@ -258,3 +258,19 @@ def test_the_token_comes_from_the_environment() -> None:
 def test_a_missing_token_is_a_clear_error(env: dict[str, str]) -> None:
     with pytest.raises(PublishError, match="GITHUB_TOKEN"):
         load_token(env)
+
+
+def test_the_diff_summary_compares_the_branch_with_main(tmp_path: Path) -> None:
+    run = FakeRun(git_diff=(0, " a.py | 2 +-\n 1 file changed\n", ""))
+
+    stat = publisher(run, tmp_path).diff_stat("agent/T1")
+
+    [call] = run.commands("git", "diff")
+    assert call.args == ["git", "diff", "--stat", "main...agent/T1"]
+    assert "1 file changed" in stat
+
+
+def test_an_empty_diff_says_so(tmp_path: Path) -> None:
+    run = FakeRun(git_diff=(0, "", ""))
+
+    assert "no file changes" in publisher(run, tmp_path).diff_stat("agent/T1")

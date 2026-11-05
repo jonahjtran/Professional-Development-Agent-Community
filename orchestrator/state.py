@@ -104,6 +104,7 @@ class ProjectState(BaseModel):
     allowances: Allowances = Field(default_factory=Allowances)
     track: Track = Track.ENGINEERING
     artifacts: dict[str, Artifact] = Field(default_factory=dict)
+    completed_tasks: list[str] = Field(default_factory=list)  # Developer tasks approved so far
     qa_loops: Annotated[int, Field(ge=0)] = 0  # times QA has sent the work back to the Developer
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
