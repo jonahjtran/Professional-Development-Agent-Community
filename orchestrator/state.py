@@ -37,6 +37,7 @@ class InterventionKind(StrEnum):
     GATE = "gate"
     REVISION_CAP = "revision_cap"
     BUDGET_CAP = "budget_cap"
+    MERGE_PENDING = "merge_pending"  # QA is waiting for the Developer pull requests to be merged
     QA_FAILED = "qa_failed"
     TOOL_PERMISSION = "tool_permission"
 

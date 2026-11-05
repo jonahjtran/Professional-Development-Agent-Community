@@ -94,6 +94,15 @@ class Publisher:
         )
         return done.stdout.strip() or "(no file changes)"
 
+    def is_merged(self, pr_url: str) -> bool:
+        """True if the pull request has been merged on GitHub."""
+        done = self._call(
+            ["gh", "pr", "view", pr_url, "--json", "state", "--jq", ".state"],
+            {"GH_TOKEN": self._token},
+            "checking a pull request",
+        )
+        return done.stdout.strip() == "MERGED"
+
     def _push(self, branch: str) -> None:
         remote = self._call(["git", "remote", "get-url", "origin"], {}, "reading the remote")
         actual = normalize_repo_url(remote.stdout)

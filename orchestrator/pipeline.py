@@ -4,8 +4,9 @@ It never asks an LLM what to do next. Each call to `advance` does one unit of pr
 the state, so a crash at any point resumes from the last saved step.
 
 Stage order:  intake -> product_owner -> architect -> developer -> qa -> career_coach -> done.
-Gates (human decisions) follow product_owner, architect, qa and career_coach. A failing QA sends
-the work back to the developer, up to `limits.max_qa_loops` times, then goes to the human.
+Gates (human decisions) follow product_owner, architect, qa and career_coach. With the dummy QA
+agent, a failing QA sends the work back to the developer up to `limits.max_qa_loops` times. With the
+real QA tools (`ctx.qa`), QA runs once on the merged project and a failing report goes to the human.
 """
 
 import difflib
@@ -39,9 +40,11 @@ from orchestrator.designrecord import DesignRecordError, publish_design_record
 from orchestrator.gates import GateBackend, GateRequest, apply_decision, open_gate
 from orchestrator.halt import halt_requested
 from orchestrator.publish import PublishError
+from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
 from orchestrator.stages import StageSpec
 from orchestrator.state import (
     GateOutcome,
+    Intervention,
     InterventionKind,
     ProjectState,
     Stage,
@@ -50,7 +53,7 @@ from orchestrator.state import (
 )
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 from orchestrator.worktree import WorktreeError
-from schemas import DevResult, TaskList
+from schemas import DevResult, QaReport, TaskList
 from schemas.tasks import Task
 
 __all__ = [
@@ -158,6 +161,10 @@ class PipelineContext:
     publisher: TaskPublisher | None = None
     # The project's own repository; with a publisher it receives the design record as a first PR.
     repo: Path | None = None
+    # When set, the QA stage first checks the Developer pull requests are merged, then runs the real
+    # tools on the merged project and hands their results to the QA agent.
+    qa: QaPreparer | None = None
+    merges: MergeBackend | None = None
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -213,6 +220,11 @@ def _run_stage(
         if state.status != Status.RUNNING:
             return state
 
+    if stage == Stage.QA and ctx.qa is not None:
+        state = _prepare_qa(state, ctx, ctx.qa)
+        if state.status != Status.RUNNING:
+            return state
+
     request = _build_request(state, ctx)
     _trace(ctx, state, EventType.AGENT_START, agent=stage.value)
     started = time.monotonic()
@@ -248,14 +260,19 @@ def _run_stage(
         return state.evolve(status=Status.HALTED)
     _trace_agent_end(ctx, state, result, started, details=details)
 
+    if stage == Stage.QA and "test_report.json" in state.artifacts:
+        # The orchestrator's own pass/fail rule, not the model's word.
+        store = ArtifactStore(ctx.runs_dir, state.project_slug)
+        report = QaReport.model_validate_json(store.read(state.artifacts["test_report.json"]))
+        result = result.model_copy(update={"passed": report.passed})
+
     if stage == Stage.QA and result.passed is False:
-        if state.qa_loops < ctx.config.limits.max_qa_loops:
+        # With real QA tools there is no task to send back, so a failure always goes to the human.
+        if ctx.qa is None and state.qa_loops < ctx.config.limits.max_qa_loops:
             _write_draft(ctx, state, result.output)
             return _move(state.evolve(qa_loops=state.qa_loops + 1), ctx, Stage.DEVELOPER)
-        output = (
-            f"{result.output}\n\n"
-            f"QA FAILED: the Developer's {state.qa_loops} retries did not fix it."
-        )
+        shown = summary if summary is not None else result.output
+        output = f"{shown}\n\n---\n{_qa_failed_note(state.qa_loops)}"
     else:
         output = summary if summary is not None else result.output
     _write_draft(ctx, state, output)
@@ -339,6 +356,8 @@ def _answer_pause(state: ProjectState, ctx: PipelineContext) -> ProjectState:
         return _ask_gate(state, ctx)
     if kind == InterventionKind.REVISION_CAP:
         return _settle(_ask_cap(state, ctx), ctx)
+    if kind == InterventionKind.MERGE_PENDING:
+        return _run_stage(state.evolve(status=Status.RUNNING, intervention=None), ctx)
     if kind == InterventionKind.BUDGET_CAP:
         resolution = ctx.caps.resolve(cap_request(state, ctx.config))
         resolved = resolve_cap(state, ctx.config, resolution)
@@ -588,3 +607,73 @@ def _write_draft(ctx: PipelineContext, state: ProjectState, text: str) -> None:
 def _read_draft(ctx: PipelineContext, state: ProjectState, stage: Stage) -> str | None:
     path = _draft_path(ctx, state, stage)
     return path.read_text() if path.exists() else None
+
+
+def _qa_failed_note(retries: int) -> str:
+    if retries:
+        return f"QA FAILED: the Developer's {retries} retries did not fix it."
+    return "QA FAILED. Approve to accept the work as it is, or ask for QA to run again."
+
+
+def _prepare_qa(state: ProjectState, ctx: PipelineContext, qa: QaPreparer) -> ProjectState:
+    """Wait for the Developer pull requests to be merged, run the real tools, store the results.
+
+    The results become approved inputs for the QA agent: they are machine output, not a draft
+    for the human to review, and each QA run replaces the last.
+    """
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    urls = _task_pr_urls(state, store)
+    try:
+        waiting = qa.unmerged(urls)
+        while waiting:
+            if ctx.merges is None:
+                raise QaError("these pull requests are not merged: " + ", ".join(waiting))
+            paused = state.evolve(
+                status=Status.AWAITING_HUMAN,
+                intervention=Intervention(
+                    kind=InterventionKind.MERGE_PENDING,
+                    detail="Merge these pull requests, then check again: " + ", ".join(waiting),
+                ),
+            )
+            _save(paused, ctx)  # save before asking, so a crash resumes at this question
+            if not ctx.merges.wait_for_merge(waiting):
+                _trace(ctx, paused, EventType.TRANSITION, details={"to": "halted"})
+                return paused.evolve(status=Status.HALTED, intervention=None)
+            waiting = qa.unmerged(waiting)
+        materials = qa.run()
+    except (QaError, PublishError) as error:
+        _trace(ctx, state, EventType.TRANSITION, details={"error": str(error)})
+        return state.evolve(status=Status.HALTED, intervention=None)
+
+    previous = state.artifacts.get("qa_checks.json")
+    revision = previous.revision + 1 if previous else 1
+    checks_json = json.dumps([c.model_dump(mode="json") for c in materials.checks], indent=2)
+    written = {
+        "qa_checks.json": store.write("qa_checks.json", checks_json, revision=revision),
+        "qa_tests.md": store.write("qa_tests.md", materials.tests_md, revision=revision),
+    }
+    state = approve_artifacts(
+        record_artifacts(state.evolve(status=Status.RUNNING, intervention=None), written),
+        list(written),
+        now=datetime.now(UTC),
+    )
+    _trace(
+        ctx,
+        state,
+        EventType.TRANSITION,
+        details={"qa_checks": {c.name: c.status.value for c in materials.checks}},
+    )
+    return state
+
+
+def _task_pr_urls(state: ProjectState, store: ArtifactStore) -> list[str]:
+    """The pull request of every approved task: the latest attempt, if it was rejected before."""
+    urls: list[str] = []
+    for task_id in state.completed_tasks:
+        artifact = state.artifacts.get(f"dev/{task_id}.json")
+        if artifact is None:
+            continue
+        pr_url = DevResult.model_validate_json(store.read(artifact)).pr_url
+        if pr_url:
+            urls.append(pr_url)
+    return urls

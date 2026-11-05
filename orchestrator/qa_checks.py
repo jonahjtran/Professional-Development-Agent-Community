@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from orchestrator.config import CheckCommand, QaConfig
-from orchestrator.dev_runner import SECRET_ENV_NAME
+from orchestrator.envsafe import SECRET_ENV_NAME
 from schemas import CheckResult, CheckStatus
 
 Which = Callable[[str], str | None]

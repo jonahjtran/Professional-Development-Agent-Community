@@ -342,3 +342,80 @@ def test_each_project_gets_its_own_worktree_folder(tmp_path: Path) -> None:
     one, two = tmp_path / "one", tmp_path / "two"
 
     assert default_worktree_root(one) != default_worktree_root(two)
+
+
+# --- a detached checkout, for QA -------------------------------------------------------------
+
+
+@pytest.fixture
+def remote_and_clone(tmp_path: Path) -> tuple[Path, Path]:
+    """A bare 'GitHub' with one commit, and a clone of it."""
+    origin = tmp_path / "origin.git"
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git(seed, "init", "-q", "-b", "main")
+    (seed / "app.py").write_text("print('v1')\n")
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "first")
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(origin)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
+    return origin, clone
+
+
+def test_a_detached_checkout_holds_the_latest_remote_main_not_the_local_one(
+    tmp_path: Path, remote_and_clone: tuple[Path, Path]
+) -> None:
+    from orchestrator.worktree import checkout_detached
+
+    origin, clone = remote_and_clone
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(origin), str(other)], check=True)
+    (other / "app.py").write_text("print('v2')\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", "second")
+    git(other, "push", "-q", "origin", "main")
+
+    path = checkout_detached(clone, "qa")
+
+    assert (path / "app.py").read_text() == "print('v2')\n"  # clone's own main is still v1
+    assert (clone / "app.py").read_text() == "print('v1')\n"
+    assert git(path, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"  # on no branch
+    assert branches(clone) == ["main"]
+
+
+def test_a_detached_checkout_replaces_a_leftover_one(
+    remote_and_clone: tuple[Path, Path],
+) -> None:
+    from orchestrator.worktree import checkout_detached
+
+    _origin, clone = remote_and_clone
+    first = checkout_detached(clone, "qa")
+    (first / "stale.txt").write_text("left over")
+
+    second = checkout_detached(clone, "qa")
+
+    assert second == first and not (second / "stale.txt").exists()
+
+
+def test_removing_a_detached_checkout_deletes_the_folder_and_forgets_it(
+    remote_and_clone: tuple[Path, Path],
+) -> None:
+    from orchestrator.worktree import checkout_detached, remove_checkout
+
+    _origin, clone = remote_and_clone
+    path = checkout_detached(clone, "qa")
+
+    remove_checkout(clone, path)
+
+    assert not path.exists()
+    assert str(path) not in git(clone, "worktree", "list")
+
+
+def test_a_detached_checkout_refuses_an_unsafe_name(remote_and_clone: tuple[Path, Path]) -> None:
+    from orchestrator.worktree import checkout_detached
+
+    _origin, clone = remote_and_clone
+
+    with pytest.raises(WorktreeError, match="unsafe"):
+        checkout_detached(clone, "../escape")

@@ -274,3 +274,32 @@ def test_an_empty_diff_says_so(tmp_path: Path) -> None:
     run = FakeRun(git_diff=(0, "", ""))
 
     assert "no file changes" in publisher(run, tmp_path).diff_stat("agent/T1")
+
+
+# --- is a pull request merged ----------------------------------------------------------------
+
+
+def test_a_merged_pull_request_is_reported_as_merged(tmp_path: Path) -> None:
+    run = FakeRun(gh_pr_view=(0, "MERGED\n", ""))
+
+    assert publisher(run, tmp_path).is_merged("https://github.com/me/project/pull/9")
+
+    [call] = run.commands("gh", "pr", "view")
+    assert call.args[4:] == ["--json", "state", "--jq", ".state"]
+    assert call.env == {"GH_TOKEN": TOKEN}
+
+
+@pytest.mark.parametrize("state", ["OPEN", "CLOSED"])
+def test_an_open_or_closed_pull_request_is_not_merged(tmp_path: Path, state: str) -> None:
+    run = FakeRun(gh_pr_view=(0, f"{state}\n", ""))
+
+    assert not publisher(run, tmp_path).is_merged("https://github.com/me/project/pull/9")
+
+
+def test_a_failure_looking_up_a_pull_request_never_shows_the_token(tmp_path: Path) -> None:
+    run = FakeRun(gh_pr_view=(1, "", f"bad credentials {TOKEN}"))
+
+    with pytest.raises(PublishError) as error:
+        publisher(run, tmp_path).is_merged("https://github.com/me/project/pull/9")
+
+    assert TOKEN not in str(error.value)
