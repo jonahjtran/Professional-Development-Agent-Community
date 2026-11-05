@@ -1,6 +1,6 @@
 """Turns validated documents into Markdown a human reads at a gate."""
 
-from schemas import ADR, PRD, ArchitectOutput, QaReport
+from schemas import ADR, PRD, ArchitectOutput, CareerPlan, QaReport
 
 
 def _bullets(items: list[str]) -> str:
@@ -98,4 +98,39 @@ def render_qa_report(report: QaReport) -> str:
     problems = [c for c in report.checks if c.status.value != "passed"]
     for check in problems:
         sections.append(f"## Output of {check.name}\n```\n{check.output_tail}\n```")
+    return "\n\n".join(sections) + "\n"
+
+
+def render_career_plan(plan: CareerPlan) -> str:
+    """Markdown for the career gate: every item the person can approve or skip, in full."""
+    sections = ["# Career plan"]
+    sections.append(
+        "## Fit with your goals\n"
+        + "\n".join(f"- **{f.track.value}**: {f.decision.value}. {f.reason}" for f in plan.fit)
+    )
+    resume = []
+    for change in plan.resume_changes:
+        head = f"### {change.action.value.upper()}: {change.entry} ({change.section})"
+        lines = [head, change.reason]
+        if change.replaces:
+            lines.append(f"Replaces: {change.replaces}")
+        lines += [f"- {b.text}  [{', '.join(b.evidence_ids)}]" for b in change.bullets]
+        resume.append("\n".join(lines))
+    sections.append(
+        "## Resume\n" + ("\n\n".join(resume) if resume else "No resume change is proposed.")
+    )
+    if plan.website_entry is None:
+        website = f"No website entry. {plan.website_reason}"
+    else:
+        entry = plan.website_entry
+        website = (
+            f"{plan.website_reason}\n\n**{entry.title}** ({entry.slug}): {entry.hook}\n"
+            f"- Metric: {entry.metric}\n- Problem: {entry.problem}\n"
+            f"- Approach: {entry.approach}\n- Result: {entry.result}\n"
+            f"- Tags: {', '.join(entry.tags)}  [{', '.join(entry.evidence_ids)}]"
+        )
+    sections.append(f"## Website\n{website}")
+    if plan.questions:
+        sections.append("## Questions for you\n" + _bullets(plan.questions))
+    sections += [f"## README\n{plan.readme_md}", f"## Case study\n{plan.case_study_md}"]
     return "\n\n".join(sections) + "\n"

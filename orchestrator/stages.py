@@ -5,11 +5,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from orchestrator.render import render_adr, render_architecture, render_prd, render_qa_report
+from orchestrator.render import (
+    render_adr,
+    render_architecture,
+    render_career_plan,
+    render_prd,
+    render_qa_report,
+)
 from schemas import (
     ADR,
     PRD,
     ArchitectOutput,
+    CareerPlan,
     CheckResult,
     CriterionVerdict,
     QaAssessment,
@@ -128,4 +135,23 @@ def qa_stage() -> StageSpec:
         json_name="test_report.json",
         md_name="test_report.md",
         build=_build_qa,
+    )
+
+
+def _build_career(plan: CareerPlan, _inputs: dict[str, str]) -> dict[str, str]:
+    return {
+        "career_plan.json": plan.model_dump_json(indent=2),
+        "career_plan.md": render_career_plan(plan),
+        "career/README.md": plan.readme_md,
+        "career/case_study.md": plan.case_study_md,
+    }
+
+
+def career_stage() -> StageSpec:
+    return StageSpec(
+        schema=CareerPlan,
+        json_name="career_plan.json",
+        md_name="career_plan.md",
+        build=_build_career,
+        replaces=("career/",),
     )

@@ -17,6 +17,15 @@ STAGE_INPUTS: dict[Stage, tuple[str, ...]] = {
     Stage.ARCHITECT: ("prd.json",),
     Stage.DEVELOPER: ("tasks.json", "architecture.md"),
     Stage.QA: ("tasks.json", "qa_checks.json", "qa_tests.md"),
+    Stage.CAREER_COACH: (
+        "prd.json",
+        "architecture.md",
+        "evidence.json",
+        "resume.yaml",
+        "goals.yaml",
+        "website_projects.js",
+        "current_readme.md",
+    ),
 }
 
 

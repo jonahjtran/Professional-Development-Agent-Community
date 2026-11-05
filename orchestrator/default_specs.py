@@ -7,12 +7,13 @@ and Product Owner get read-only tools for now. A stage with no spec makes the ru
 
 from pathlib import Path
 
-from orchestrator.api_runner import ApiAgentSpec
+from orchestrator.api_runner import ApiAgentSpec, Check
+from orchestrator.career_check import check_career_plan
 from orchestrator.prompts import DEFAULT_PROMPTS_DIR, load_prompt
 from orchestrator.runner import AgentSpec
 from orchestrator.stages import StageSpec, architect_stage, prd_stage, qa_stage
 from orchestrator.state import Stage
-from schemas import PRD, ArchitectOutput, QaAssessment
+from schemas import PRD, ArchitectOutput, CareerPlan, QaAssessment
 from schemas._base import Schema
 
 
@@ -63,11 +64,23 @@ def default_api_specs(prompts_dir: Path = DEFAULT_PROMPTS_DIR) -> tuple[ApiAgent
             tier="fast",
             schema=QaAssessment,
         ),
+        ApiAgentSpec(
+            stage=Stage.CAREER_COACH,
+            prompt=load_prompt("career_coach", prompts_dir),
+            tier="strong",
+            schema=CareerPlan,
+            effort="high",
+        ),
     )
 
 
 def default_api_schemas() -> dict[Stage, type[Schema]]:
     return {spec.stage: spec.schema for spec in default_api_specs()}
+
+
+def default_api_checks() -> dict[Stage, Check]:
+    """Rules beyond the schema that an agent's output must pass, by stage."""
+    return {Stage.CAREER_COACH: check_career_plan}
 
 
 def default_stage_specs() -> dict[Stage, StageSpec]:

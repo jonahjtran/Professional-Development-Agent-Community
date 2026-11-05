@@ -5,7 +5,7 @@ resume if a server-side tool pauses the turn) is enough. The API returns token c
 dollars, so cost is computed from the prices in config.yaml.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -147,16 +147,29 @@ def _user_message(request: AgentRequest) -> str:
     return "\n\n".join(parts)
 
 
+Check = Callable[[AgentRequest, Schema], list[str]]
+
+
 class ValidatingRunner:
     """Wraps a runner: checks its output against the stage's schema, with one retry.
+
+    A stage may also have a `check`: rules a schema cannot express (for example, every number must
+    appear in the evidence). It returns problems in plain words, and they are handled exactly like
+    a schema error: shown to the model once, then a second failure halts the run.
 
     On a validation failure the model is asked once more, shown its bad answer and the exact
     error. A second failure halts the run. Every call's cost is kept.
     """
 
-    def __init__(self, inner: AgentRunner, schemas: Mapping[Stage, type[Schema]]) -> None:
+    def __init__(
+        self,
+        inner: AgentRunner,
+        schemas: Mapping[Stage, type[Schema]],
+        checks: Mapping[Stage, Check] | None = None,
+    ) -> None:
         self._inner = inner
         self._schemas = dict(schemas)
+        self._checks = dict(checks or {})
 
     def run(self, request: AgentRequest) -> AgentResult:
         schema = self._schemas.get(request.stage)
@@ -164,7 +177,7 @@ class ValidatingRunner:
             return self._inner.run(request)
 
         first = self._inner.run(request)
-        problem = _validation_problem(schema, first.output)
+        problem = self._problem(request, schema, first.output)
         if problem is None:
             return _canonical(schema, first)
 
@@ -185,18 +198,19 @@ class ValidatingRunner:
                 "web_searches": first.web_searches + second.web_searches,
             }
         )
-        problem = _validation_problem(schema, second.output)
+        problem = self._problem(request, schema, second.output)
         if problem is not None:
             raise AgentError(f"output failed validation twice: {problem}", cost_usd=total.cost_usd)
         return _canonical(schema, total)
 
-
-def _validation_problem(schema: type[Schema], output: str) -> str | None:
-    try:
-        schema.model_validate_json(output)
-    except ValidationError as error:
-        return str(error)
-    return None
+    def _problem(self, request: AgentRequest, schema: type[Schema], output: str) -> str | None:
+        try:
+            model = schema.model_validate_json(output)
+        except ValidationError as error:
+            return str(error)
+        check = self._checks.get(request.stage)
+        problems = check(request, model) if check else []
+        return "; ".join(problems) if problems else None
 
 
 def _canonical(schema: type[Schema], result: AgentResult) -> AgentResult:
