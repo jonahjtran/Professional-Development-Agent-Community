@@ -132,3 +132,56 @@ def test_run_gate_applies_a_decision_typed_at_the_terminal() -> None:
     assert result.exit_code == 0, result.output
     assert results[0].revisions == {Stage.PRODUCT_OWNER: 1}
     assert results[0].gate_history[-1].comments == "Add non-goals"
+
+
+# --- items and questions ---------------------------------------------------------------------
+
+
+def career_request() -> GateRequest:
+    from orchestrator.gates import GateItem
+
+    return GateRequest(
+        stage=Stage.CAREER_COACH,
+        title="Review the career plan",
+        summary="plan",
+        cost_usd=1.0,
+        items=[
+            GateItem(id="readme", label="Replace README"),
+            GateItem(id="website", label="Website"),
+        ],
+        questions=["How many people use it?", "Built alone? [yes/no]"],
+    )
+
+
+def test_each_item_is_approved_or_skipped_separately_after_approving_the_stage() -> None:
+    decision, output = ask(career_request(), "\n\napprove\n\ny\nn\n")
+
+    assert decision.outcome == GateOutcome.APPROVE
+    assert decision.approved_items == ["readme"]
+    assert "Replace README" in output and "Website" in output
+
+
+def test_answers_to_questions_are_collected_and_blank_ones_skipped() -> None:
+    decision, output = ask(career_request(), "40 students\n\napprove\n\ny\ny\n")
+
+    assert decision.answers == {"How many people use it?": "40 students"}
+    assert "Built alone? [yes/no]" in output  # brackets in a question are shown, not parsed
+
+
+def test_items_are_not_asked_about_when_the_stage_is_rejected() -> None:
+    decision, _ = ask(career_request(), "\n\nreject\n\nn\n")
+
+    assert decision.approved_items == [] and decision.outcome == GateOutcome.REJECT
+
+
+def test_asking_for_changes_still_keeps_the_answers() -> None:
+    decision, _ = ask(career_request(), "40\n\nchanges\nUse the number\n")
+
+    assert decision.outcome == GateOutcome.REQUEST_CHANGES
+    assert decision.answers == {"How many people use it?": "40"}
+
+
+def test_a_gate_with_no_items_or_questions_is_unchanged() -> None:
+    decision, _ = ask(make_request(), "approve\n\n")
+
+    assert decision.approved_items == [] and decision.answers == {}

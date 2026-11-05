@@ -124,7 +124,7 @@ def test_the_coach_is_a_strong_tier_agent_with_the_plan_schema_and_a_versioned_p
     spec = next(s for s in default_api_specs() if s.stage == Stage.CAREER_COACH)
 
     assert (spec.tier, spec.schema, spec.web_search) == ("strong", CareerPlan, False)
-    assert spec.prompt.version == "v1"
+    assert spec.prompt.version == "v2"
     assert default_api_schemas()[Stage.CAREER_COACH] is CareerPlan
     assert Stage.CAREER_COACH in default_api_checks()
 

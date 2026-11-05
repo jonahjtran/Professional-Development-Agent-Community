@@ -70,6 +70,9 @@ class ResumeChange(Schema):
     entry: Text  # the project or role the bullets belong to
     bullets: list[ResumeBullet]
     replaces: str | None = None  # the entry (or bullet) this one pushes out, for one-page fit
+    tech: str | None = (
+        None  # for a project entry: the tech stack line, for example "FastAPI, Redis"
+    )
     reason: Text
 
     @model_validator(mode="after")
@@ -126,4 +129,8 @@ class CareerPlan(Schema):
     resume_changes: list[ResumeChange]
     website_entry: WebsiteEntry | None = None
     website_reason: Text  # why the project is, or is not, worth a place on the website
+    repo_description: Annotated[str, Field(max_length=350)] | None = None  # GitHub description
+    repo_topics: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*$")]] = Field(
+        default_factory=list
+    )  # GitHub topics: lowercase words and hyphens
     questions: list[Text] = Field(default_factory=list)  # facts it needs from the person

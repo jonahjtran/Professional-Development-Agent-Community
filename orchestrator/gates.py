@@ -2,7 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from orchestrator.config import Config
 from orchestrator.state import (
@@ -18,12 +18,22 @@ from orchestrator.state import (
 __all__ = [
     "GateBackend",
     "GateDecision",
+    "GateItem",
     "GateOutcome",
     "GateRequest",
     "apply_decision",
     "open_gate",
     "run_gate",
 ]
+
+
+class GateItem(BaseModel):
+    """One thing at a gate the human can approve or skip on its own."""
+
+    id: str
+    label: str
+
+    model_config = ConfigDict(frozen=True)
 
 
 class GateRequest(BaseModel):
@@ -33,6 +43,8 @@ class GateRequest(BaseModel):
     title: str
     summary: str = ""
     cost_usd: float
+    items: list[GateItem] = Field(default_factory=list)  # approve or skip each separately
+    questions: list[str] = Field(default_factory=list)  # facts the agent needs from the human
 
     model_config = ConfigDict(frozen=True)
 
@@ -43,6 +55,8 @@ class GateDecision(BaseModel):
     outcome: GateOutcome
     comments: str = ""
     halt: bool = False
+    approved_items: list[str] = Field(default_factory=list)  # ids of the items approved
+    answers: dict[str, str] = Field(default_factory=dict)  # question -> the human's answer
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -52,6 +66,8 @@ class GateDecision(BaseModel):
             raise ValueError("request_changes needs comments saying what to change")
         if self.halt and self.outcome != GateOutcome.REJECT:
             raise ValueError("only a rejection can halt the project")
+        if self.approved_items and self.outcome != GateOutcome.APPROVE:
+            raise ValueError("items can only be approved when the stage is approved")
         return self
 
 
