@@ -108,6 +108,12 @@ describe("the project page", () => {
     await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/todos/t1/done"]));
   });
 
+  it("links to the team page", async () => {
+    open(project());
+
+    expect(await screen.findByRole("link", { name: /Team/ })).toHaveAttribute("href", "/p/demo/team");
+  });
+
   it("shows the autonomy level and changes it", async () => {
     const api = open(project(), { "POST /api/projects/demo/autonomy": { ok: true } });
 

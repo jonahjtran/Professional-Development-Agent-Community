@@ -206,3 +206,46 @@ pre code { background: none; padding: 0; }
 .pill.risk-high { background: var(--red-bg); color: var(--red); }
 
 #badge.alert { color: var(--red); font-weight: 600; }
+
+/* The team page: each agent is a person at a desk with a speech bubble. */
+.office { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 28px 14px; margin: 28px 0 20px; }
+.person {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: center;
+}
+.person .bubble {
+  position: relative; width: 100%; min-height: 3.4em; padding: 10px 12px; border-radius: 16px;
+  background: var(--surface); box-shadow: 0 0 0 1px var(--separator); font-size: 14px; line-height: 1.3;
+  display: flex; align-items: center; justify-content: center;
+}
+.person .bubble::after {
+  content: ""; position: absolute; left: 50%; bottom: -7px; width: 12px; height: 12px; margin-left: -6px;
+  background: var(--surface); transform: rotate(45deg); box-shadow: 1px 1px 0 var(--separator);
+}
+.person .avatar {
+  width: 64px; height: 64px; border-radius: 50%; font-size: 32px; display: grid; place-items: center;
+  background: var(--fill); box-shadow: 0 0 0 3px transparent; transition: box-shadow .2s;
+}
+.person .desk { display: flex; flex-direction: column; font-size: 14px; }
+.person.done .avatar { box-shadow: 0 0 0 3px var(--green); }
+.person.working .avatar { box-shadow: 0 0 0 3px var(--blue); animation: bob 1.6s ease-in-out infinite; }
+.person.working .bubble::before { content: "…"; position: absolute; right: 10px; top: 2px; color: var(--blue); animation: blink 1.2s infinite; }
+.person.waiting-for-you .avatar { box-shadow: 0 0 0 3px var(--orange); animation: pulse 1.4s ease-in-out infinite; }
+.person.waiting-for-you .bubble { box-shadow: 0 0 0 2px var(--orange); }
+.person.paused .avatar, .person.stopped .avatar { box-shadow: 0 0 0 3px var(--red); }
+.person.upcoming { opacity: .6; }
+.person.open .avatar { box-shadow: 0 0 0 3px var(--indigo); }
+.person:focus-visible .avatar { outline: 3px solid var(--blue); outline-offset: 3px; }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+@keyframes blink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .person .avatar, .person .bubble::before { animation: none !important; } }
+.notes h2 { margin: 0 0 4px; }
+.notes h3 { margin: 16px 0 4px; font-size: 15px; color: var(--label-2); text-transform: uppercase; letter-spacing: .04em; }
+ul.plain { list-style: none; margin: 0; padding: 0; }
+ul.plain li { padding: 4px 0; }
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 24px; }
+.board .column { background: var(--fill); border-radius: var(--radius); padding: 12px; }
+.board .column h3 { margin: 0 0 8px; font-size: 15px; }
+.board .task { background: var(--surface); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; box-shadow: 0 0 0 1px var(--separator); }
+.board .task.waiting { opacity: .75; }

@@ -208,3 +208,23 @@ export interface TodoItem {
   created: string | null;
   can_mark_done: boolean;
 }
+
+export interface AgendaItem {
+  id: string;
+  title: string;
+  state: "done" | "working" | "waiting" | "ready";
+  waiting_on: string[];
+  pr_url: string | null;
+}
+
+export interface AgentActivity {
+  stage: string;
+  name: string;
+  status: "done" | "working" | "waiting_for_you" | "paused" | "stopped" | "upcoming";
+  doing: string;
+  waiting_on: string | null;
+  task: { id: string; title: string } | null;
+  agenda: AgendaItem[];
+  notes: string[];
+  recent: string[];
+}
