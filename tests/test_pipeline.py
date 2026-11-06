@@ -21,6 +21,7 @@ from orchestrator.state import (
     Stage,
     Status,
     load_state,
+    save_state,
 )
 from orchestrator.trace import trace_path
 from tests.factories import make_config, new_state
@@ -428,6 +429,49 @@ def test_resuming_at_a_budget_warning_runs_the_agent_after_continue_without_aski
 
     assert len(caps.requests) == 1
     assert agent.stages[0] == Stage.PRODUCT_OWNER
+
+
+class StatusSpy(FakeAgent):
+    """Records what a UI reading the saved state would see while the agent is working."""
+
+    def __init__(self, runs_dir: Path) -> None:
+        super().__init__(cost=0.0)
+        self.runs_dir = runs_dir
+        self.seen: list[Status] = []
+
+    def run(self, request: AgentRequest) -> AgentResult:
+        self.seen.append(load_state(self.runs_dir, request.project).status)
+        return super().run(request)
+
+
+def test_the_saved_status_is_running_again_while_the_agent_works_after_a_cap_is_raised(
+    tmp_path: Path,
+) -> None:
+    agent = StatusSpy(tmp_path)
+    caps = FakeCaps(CapResolution(action=CapAction.RAISE, amount=1.0))
+    state = start(stage=Stage.PRODUCT_OWNER, cost_usd={Stage.PRODUCT_OWNER: 1.5})
+
+    run_pipeline(state, make_ctx(tmp_path, agent, caps=caps))
+
+    assert agent.seen[0] == Status.RUNNING  # not still "awaiting human"
+
+
+def test_the_saved_status_is_running_again_while_the_agent_works_after_a_warning_is_approved(
+    tmp_path: Path,
+) -> None:
+    waiting = start(
+        stage=Stage.PRODUCT_OWNER,
+        cost_usd={Stage.PRODUCT_OWNER: 1.2},
+        status=Status.AWAITING_HUMAN,
+        intervention={"kind": InterventionKind.BUDGET_CAP, "detail": "at 80%"},
+    )
+    save_state(tmp_path, waiting)  # a resumed project is on disk, as the UI saw it
+    agent = StatusSpy(tmp_path)
+    caps = FakeCaps(CapResolution(action=CapAction.APPROVE_ANYWAY))
+
+    run_pipeline(waiting, make_ctx(tmp_path, agent, caps=caps))
+
+    assert agent.seen[0] == Status.RUNNING
 
 
 def test_a_pause_kind_the_pipeline_cannot_answer_yet_is_an_error(tmp_path: Path) -> None:

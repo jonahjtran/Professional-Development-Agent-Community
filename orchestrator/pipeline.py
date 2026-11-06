@@ -357,6 +357,7 @@ def _check_budget(state: ProjectState, ctx: PipelineContext) -> ProjectState:
         _save(paused, ctx)
         resolution = ctx.caps.resolve(cap_request(paused, ctx.config))
         state = resolve_cap(paused, ctx.config, resolution)
+        _save(state, ctx)  # so the UI stops showing "awaiting human" while the agent works
         _trace(ctx, state, EventType.GATE, details={"cap": resolution.action.value})
         if state.status != Status.RUNNING:
             return state
@@ -379,6 +380,7 @@ def _answer_pause(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     if kind == InterventionKind.BUDGET_CAP:
         resolution = ctx.caps.resolve(cap_request(state, ctx.config))
         resolved = resolve_cap(state, ctx.config, resolution)
+        _save(resolved, ctx)
         _trace(ctx, resolved, EventType.GATE, details={"cap": resolution.action.value})
         if resolved.status == Status.RUNNING and resolution.action == CapAction.APPROVE_ANYWAY:
             return _run_stage(resolved, ctx, budget_checked=True)
