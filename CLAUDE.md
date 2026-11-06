@@ -64,17 +64,33 @@ next to its evidence, a copy button for each LaTeX snippet, and a preview of the
 Halt and Resume are buttons on the project page, and `/health` checks the keys, token expiry,
 tools and folders before a run.
 
-How it works: `studio run --ui` and `studio resume --ui` (the UI uses them) answer through files.
-A question is written to `runs/<project>/pending/<id>.json`; an answer to
-`runs/<project>/answers/<id>.json` is validated with the same models the terminal uses, then the
-question moves to `done/` with who answered. A run keeps `run.json` fresh with a heartbeat so the
-UI can tell a live run from a dead one. The terminal still works without `--ui`.
+The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
+Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).
+It lives in `frontend/` and builds into `orchestrator/ui/static/app/` (git-ignored), which the
+server serves. Build it once before `studio ui`, and again after changing it:
+
+```
+npm --prefix frontend ci                 # if npm complains about ~/.npm permissions, add --cache /tmp/npm-cache
+npm --prefix frontend run build
+npm --prefix frontend run dev            # live reload on :5173, proxying /api to a running `studio ui`
+npm --prefix frontend test               # vitest + Testing Library
+npm --prefix frontend run typecheck
+```
+
+The server is a JSON API (`/api/...`, in `orchestrator/ui/app.py`). `studio run --ui` and
+`studio resume --ui` (the UI uses them) answer through files: a question is written to
+`runs/<project>/pending/<id>.json`; an answer to `runs/<project>/answers/<id>.json` is validated
+with the same models the terminal uses, then the question moves to `done/` with who answered. A run
+keeps `run.json` fresh with a heartbeat so the UI can tell a live run from a dead one. The terminal
+still works without `--ui`.
 
 Rules that must keep holding: the server only binds to 127.0.0.1 and rejects any other Host
-header; every POST needs the per-process form token and a matching Origin; agent-written text is
-shown escaped (Markdown without raw HTML); only documents a project recorded can be opened; no
-secret value is ever put on a page. Approving can publish pull requests, so never expose the UI
-to a network without adding real authentication first.
+header; every change needs the session token in `X-CSRF-Token`, a JSON body and a matching Origin;
+agent-written text is escaped by the server (Markdown without raw HTML) before it is sent, and the
+React app only uses `dangerouslySetInnerHTML` for those fields; only documents a project recorded
+can be read; nothing outside the built app folder is ever served; no secret value is ever put in
+a response. Approving can publish pull requests, so never expose the UI to a network without
+adding real authentication first.
 
 ## Career coach
 

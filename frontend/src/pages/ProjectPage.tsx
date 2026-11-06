@@ -1,0 +1,156 @@
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { ApiError, post } from "../api";
+import {
+  Banner,
+  Button,
+  Card,
+  Group,
+  Item,
+  Loading,
+  Meter,
+  Section,
+  Steps,
+  StatusPill,
+} from "../components/ui";
+import { useLoad } from "../hooks";
+import type { Project, StartingProject } from "../types";
+
+export function ProjectPage() {
+  const { slug = "" } = useParams();
+  const { data, error, reload } = useLoad<Project | StartingProject>(`/api/projects/${slug}`, 3000);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  if (error) {
+    return (
+      <>
+        <Link className="back" to="/">‹ Projects</Link>
+        <Banner>{error.status === 404 ? "There is no such project." : error.message}</Banner>
+      </>
+    );
+  }
+  if (data === null) return <Loading what="the project" />;
+  if (data.starting) {
+    return (
+      <>
+        <h1>Starting {data.slug}…</h1>
+        <p className="lede">
+          This page updates until the run has saved its first state. If it stays here, the log
+          below says why.
+        </p>
+        <pre>{data.log}</pre>
+      </>
+    );
+  }
+
+  const { summary, stages, warn_fraction: warn } = data;
+  const active = summary.status === "running" || summary.status === "awaiting_human";
+
+  async function act(action: "halt" | "resume") {
+    if (action === "halt" && !window.confirm(`Stop ${slug} before its next step?`)) return;
+    setProblem(null);
+    try {
+      await post(`/api/projects/${slug}/${action}`);
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  return (
+    <>
+      <Link className="back" to="/">‹ Projects</Link>
+      <h1>{summary.slug} <StatusPill status={summary.status} /></h1>
+      <p className="lede">{summary.idea}</p>
+
+      {problem && <Banner>{problem}</Banner>}
+      {data.pending.map((q) => (
+        <Banner key={q.id}>
+          <Link to={`/p/${slug}/q/${q.id}`}><strong>{q.title}</strong></Link> — {q.detail}
+        </Banner>
+      ))}
+      {summary.detail && data.pending.length === 0 && <Banner>{summary.detail}</Banner>}
+      {active && !summary.alive && (
+        <Banner>
+          The run is not active (it stopped, or it was never started from here).{" "}
+          <Button onClick={() => void act("resume")}>Resume</Button>
+          <div className="muted">
+            or <code>studio resume {slug} --agent full --ui</code>
+          </div>
+        </Banner>
+      )}
+
+      <Steps stages={stages} />
+      {active && (
+        <Button tone="destructive" onClick={() => void act("halt")}>
+          Halt (kill switch)
+        </Button>
+      )}
+
+      <Section title="Spend">
+        <Card>
+          <Meter label="Project" spent={summary.cost_usd} cap={summary.cap_usd} warn={warn} strong />
+          {stages.map((s) => (
+            <Meter key={s.stage} label={s.label} spent={s.spent} cap={s.cap} warn={warn} />
+          ))}
+          <p className="hint">The marker shows the {Math.round(warn * 100)}% warning point.</p>
+        </Card>
+      </Section>
+
+      {data.links.length > 0 && (
+        <Section title="Pull requests">
+          <Group>
+            {data.links.map((l) => (
+              <Item key={l.url} href={l.url}>
+                <div className="head">{l.label}</div>
+                <div className="meta">{l.url}</div>
+              </Item>
+            ))}
+          </Group>
+        </Section>
+      )}
+
+      <Section title="Your decisions">
+        {data.gates.length === 0 ? (
+          <Card><span className="muted">No decisions yet.</span></Card>
+        ) : (
+          <div className="table">
+            <table>
+              <thead>
+                <tr><th>When</th><th>Stage</th><th>Decision</th><th>Comment</th></tr>
+              </thead>
+              <tbody>
+                {data.gates.map((g) => (
+                  <tr key={g.ts + g.stage + g.outcome}>
+                    <td>{new Date(g.ts).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td>{g.stage.replace("_", " ")}</td>
+                    <td>{g.outcome.replace("_", " ")}</td>
+                    <td>{g.comments}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Documents">
+        <Group>
+          {data.artifacts.length === 0 && <Item><span className="muted">Nothing produced yet.</span></Item>}
+          {data.artifacts.map((name) => (
+            <Item key={name} to={`/p/${slug}/a/${name}`}>{name}</Item>
+          ))}
+        </Group>
+      </Section>
+
+      <Section title="Activity">
+        <Group>
+          <Item to={`/p/${slug}/trace`}>
+            <div className="head">Open the trace</div>
+            <div className="meta">Every model call, tool call and decision.</div>
+          </Item>
+        </Group>
+      </Section>
+    </>
+  );
+}
