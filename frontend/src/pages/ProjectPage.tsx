@@ -199,6 +199,10 @@ export function ProjectPage() {
 
       <Section title="Activity">
         <Group>
+          <Item to={`/p/${slug}/team`}>
+            <div className="head">Team</div>
+            <div className="meta">Who is doing what right now, their notes and agenda, and a task board.</div>
+          </Item>
           <Item to={`/p/${slug}/trace`}>
             <div className="head">Open the trace</div>
             <div className="meta">Every model call, tool call and decision.</div>

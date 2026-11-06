@@ -9,6 +9,7 @@ import { ProjectPage } from "./pages/ProjectPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { QuestionPage } from "./pages/QuestionPage";
 import { RulesPage } from "./pages/RulesPage";
+import { TeamPage } from "./pages/TeamPage";
 import { TracePage } from "./pages/TracePage";
 
 export function App() {
@@ -18,6 +19,7 @@ export function App() {
         <Route index element={<ProjectsPage />} />
         <Route path="p/:slug" element={<ProjectPage />} />
         <Route path="p/:slug/a/*" element={<ArtifactPage />} />
+        <Route path="p/:slug/team" element={<TeamPage />} />
         <Route path="p/:slug/trace" element={<TracePage />} />
         <Route path="p/:slug/q/:id" element={<QuestionPage />} />
         <Route path="inbox" element={<InboxPage />} />

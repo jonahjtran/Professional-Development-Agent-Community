@@ -107,6 +107,10 @@ not announced again.
 paused, stopped, or waiting on the agent before it), with the current task, the Developer's agenda,
 notes from what the agents reported and the last steps in plain words. It is built from the saved
 state, the trace and `tasks.json`, never from a model call.
+The **Team** page (`/p/<slug>/team`) shows it two ways: an office with each agent as a person
+and a speech bubble (animated when working, pulsing when waiting for you; click a person for their
+notes, agenda and latest steps), and a board of the Developer's tasks (To do, Working, In review,
+Done, with pull request links).
 
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).
