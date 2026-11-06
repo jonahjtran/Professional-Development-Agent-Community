@@ -139,6 +139,29 @@ def test_resume_continues_a_run_that_stopped_at_a_gate(tmp_path: Path) -> None:
     assert load_state(tmp_path, "demo").status == Status.DONE
 
 
+def test_resume_with_ui_answers_through_files_and_keeps_a_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator import cli
+    from orchestrator.inbox import FileGateBackend, run_is_alive
+
+    invoke(tmp_path, "run", "Track events", "--slug", "demo", input="approve\n\n")
+    seen: dict[str, object] = {}
+
+    def fake_pipeline(state, ctx):  # type: ignore[no-untyped-def]
+        seen["gates"] = ctx.gates
+        seen["alive"] = run_is_alive(tmp_path, "demo")
+        return state.evolve(status=Status.DONE, intervention=None)
+
+    monkeypatch.setattr(cli, "run_pipeline", fake_pipeline)
+
+    result = invoke(tmp_path, "resume", "demo", "--ui")
+
+    assert result.exit_code == 0, result.output
+    assert isinstance(seen["gates"], FileGateBackend)  # not the terminal prompt
+    assert seen["alive"] is True  # so the UI does not offer to start a second run
+
+
 def test_resume_does_not_rerun_the_agent_that_already_finished(tmp_path: Path) -> None:
     invoke(tmp_path, "run", "Track events", "--slug", "demo", input="approve\n\n")
     spent = load_state(tmp_path, "demo").total_cost_usd
