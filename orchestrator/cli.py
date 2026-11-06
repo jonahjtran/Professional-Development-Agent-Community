@@ -348,10 +348,10 @@ def resume(
         typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
         return
     project_repo = _repo_for_resume(state, agent, repo)
-    _finish(
-        run_pipeline(state, _context(config, runs_dir, agent, project_repo, state.repo_url)),
-        runs_dir,
-    )
+    ctx = _context(config, runs_dir, agent, project_repo, state.repo_url, project=project, ui=ui)
+    with _marked(runs_dir, project, ui):
+        finished = run_pipeline(state, ctx)
+    _finish(finished, runs_dir)
 
 
 @app.command()
