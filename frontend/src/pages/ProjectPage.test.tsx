@@ -14,7 +14,7 @@ function project(over: Record<string, unknown> = {}, summary: Record<string, unk
   return {
     starting: false,
     summary: { slug: "demo", idea: "An idea", stage: "developer", status: "running", detail: "", cost_usd: 3.4, cap_usd: 20, pending: 0, alive: true, ...summary },
-    stages, warn_fraction: 0.8, gates: [], links: [], artifacts: [], pending: [], ...over,
+    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, gates: [], links: [], artifacts: [], pending: [], ...over,
   };
 }
 
@@ -88,6 +88,11 @@ describe("the project page", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Pause/ }));
 
     expect(await screen.findByText("demo is already done.")).toBeInTheDocument();
+  });
+
+  it("shows helper spend apart from the caps", async () => {
+    open(project());
+    expect(await screen.findByText(/Helper calls.*\$0\.002/)).toBeInTheDocument();
   });
 
   it("shows a paused project as paused, with Resume and no Pause", async () => {

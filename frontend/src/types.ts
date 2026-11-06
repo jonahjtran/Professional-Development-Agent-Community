@@ -37,6 +37,7 @@ export interface Project {
   summary: Summary;
   stages: StageRow[];
   warn_fraction: number;
+  helper: { explain_usd: number; chat_usd: number };
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
   links: { label: string; url: string }[];
   artifacts: string[];
@@ -162,4 +163,18 @@ export interface NewProjectFields {
   track: string;
   agent: string;
   visibility: string;
+}
+
+export interface ToolExplanation {
+  what: string;
+  why: string;
+  effect: string;
+  risk: "low" | "medium" | "high";
+  unsure: boolean;
+}
+
+export interface ExplanationReply {
+  explanation: ToolExplanation | null;
+  error: string | null;
+  cost_usd: number;
 }

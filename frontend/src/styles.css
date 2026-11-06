@@ -200,3 +200,7 @@ pre code { background: none; padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+.pill.risk-low { background: var(--green-bg); color: var(--green); }
+.pill.risk-medium { background: var(--orange-bg); color: var(--orange); }
+.pill.risk-high { background: var(--red-bg); color: var(--red); }

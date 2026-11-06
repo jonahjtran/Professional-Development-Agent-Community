@@ -13,7 +13,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -21,7 +21,9 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from orchestrator.artifacts import ArtifactStore
+from orchestrator.assistant_cost import assistant_totals
 from orchestrator.config import Config
+from orchestrator.explain import Explainer, ExplainInput, ExplainResult
 from orchestrator.halt import request_halt
 from orchestrator.inbox import (
     AnswerRejected,
@@ -82,6 +84,10 @@ def resume_command(state: ProjectState, config_path: Path, runs_dir: Path) -> li
     ]  # fmt: skip
 
 
+class Explaining(Protocol):
+    def explain(self, item: ExplainInput) -> ExplainResult: ...
+
+
 Creator = Callable[..., NewProject]
 HealthRunner = Callable[[], list[health_checks.Check]]
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,59}$")
@@ -123,6 +129,7 @@ def create_app(
     creator: Creator = create_project,
     health: HealthRunner | None = None,
     frontend_dir: Path = FRONTEND,
+    explainer: Explaining | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
@@ -130,6 +137,7 @@ def create_app(
     run_health = health or (
         lambda: health_checks.run_checks(repo_root=config_path.resolve().parent)
     )
+    explain_with = explainer or Explainer(config, runs_dir)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
 
     @app.exception_handler(HTTPException)
@@ -181,7 +189,9 @@ def create_app(
         if _SLUG.match(slug) and not state_path(runs_dir, slug).exists() and log.exists():
             tail = "\n".join(log.read_text(errors="replace").splitlines()[-20:])
             return {"starting": True, "slug": slug, "log": tail}
-        return serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
+        shown = serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
+        shown["helper"] = assistant_totals(runs_dir, slug)  # kept apart from the project's spend
+        return shown
 
     @app.get("/api/projects/{slug}/artifacts/{name:path}")
     def artifact(slug: str, name: str) -> dict[str, Any]:
@@ -232,6 +242,31 @@ def create_app(
             else None
         )
         return serialize.question(found, rejection_reason(runs_dir, slug, question_id), workbench)
+
+    @app.get("/api/projects/{slug}/questions/{question_id}/explanation")
+    def explanation(slug: str, question_id: str) -> dict[str, Any]:
+        """A plain-English note on a tool request. Advice only; fetched by the page, not the run."""
+        view = view_or_404(slug)
+        found = next((p for p in pending_for(runs_dir, slug) if p.id == question_id), None)
+        if found is None or found.kind != PendingKind.TOOL:
+            raise HTTPException(404, "there is no open tool request with that id")
+        request = found.request
+        result = explain_with.explain(
+            ExplainInput(
+                project=slug,
+                question_id=question_id,
+                tool=str(request.get("tool", "")),
+                summary=str(request.get("summary", "")),
+                reason=str(request.get("reason", "")),
+                idea=view.state.idea,
+                stage=view.state.stage.value,
+            )
+        )
+        return {
+            "explanation": result.explanation.model_dump() if result.explanation else None,
+            "error": result.error,
+            "cost_usd": result.cost_usd,
+        }
 
     @app.get("/api/health")
     def health_report() -> dict[str, Any]:

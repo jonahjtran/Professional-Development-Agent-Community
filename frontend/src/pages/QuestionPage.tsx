@@ -4,7 +4,7 @@ import { ApiError, post } from "../api";
 import { Workbench } from "../components/Workbench";
 import { Banner, Button, Card, Loading, Rendered, Section, SwitchRow, Group } from "../components/ui";
 import { useLoad } from "../hooks";
-import type { CapRequest, GateRequest, OpenQuestion, Question } from "../types";
+import type { CapRequest, ExplanationReply, GateRequest, OpenQuestion, Question } from "../types";
 
 type Submit = (fields: Record<string, string>, items?: string[]) => Promise<void>;
 
@@ -63,7 +63,7 @@ function Body({ q }: { q: OpenQuestion }) {
       {q.kind === "gate" && <GateForm q={q} submit={submit} busy={busy} />}
       {q.kind === "cap" && <CapForm request={q.request as unknown as CapRequest} detail={q.detail} submit={submit} busy={busy} />}
       {q.kind === "merge" && <MergeForm urls={(q.request as { pr_urls: string[] }).pr_urls} submit={submit} busy={busy} />}
-      {q.kind === "tool" && <ToolForm request={q.request as { tool: string; summary: string; reason: string }} submit={submit} busy={busy} />}
+      {q.kind === "tool" && <ToolForm project={q.project} id={q.id} request={q.request as { tool: string; summary: string; reason: string }} submit={submit} busy={busy} />}
     </>
   );
 }
@@ -196,12 +196,30 @@ function MergeForm({ urls, submit, busy }: FormProps & { urls: string[] }) {
   );
 }
 
-function ToolForm({ request, submit, busy }: FormProps & { request: { tool: string; summary: string; reason: string } }) {
+function Explanation({ project, id }: { project: string; id: string }) {
+  const { data, error } = useLoad<ExplanationReply>(`/api/projects/${project}/questions/${id}/explanation`);
+  if (error) return <p className="muted">No explanation available: {error.message}</p>;
+  if (data === null) return <p className="muted">Working out what this does…</p>;
+  if (data.explanation === null) return <p className="muted">{data.error ?? "No explanation available."}</p>;
+  const e = data.explanation;
+  return (
+    <Card>
+      <p><strong>{e.what}</strong> <span className={`pill risk-${e.risk}`}>{e.risk} risk</span></p>
+      <p><span className="muted">Why it wants this:</span> {e.why}</p>
+      <p><span className="muted">What it could change:</span> {e.effect}</p>
+      {e.unsure && <p className="muted">The explainer is not sure about this one. Read the request itself.</p>}
+      <p className="hint">Advice only, written by a model. You decide.</p>
+    </Card>
+  );
+}
+
+function ToolForm({ project, id, request, submit, busy }: FormProps & { project: string; id: string; request: { tool: string; summary: string; reason: string } }) {
   const [message, setMessage] = useState("");
   return (
     <>
       <p>The Developer wants to use <strong>{request.tool}</strong>:</p>
       <pre>{request.summary}</pre>
+      <Explanation project={project} id={id} />
       <p className="muted">Why you are being asked: {request.reason}</p>
       <label className="field">
         If you deny, tell the agent why (optional)

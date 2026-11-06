@@ -68,6 +68,46 @@ def client(
     return TestClient(app)
 
 
+class FakeExplainer:
+    def __init__(self, result: Any = None) -> None:
+        from orchestrator.explain import ExplainResult, ToolExplanation
+
+        self.calls: list[Any] = []
+        self.result = result or ExplainResult(
+            ToolExplanation(
+                what="Installs packages.",
+                why="The task needs them.",
+                effect="Writes node_modules.",
+                risk="low",
+                unsure=False,
+            ),
+            None,
+            0.001,
+        )
+
+    def explain(self, item: Any) -> Any:
+        self.calls.append(item)
+        return self.result
+
+
+@pytest.fixture
+def explainer() -> FakeExplainer:
+    return FakeExplainer()
+
+
+@pytest.fixture
+def explaining_client(runs: Path, tmp_path: Path, explainer: FakeExplainer) -> TestClient:
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        projects_dir=tmp_path / "clones",
+        explainer=explainer,
+        health=lambda: run_all(tmp_path),
+    )
+    return TestClient(app)
+
+
 def csrf(client: TestClient) -> str:
     return str(client.get("/api/session").json()["csrf"])
 
@@ -135,6 +175,7 @@ def test_a_project_has_its_timeline_spend_decisions_documents_and_open_questions
     qa = project["stages"][3]
     assert (qa["label"], qa["spent"], qa["cap"]) == ("QA", 1.0, 2.5)
     assert project["warn_fraction"] == 0.8
+    assert project["helper"] == {"explain_usd": 0.0, "chat_usd": 0.0}
     assert [g["comments"] for g in project["gates"]] == ["second", "first"]
     assert project["artifacts"] == ["prd.md"]
     [waiting] = project["pending"]
@@ -460,6 +501,51 @@ def test_the_token_endpoint_only_answers_this_machine(client: TestClient) -> Non
     assert client.get("/api/session", headers={"host": "evil.example"}).status_code == 400
     assert client.get("/api/projects", headers={"host": "127.0.0.1:8765"}).status_code == 200
     assert client.get("/api/projects", headers={"host": "localhost:8765"}).status_code == 200
+
+
+# --- explaining approvals --------------------------------------------------------------------
+
+
+def test_a_tool_request_can_be_explained(
+    explaining_client: TestClient, runs: Path, explainer: FakeExplainer
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    tool = write_pending(
+        runs, PendingKind.TOOL, {"tool": "Bash", "summary": "npm install", "reason": "asks"}
+    )
+
+    body = explaining_client.get(question_url("demo", tool) + "/explanation").json()
+
+    assert body["explanation"]["risk"] == "low" and body["error"] is None
+    assert explainer.calls[0].summary == "npm install" and explainer.calls[0].question_id == tool
+
+
+def test_only_tool_requests_are_explained(explaining_client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    merge = write_pending(runs, PendingKind.MERGE, {"pr_urls": []})
+
+    response = explaining_client.get(question_url("demo", merge) + "/explanation")
+
+    assert response.status_code == 404
+
+
+def test_a_failed_explanation_is_reported_not_raised(
+    explaining_client: TestClient, runs: Path, explainer: FakeExplainer
+) -> None:
+    from orchestrator.explain import ExplainResult
+
+    explainer.result = ExplainResult(None, "The explanation service is unavailable.")
+    make_project(runs, stage=Stage.DEVELOPER)
+    tool = write_pending(runs, PendingKind.TOOL, {"tool": "Bash", "summary": "ls", "reason": "r"})
+
+    response = explaining_client.get(question_url("demo", tool) + "/explanation")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "explanation": None,
+        "error": "The explanation service is unavailable.",
+        "cost_usd": 0.0,
+    }
 
 
 # --- controls --------------------------------------------------------------------------------
