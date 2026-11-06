@@ -192,6 +192,57 @@ describe("the other questions", () => {
   });
 });
 
+describe("an explained approval", () => {
+  const tool = {
+    status: "open", id: "abc", project: "demo", kind: "tool", title: "Permission needed: Bash", detail: "",
+    request: { tool: "Bash", summary: "npm install", reason: "not on the allowed list" },
+    summary_html: "", refused: null, workbench: null,
+  };
+
+  it("shows what the request does and how risky it looks, as advice", async () => {
+    open(tool, {
+      "GET /api/projects/demo/questions/abc/explanation": {
+        explanation: {
+          what: "Installs the project's libraries.", why: "The task needs them to run tests.",
+          effect: "Writes node_modules.", risk: "low", unsure: false,
+        },
+        error: null, cost_usd: 0.001,
+      },
+    });
+
+    expect(await screen.findByText("Installs the project's libraries.")).toBeInTheDocument();
+    expect(screen.getByText(/The task needs them/)).toBeInTheDocument();
+    expect(screen.getByText(/Writes node_modules/)).toBeInTheDocument();
+    expect(screen.getByText("low risk")).toBeInTheDocument();
+    expect(screen.getByText(/advice only/i)).toBeInTheDocument();
+    expect(screen.getByText("npm install")).toBeInTheDocument();
+  });
+
+  it("says when the explainer is unsure, and still offers the decision", async () => {
+    open(tool, {
+      "GET /api/projects/demo/questions/abc/explanation": {
+        explanation: { what: "Runs a script.", why: "Unclear.", effect: "Unknown.", risk: "high", unsure: true },
+        error: null, cost_usd: 0,
+      },
+    });
+
+    expect(await screen.findByText(/not sure/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  });
+
+  it("falls back to the raw request when the explanation is unavailable", async () => {
+    open(tool, {
+      "GET /api/projects/demo/questions/abc/explanation": {
+        explanation: null, error: "The explanation service is unavailable.", cost_usd: 0,
+      },
+    });
+
+    expect(await screen.findByText("The explanation service is unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("npm install")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
+  });
+});
+
 describe("a question that is gone", () => {
   it("says it was answered, or that it is no longer open", async () => {
     open({ status: "answered", id: "abc", project: "demo" });

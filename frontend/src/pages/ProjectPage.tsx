@@ -9,6 +9,7 @@ import {
   Item,
   Loading,
   Meter,
+  money,
   Section,
   Steps,
   StatusPill,
@@ -101,6 +102,12 @@ export function ProjectPage() {
             <Meter key={s.stage} label={s.label} spent={s.spent} cap={s.cap} warn={warn} />
           ))}
           <p className="hint">The marker shows the {Math.round(warn * 100)}% warning point.</p>
+          {data.helper.explain_usd + data.helper.chat_usd > 0 && (
+            <p className="hint">
+              Helper calls (explanations and chat), not counted against the caps:{" "}
+              {money(data.helper.explain_usd + data.helper.chat_usd, 3)}
+            </p>
+          )}
         </Card>
       </Section>
 
