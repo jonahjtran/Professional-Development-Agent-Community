@@ -13,6 +13,7 @@ Verdicts:
 """
 
 import fnmatch
+import ipaddress
 import os
 import re
 import shlex
@@ -305,11 +306,94 @@ def _combine(decisions: list[Decision]) -> Decision:
     return _OK
 
 
+def _expansion_marker(text: str) -> str | None:
+    """The first shell expansion in `text` that could run a command, or None.
+
+    Text inside single quotes is literal, so `sed 's/=>(/x/'` is fine. Inside double quotes
+    `$(...)`, backticks and `${...}` still expand, so those are still caught. A backslash makes the
+    next character literal. Process substitution (`<(`, `>(`) only exists outside quotes.
+    """
+    quote: str | None = None
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            i += 1
+            continue
+        if char == "\\":
+            i += 2
+            continue
+        if char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+        else:
+            pair = text[i : i + 2]
+            if pair in ("$(", "${") or char == "`":
+                return pair if char == "$" else "`"
+            if quote is None and pair in ("<(", ">("):
+                return pair
+        i += 1
+    return None
+
+
+_HEREDOC = re.compile(r"<<(-?)\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|\"([A-Za-z_][A-Za-z0-9_]*)\")")
+
+
+def _strip_heredocs(command: str) -> str | Decision:
+    """Remove the bodies of quoted here-documents that only feed `cat`, so the rest can be checked.
+
+    With a quoted delimiter (`<<'EOF'`) the shell expands nothing in the body, so it is plain text,
+    and `cat > path <<'EOF'` is exactly what the Write tool does: the path is still checked like
+    any other write. Anything else (an unquoted delimiter, which expands `$(...)` in the body, or a
+    here-document feeding another command, such as `bash <<'EOF'`) is left for the human.
+    """
+    if "<<" not in command:
+        return command
+    lines = command.split("\n")
+    kept: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        found = list(_HEREDOC.finditer(line))
+        if not found or line.count("<<") != 1:
+            kept.append(line)  # nothing we can vouch for: the normal parser will ask
+            continue
+        operator = found[0]
+        delimiter = operator.group(2) or operator.group(3)
+        feeder = (line[: operator.start()] + line[operator.end() :]).strip()
+        parsed = _split(feeder)
+        if (
+            isinstance(parsed, Decision)
+            or len(parsed) != 1
+            or not parsed[0].argv
+            or os.path.basename(parsed[0].argv[0]) != "cat"
+        ):
+            return _ask("cannot analyze this command (a here-document may only feed cat)")
+        indented = operator.group(1) == "-"
+        end = next(
+            (
+                j
+                for j in range(i, len(lines))
+                if (lines[j].lstrip("\t") if indented else lines[j]) == delimiter
+            ),
+            None,
+        )
+        if end is None:
+            return _ask("cannot analyze this command (unterminated here-document)")
+        kept.append(feeder)
+        i = end + 1
+    return "\n".join(kept)
+
+
 def _split(command: str) -> list[_Segment] | Decision:
     """Split a command line into simple commands, or return an ASK if it cannot be understood."""
-    for marker in ("$(", "`", "${", "<(", ">("):
-        if marker in command:
-            return _ask(f"cannot analyze this command (it contains {marker!r})")
+    marker = _expansion_marker(command)
+    if marker:
+        return _ask(f"cannot analyze this command (it contains {marker!r})")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -354,7 +438,10 @@ def _split(command: str) -> list[_Segment] | Decision:
 
 
 def _bash(command: str, ctx: PolicyContext) -> Decision:
-    segments = _split(command)
+    stripped = _strip_heredocs(command)
+    if isinstance(stripped, Decision):
+        return stripped
+    segments = _split(stripped)
     if isinstance(segments, Decision):
         return segments
     root = ctx.worktree.resolve()
@@ -577,10 +664,68 @@ def _git_branch(rest: list[str], ctx: PolicyContext) -> Decision:
 # --- entry point ------------------------------------------------------------------------------
 
 
+# --- network ----------------------------------------------------------------------------------
+
+_INTERNAL_NAMES = ("localhost", "metadata.google.internal")
+_INTERNAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home.arpa")
+
+
+def _network_host(tool_input: dict[str, Any]) -> str | None:
+    """The host a sandbox network request is for, if the request names one."""
+    for key in ("host", "hostname", "domain"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return _bare_host(value)
+    url = tool_input.get("url")
+    if isinstance(url, str) and "//" in url:
+        return _bare_host(url.split("//", 1)[1].split("/", 1)[0])
+    return None
+
+
+def _bare_host(text: str) -> str:
+    host = text.strip().lower().rsplit("@", 1)[-1]
+    if host.startswith("["):  # [::1]:443
+        return host[1:].split("]", 1)[0]
+    if host.count(":") == 1:  # name:port
+        host = host.split(":", 1)[0]
+    return host.rstrip(".")
+
+
+def _is_internal(host: str) -> bool:
+    if host in _INTERNAL_NAMES or host.endswith(_INTERNAL_SUFFIXES):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+        or address.is_multicast
+    )
+
+
+def _network(tool_input: dict[str, Any]) -> Decision:
+    """Hosts the sandbox is not already allowed to reach (see sandbox.allowed_domains in
+    config.yaml) go to the human. Internal addresses never do: the agent must not reach services
+    on this machine or its network, such as the Agent Studio UI or a cloud metadata endpoint."""
+    host = _network_host(tool_input)
+    if host is None:
+        return _ask("the sandbox wants network access to a host it did not name")
+    if _is_internal(host):
+        return _deny(f"network access to {host} (this machine or a private network) is not allowed")
+    return _ask(f"the sandbox wants network access to {host}")
+
+
 def evaluate(tool_name: str, tool_input: dict[str, Any], ctx: PolicyContext) -> Decision:
     """Decide what to do with one tool call from the Developer."""
     if tool_name in ("Read", "Glob", "Grep", "Edit", "Write"):
         return _file_tool(tool_name, tool_input, ctx)
     if tool_name == "Bash":
         return _bash(str(tool_input.get("command", "")), ctx)
+    if tool_name == "SandboxNetworkAccess":
+        return _network(tool_input)
     return _deny(f"the {tool_name} tool is not available to the Developer")

@@ -108,7 +108,7 @@ def test_the_first_architect_prompt_is_kept_for_comparison() -> None:
 def test_the_developer_prompt_explains_that_ci_changes_need_the_humans_approval() -> None:
     prompt = load_prompt("developer", DEFAULT_PROMPTS_DIR)
 
-    assert prompt.version == "v2"
+    assert prompt.version == "v3"
     assert ".github" in prompt.text
     assert "approval" in prompt.text.lower()
     assert "make a failing" in prompt.text.lower() or "make tests pass" in prompt.text.lower()
@@ -116,3 +116,14 @@ def test_the_developer_prompt_explains_that_ci_changes_need_the_humans_approval(
 
 def test_the_first_developer_prompt_is_kept_for_comparison() -> None:
     assert load_prompt("developer", DEFAULT_PROMPTS_DIR, version="v1").version == "v1"
+
+
+def test_the_developer_prompt_says_to_use_the_file_tools_and_not_to_sign_commits_as_claude() -> (
+    None
+):
+    text = load_prompt("developer", DEFAULT_PROMPTS_DIR).text
+
+    assert "Write and Edit tools" in text and "here-documents" in text
+    assert "Co-Authored-By" in text and "Generated with" in text
+    assert "package registries" in text and "localhost" in text
+    assert "substitution" in text

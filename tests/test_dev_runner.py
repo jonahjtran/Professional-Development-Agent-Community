@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock
 
+from orchestrator.config import SandboxConfig
 from orchestrator.dev_runner import DevRunner
 from orchestrator.pipeline import AgentError, AgentRequest, AgentRunner
 from orchestrator.prompts import Prompt
@@ -105,6 +106,7 @@ class Harness:
         self.answers: list[ToolAnswer] = []
         self.repo = repo
         self.tmp_path = tmp_path
+        self.config = make_config()
 
     @staticmethod
     def good_turn_two(cwd: Path) -> list[Any]:
@@ -130,7 +132,7 @@ class Harness:
 
     def runner(self, *, studio_root: Path | None = None) -> DevRunner:
         return DevRunner(
-            make_config(),
+            self.config,
             self.tmp_path / "runs",
             self.repo,
             self,
@@ -182,6 +184,7 @@ def test_the_agent_is_confined_to_its_worktree_with_a_strict_setup(
     assert options.sandbox is not None
     assert options.sandbox["enabled"] is True
     assert options.sandbox["excludedCommands"] == ["git"]
+    assert options.sandbox["network"] == {"allowedDomains": []}  # nothing pre-allowed by default
     assert options.can_use_tool is not None
     assert options.hooks is not None and "PreToolUse" in options.hooks
 
@@ -548,3 +551,19 @@ def test_in_the_studio_repo_itself_changing_ci_is_denied(repo: Path, tmp_path: P
     decision = _decision_for(harness, {"file_path": ".github/workflows/ci.yml", "content": "x"})
 
     assert decision == "deny"
+
+
+def test_the_package_registries_in_the_config_are_the_only_hosts_allowed_without_asking(
+    repo: Path, tmp_path: Path
+) -> None:
+    harness = Harness(repo, tmp_path)
+    harness.config = harness.config.model_copy(
+        update={"sandbox": SandboxConfig(allowed_domains=["registry.npmjs.org", "pypi.org"])}
+    )
+
+    harness.runner().run(request())
+
+    sandbox = harness.options[0].sandbox
+    assert sandbox is not None
+    assert sandbox["network"] == {"allowedDomains": ["registry.npmjs.org", "pypi.org"]}
+    assert sandbox["enabled"] is True and sandbox["excludedCommands"] == ["git"]

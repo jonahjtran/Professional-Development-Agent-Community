@@ -66,6 +66,8 @@ def summarize(tool: str, tool_input: dict[str, Any]) -> str:
     """A short description of a call for the trace and the human. Never includes file contents."""
     if tool == "Bash":
         text = str(tool_input.get("command", ""))
+    elif tool == "SandboxNetworkAccess":
+        text = ", ".join(f"{key}={value}" for key, value in tool_input.items())
     else:
         text = str(
             tool_input.get("file_path") or tool_input.get("path") or tool_input.get("pattern", "")

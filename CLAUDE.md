@@ -42,6 +42,22 @@ only ever pushes `agent/` branches to that recorded repository. Worktrees live i
 `~/.cache/agent-studio/worktrees` (override with `AGENT_STUDIO_WORKTREES`); projects are cloned to
 `~/Desktop/Github` (override with `AGENT_STUDIO_PROJECTS`).
 
+## What the Developer may do without asking
+
+The Developer's tool calls go through `orchestrator/permissions.py`. Inside its own worktree it may
+read and edit files, and run ordinary development commands, without asking. It asks you before
+installs, deletions, unlisted commands and new environment variables, and it is refused outright
+for secrets, pushing, leaving the worktree and `.github/` edits (which ask in project repos).
+Three details that decide how many approvals you see:
+
+- A quoted here-document that only feeds `cat` (`cat > path <<'EOF'`) is treated as a file write
+  and checked like the Write tool. An unquoted one, or one feeding anything else, still asks.
+- Text inside single quotes is literal; `$(...)`, backticks and `${...}` outside them (or inside
+  double quotes) still ask.
+- The sandbox may reach only the hosts in `sandbox.allowed_domains` in `config.yaml` (the npm and
+  PyPI registries). Any other host is shown to you. This computer and private networks (localhost,
+  `169.254.x.x`, `10.x`, `192.168.x`, ...) are never reachable, so the agent cannot call the web UI.
+
 ## QA
 
 After the last Developer task is approved, merge its pull requests on GitHub. QA asks you to confirm
