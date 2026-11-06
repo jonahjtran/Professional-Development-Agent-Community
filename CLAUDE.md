@@ -54,6 +54,8 @@ Three details that decide how many approvals you see:
   and checked like the Write tool. An unquoted one, or one feeding anything else, still asks.
 - Text inside single quotes is literal; `$(...)`, backticks and `${...}` outside them (or inside
   double quotes) still ask.
+- `npm test` and `npm run test|typecheck|build|lint|check|format`, and `npx vitest|tsc|eslint|jest|prettier`,
+  run without asking. `npm install`, `npm ci`, other scripts and other `npx` packages still ask.
 - The sandbox may reach only the hosts in `sandbox.allowed_domains` in `config.yaml` (the npm and
   PyPI registries). Any other host is shown to you. This computer and private networks (localhost,
   `169.254.x.x`, `10.x`, `192.168.x`, ...) are never reachable, so the agent cannot call the web UI.

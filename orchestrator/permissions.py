@@ -258,6 +258,8 @@ _FILE_UTILITIES = {
 }  # fmt: skip
 _WRITING_UTILITIES = {"mkdir", "touch", "cp", "mv", "tee", "rm", "rmdir"}
 _RUNNERS = {"pytest", "ruff", "mypy"}
+_NPM_SCRIPTS = {"test", "typecheck", "build", "lint", "check", "format"}
+_NPX_TOOLS = {"vitest", "tsc", "eslint", "jest", "prettier"}
 _RUNNER_MODULES = {"pytest", "ruff", "mypy", "unittest"}
 _FIND_UNSAFE = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf"}
 
@@ -530,9 +532,28 @@ def _command(command: str, args: list[str], piped: bool, ctx: PolicyContext, cwd
         return _ask(f"{command} {' '.join(args[:2])} is not on the allowed list")
     if command == "uv":
         return _uv(args, ctx, cwd)
+    if command == "npm":
+        return _npm(args)
+    if command == "npx":
+        return _npx(args)
     if command in _FILE_UTILITIES:
         return _utility(command, args, ctx, cwd)
     return _ask(f"{command} is not on the allowed list")
+
+
+def _npm(args: list[str]) -> Decision:
+    if args[:1] in (["test"], ["t"]) or (
+        args[:1] == ["run"] and args[1:2] and args[1] in _NPM_SCRIPTS
+    ):
+        return _OK
+    return _ask(f"npm {' '.join(args[:2])} is not on the allowed list".replace("  ", " "))
+
+
+def _npx(args: list[str]) -> Decision:
+    rest = [a for a in args if a not in ("--no-install", "--no")]
+    if rest and rest[0] in _NPX_TOOLS:
+        return _OK
+    return _ask(f"npx {' '.join(rest[:1])} is not on the allowed list".replace("  ", " "))
 
 
 def _uv(args: list[str], ctx: PolicyContext, cwd: Path) -> Decision:
