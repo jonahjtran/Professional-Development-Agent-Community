@@ -98,6 +98,10 @@ count) and never block a run: what the Developer says it needs from you (`needs_
 report), a project that paused on an error, a QA tool that is not installed (for example
 `gitleaks`), and failing setup checks. Mark an item done, or resume the project to close an error
 item; setup items clear themselves when fixed.
+A new action item raises a louder alert than a question: a macOS notification with a sound (with
+`--mac-notify`), a browser notification titled "You need to do something", a red count in the nav
+and "Action needed" in the tab title. Each item alerts once; ones open when the page loads are
+not announced again.
 
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).

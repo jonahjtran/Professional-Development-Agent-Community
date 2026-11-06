@@ -40,37 +40,59 @@ export function useLoad<T>(url: string, every = 0): Loaded<T> {
   return { data, error, reload: load };
 }
 
-/** The open questions, refreshed often: it feeds the badge, the tab title and notifications. */
-export function useInbox(every = 5000): InboxItem[] {
-  const { data } = useLoad<InboxItem[]>("/api/inbox", every);
-  const seen = useRef<Set<string> | null>(null);
-  const items = data ?? [];
+function announce(title: string, body: string, url: string): void {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const note = new Notification(title, { body });
+  note.onclick = () => {
+    window.focus();
+    window.location.href = url;
+  };
+}
+
+/**
+ * Everything waiting for you, refreshed often: it feeds the nav badge, the tab title and browser
+ * notifications. Questions are an ordinary alert; action items (only you can do them) are a
+ * separate, louder one. What was already open when the page loaded is not announced again.
+ */
+export function useAttention(every = 5000): { questions: InboxItem[]; todos: TodoItem[] } {
+  const { data: asked } = useLoad<InboxItem[]>("/api/inbox", every);
+  const { data: todoData } = useLoad<{ todos: TodoItem[] }>("/api/todos", every);
+  const seenQuestions = useRef<Set<string> | null>(null);
+  const seenTodos = useRef<Set<string> | null>(null);
+  const questions = asked ?? [];
+  const todos = todoData?.todos ?? [];
 
   useEffect(() => {
-    if (data === null) return;
-    const base = document.title.replace(/^\(\d+\) /, "");
-    document.title = data.length ? `(${data.length}) ${base}` : base;
-    const ids = new Set(data.map((i) => i.id));
-    if (seen.current !== null && "Notification" in window && Notification.permission === "granted") {
-      for (const item of data) {
-        if (!seen.current.has(item.id)) {
-          const note = new Notification("Agent Studio needs you", {
-            body: `${item.project}: ${item.title}`,
-          });
-          note.onclick = () => {
-            window.focus();
-            window.location.href = `/p/${item.project}/q/${item.id}`;
-          };
+    if (asked === null) return;
+    if (seenQuestions.current !== null) {
+      for (const item of asked) {
+        if (!seenQuestions.current.has(item.id)) {
+          announce("Agent Studio needs you", `${item.project}: ${item.title}`, `/p/${item.project}/q/${item.id}`);
         }
       }
     }
-    seen.current = ids;
-  }, [data]);
+    seenQuestions.current = new Set(asked.map((i) => i.id));
+  }, [asked]);
 
-  return items;
-}
+  useEffect(() => {
+    if (todoData === null) return;
+    if (seenTodos.current !== null) {
+      for (const item of todoData.todos) {
+        if (!seenTodos.current.has(item.id)) {
+          announce("You need to do something", `${item.project ?? "Setup"}: ${item.title}`, "/inbox");
+        }
+      }
+    }
+    seenTodos.current = new Set(todoData.todos.map((i) => i.id));
+  }, [todoData]);
 
-/** What only you can do, refreshed often so the nav count stays true. */
-export function useTodos(every = 5000): Loaded<{ todos: TodoItem[] }> {
-  return useLoad<{ todos: TodoItem[] }>("/api/todos", every);
+  useEffect(() => {
+    if (asked === null && todoData === null) return;
+    const base = document.title.replace(/^\(\d+\) (Action needed · )?/, "");
+    const total = questions.length + todos.length;
+    if (total === 0) document.title = base;
+    else document.title = todos.length > 0 ? `(${total}) Action needed · ${base}` : `(${total}) ${base}`;
+  }, [asked, todoData, questions.length, todos.length]);
+
+  return { questions, todos };
 }

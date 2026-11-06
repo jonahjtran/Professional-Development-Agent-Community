@@ -204,3 +204,5 @@ pre code { background: none; padding: 0; }
 .pill.risk-low { background: var(--green-bg); color: var(--green); }
 .pill.risk-medium { background: var(--orange-bg); color: var(--orange); }
 .pill.risk-high { background: var(--red-bg); color: var(--red); }
+
+#badge.alert { color: var(--red); font-weight: 600; }
