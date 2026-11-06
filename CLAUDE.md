@@ -33,7 +33,7 @@ Pull requests read and write). Never put a token in an argument, a test assertio
 uv run studio new <name>                     # create the private repo with YOUR gh login, clone it
 uv run studio run "<idea>" --slug <name> --agent full --repo ~/Desktop/Github/<name>
 uv run studio resume <name> --agent full     # continue after a crash; uses the recorded repo
-uv run studio halt <name>                    # stop before the next step, and stop a running agent
+uv run studio pause <name>                   # stop spending: pauses before the next step, stops a running agent
 ```
 
 `--agent echo` (free dummy), `api` (planning only) and `full` (planning, then the Developer opens a
@@ -79,7 +79,7 @@ stage, spend against its caps and past decisions, read the documents and the tra
 every question the pipeline asks (gates with per-item approvals, budget and revision caps, the
 merge check, Developer tool requests) from one inbox. The career gate shows each resume bullet
 next to its evidence, a copy button for each LaTeX snippet, and a preview of the website entry.
-Halt and Resume are buttons on the project page, and `/health` checks the keys, token expiry,
+Pause and Resume are buttons on the project page (a paused project loses nothing and can be resumed at any point; `studio resume` does the same), and `/health` checks the keys, token expiry,
 tools and folders before a run.
 
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human

@@ -9,11 +9,16 @@ export function Pill({ tone, children }: { tone?: string; children: ReactNode })
 }
 
 export function statusTone(status: Status): string {
-  return status === "awaiting_human" ? "waiting" : status;
+  return status === "awaiting_human" || status === "halted" ? "waiting" : status;
+}
+
+/** A stopped project is shown as paused: it can always be resumed. */
+export function statusLabel(status: Status): string {
+  return status === "halted" ? "paused" : status.replace("_", " ");
 }
 
 export function StatusPill({ status }: { status: Status }) {
-  return <Pill tone={statusTone(status)}>{status.replace("_", " ")}</Pill>;
+  return <Pill tone={statusTone(status)}>{statusLabel(status)}</Pill>;
 }
 
 export function Group({ children }: { children: ReactNode }) {

@@ -14,7 +14,7 @@ reviewed, and they say things that are not true. Agent Studio is a working answe
 
 | Risk | What stops it |
 | --- | --- |
-| Runaway spend | Dollar caps per task, per stage and per project; a warning at 80% of the cap that pauses for a decision; a kill switch (`studio halt`) |
+| Runaway spend | Dollar caps per task, per stage and per project; a warning at 80% of the cap that pauses for a decision; a pause switch (`studio pause`, resume any time) |
 | Unreviewed actions | A deterministic state machine (no LLM decides what happens next); a human gate after every stage; the agent can never push or open a pull request, only the orchestrator can |
 | Made-up claims | QA numbers come from real tools, not a model; pass or fail is computed by a rule; career bullets may only cite evidence built by code, and a number that is not in that evidence is rejected |
 
@@ -54,7 +54,7 @@ uv sync
 uv run studio new my-project                      # private repo on your account, cloned locally
 uv run studio run "<idea>" --slug my-project --agent full --repo ~/Desktop/Github/my-project
 uv run studio resume my-project --agent full      # after a crash
-uv run studio halt my-project                     # stop before the next step
+uv run studio pause my-project                    # stop spending; `studio resume` continues it
 ```
 
 Secrets go in `.env` (git-ignored): `ANTHROPIC_API_KEY` and a fine-grained `GITHUB_TOKEN`

@@ -73,7 +73,7 @@ describe("a gate question", () => {
     const api = open(gate);
     await userEvent.type(await screen.findByLabelText(/Comments/), "tighten the bullets");
 
-    await userEvent.click(screen.getByRole("switch", { name: /halt the project/ }));
+    await userEvent.click(screen.getByRole("switch", { name: /pause the project/ }));
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
 
     await waitFor(() => expect(api.posts()).toHaveLength(1));
