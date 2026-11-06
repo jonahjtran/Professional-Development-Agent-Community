@@ -88,9 +88,16 @@ class Publisher:
     # --- steps -----------------------------------------------------------------------------
 
     def diff_stat(self, branch: str) -> str:
-        """A short summary of what the branch changes compared with the base branch."""
+        """A short summary of what the branch changes compared with the base branch.
+
+        The comparison is with the remote's base branch, which task branches are cut from. The local
+        one stays behind when pull requests are merged on GitHub, and would make every earlier
+        task's changes look like this one's.
+        """
         done = self._call(
-            ["git", "diff", "--stat", f"{self._base}...{branch}"], {}, "summarizing the changes"
+            ["git", "diff", "--stat", f"origin/{self._base}...{branch}"],
+            {},
+            "summarizing the changes",
         )
         return done.stdout.strip() or "(no file changes)"
 

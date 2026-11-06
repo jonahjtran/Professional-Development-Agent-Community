@@ -32,6 +32,7 @@ from orchestrator.worktree import (
     delete_branch,
     discard_unused,
     head_sha,
+    leftover_work,
     local_branches,
     protected_for,
     remove_worktree,
@@ -86,14 +87,21 @@ class DevRunner:
         # A rejected task starts again on a fresh branch, so the earlier pull request is untouched.
         branch_id = task.id if request.attempt == 0 else f"{task.id}-r{request.attempt}"
         try:
-            if not revising:
-                discard_unused(self._repo, branch_id)  # leftovers of a crash, with no work in them
+            # A run that was killed mid-task leaves its branch and folder behind. If there is real
+            # work in them, carry on from it; if there is none, throw the empty leftovers away.
+            interrupted = not revising and leftover_work(self._repo, branch_id)
+            if not revising and not interrupted:
+                discard_unused(self._repo, branch_id)
             branches_before = local_branches(self._repo)
-            worktree = create_worktree(self._repo, branch_id, base=self._base, resume=revising)
+            worktree = create_worktree(
+                self._repo, branch_id, base=self._base, resume=revising or interrupted
+            )
         except WorktreeError as error:
             raise AgentError(f"worktree problem: {error}") from error
         try:
-            return asyncio.run(self._session(request, task, worktree, branches_before))
+            return asyncio.run(
+                self._session(request, task, worktree, branches_before, interrupted=interrupted)
+            )
         finally:
             remove_worktree(worktree)  # the branch, with its commits, stays in the repository
             for stray in local_branches(self._repo) - branches_before - {worktree.branch}:
@@ -137,14 +145,20 @@ class DevRunner:
         )
 
     async def _session(
-        self, request: AgentRequest, task: Task, worktree: Worktree, branches_before: set[str]
+        self,
+        request: AgentRequest,
+        task: Task,
+        worktree: Worktree,
+        branches_before: set[str],
+        *,
+        interrupted: bool = False,
     ) -> AgentResult:
         head_before = head_sha(worktree.path)
         base_before = branch_sha(self._repo, self._base)
         options = self._options(request, task, worktree)
 
         async with self._client_factory(options) as client:
-            await client.query(self._task_prompt(request, task, worktree))
+            await client.query(self._task_prompt(request, task, worktree, interrupted))
             turn = await _collect(client)
             report, problem = _parse_report(turn.result.result or "")
             if report is None:
@@ -201,7 +215,9 @@ class DevRunner:
             shown = ", ".join(left_over[:5])
             raise fail(f"the Developer left uncommitted changes, which would be lost: {shown}")
 
-    def _task_prompt(self, request: AgentRequest, task: Task, worktree: Worktree) -> str:
+    def _task_prompt(
+        self, request: AgentRequest, task: Task, worktree: Worktree, interrupted: bool = False
+    ) -> str:
         parts = [
             f"Your task is {task.id}: {task.title}",
             f"Description:\n{task.description}",
@@ -211,6 +227,13 @@ class DevRunner:
             f"You are on branch {worktree.branch}, cut from {worktree.base}. Commit your work "
             "here. Do not push, and do not create or switch branches.",
         ]
+        if interrupted:
+            parts.append(
+                "An earlier attempt at this task was interrupted. Its commits and any "
+                "uncommitted changes are already on this branch: run `git log` and `git status`, "
+                "check what is there against the acceptance criteria, and continue from it "
+                "instead of starting over."
+            )
         if request.previous_draft is not None:
             parts.append(f"Your previous report:\n{request.previous_draft}")
         if request.comments:

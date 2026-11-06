@@ -266,7 +266,7 @@ def test_the_diff_summary_compares_the_branch_with_main(tmp_path: Path) -> None:
     stat = publisher(run, tmp_path).diff_stat("agent/T1")
 
     [call] = run.commands("git", "diff")
-    assert call.args == ["git", "diff", "--stat", "main...agent/T1"]
+    assert call.args == ["git", "diff", "--stat", "origin/main...agent/T1"]
     assert "1 file changed" in stat
 
 
