@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, post } from "../api";
-import { Banner, Button, Card, Group, Section, Segmented, SwitchRow } from "../components/ui";
+import { Banner, Button, Card, Section, Segmented } from "../components/ui";
 import type { NewProjectFields } from "../types";
 
 const blank: NewProjectFields = {
@@ -10,7 +10,6 @@ const blank: NewProjectFields = {
   track: "engineering",
   agent: "full",
   visibility: "private",
-  public_ok: false,
 };
 
 interface Preview { clone: string; fields: NewProjectFields }
@@ -58,6 +57,12 @@ export function NewProjectPage() {
           <p>{f.idea}</p>
           <p className="muted">Track: {f.track}</p>
         </Card>
+        {f.agent === "full" && f.visibility === "public" && (
+          <Banner>
+            <strong>Public:</strong> anyone on the internet will be able to see this repository and
+            everything the agents commit to it.
+          </Banner>
+        )}
         {f.agent === "full" ? (
           <Section title="This will, on your behalf">
             <Card>
@@ -131,11 +136,7 @@ export function NewProjectPage() {
           onChange={(v) => set("visibility", v)}
           options={[{ value: "private", label: "Private" }, { value: "public", label: "Public" }]}
         />
-        <div style={{ marginTop: 10 }}>
-          <Group>
-            <SwitchRow label="I want it public" checked={fields.public_ok} onChange={(on) => set("public_ok", on)} />
-          </Group>
-        </div>
+        <p className="hint"><strong>Private</strong>: only you can see it. <strong>Public</strong>: anyone on the internet can.</p>
       </div>
 
       <div className="actions">

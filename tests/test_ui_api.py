@@ -531,7 +531,7 @@ FORM = {
         ({"idea": "short"}, "10 to 2000 characters"),
         ({"track": "astronaut"}, "Choose a track"),
         ({"agent": "other"}, "Choose how to run it"),
-        ({"visibility": "public"}, "confirm you want a public repository"),
+        ({"visibility": "nowhere"}, "Choose private or public"),
     ],
 )
 def test_a_bad_form_is_sent_back_with_what_to_fix(
@@ -583,9 +583,7 @@ def test_a_full_run_is_blocked_when_a_key_or_the_profile_is_missing(
 def test_the_preview_says_where_the_repository_will_be_cloned(
     client: TestClient, tmp_path: Path
 ) -> None:
-    body = post(
-        client, "/api/new/preview", {**FORM, "visibility": "public", "public_ok": True}
-    ).json()
+    body = post(client, "/api/new/preview", {**FORM, "visibility": "public"}).json()
 
     assert body["ok"] is True and body["clone"] == str(tmp_path / "clones" / "my-project")
     assert body["fields"]["visibility"] == "public"

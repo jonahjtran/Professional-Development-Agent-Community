@@ -162,5 +162,4 @@ export interface NewProjectFields {
   track: string;
   agent: string;
   visibility: string;
-  public_ok: boolean;
 }
