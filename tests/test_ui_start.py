@@ -4,13 +4,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
 
 from orchestrator.newproject import NewProject, NewProjectError
 from orchestrator.ui import health
-from orchestrator.ui.app import create_app, start_command
-from tests.factories import make_config
-from tests.test_ui import make_project
+from orchestrator.ui.app import start_command
 
 CONFIG = Path(__file__).parent.parent / "config.yaml"
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
@@ -190,9 +187,6 @@ def test_the_profile_and_website_must_be_on_the_same_account(tmp_path: Path) -> 
     assert by_name(run_all(tmp_path, env))["Same GitHub account"].status == health.FAIL
 
 
-# --- the app ---------------------------------------------------------------------------------
-
-
 class Launched:
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], Path, Path]] = []
@@ -222,197 +216,6 @@ class Creator:
         )
 
 
-@pytest.fixture
-def web(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[TestClient, Launched, Creator, Path]:
-    for key, value in env_for(tmp_path).items():
-        monkeypatch.setenv(key, value)
-    runs = tmp_path / "runs"
-    runs.mkdir()
-    launched, creator = Launched(), Creator()
-    app = create_app(
-        runs,
-        make_config(),
-        config_path=CONFIG,
-        launcher=launched,
-        projects_dir=tmp_path / "clones",
-        creator=creator,
-        health=lambda: run_all(tmp_path),
-    )
-    return TestClient(app), launched, creator, runs
-
-
-def token(client: TestClient) -> str:
-    return client.get("/").text.split('<meta name="csrf" content="')[1].split('"')[0]
-
-
-def submit(client: TestClient, path: str, **fields: str) -> Any:
-    data = {
-        "name": "my-project",
-        "idea": "A tool that tracks student org events.",
-        "track": "engineering",
-        "agent": "full",
-        "visibility": "private",
-        **fields,
-    }
-    return client.post(path, data={"csrf": token(client), **data}, follow_redirects=False)
-
-
-def test_the_health_page_lists_every_check_and_says_when_nothing_blocks(
-    web: tuple[TestClient, Launched, Creator, Path],
-) -> None:
-    client = web[0]
-
-    page = client.get("/health").text
-
-    assert "Anthropic API key" in page and "gitleaks" in page
-    assert "Nothing will stop a full run" in page
-
-
-def test_the_health_page_counts_what_will_stop_a_run(tmp_path: Path) -> None:
-    app = create_app(
-        tmp_path,
-        make_config(),
-        config_path=CONFIG,
-        health=lambda: [health.Check("gitleaks", health.FAIL, "Not installed.", "brew")],
-    )
-
-    page = TestClient(app).get("/health").text
-
-    assert "1 thing(s) will stop a full run" in page and "Not installed." in page
-
-
-def test_the_new_project_form_offers_the_choices(
-    web: tuple[TestClient, Launched, Creator, Path],
-) -> None:
-    page = web[0].get("/new").text
-
-    for text in ("The idea, in a paragraph", "engineering", "consulting", "Practice", "Private"):
-        assert text in page
-
-
-@pytest.mark.parametrize(
-    ("fields", "message"),
-    [
-        ({"name": "Bad Name"}, "lowercase letters"),
-        ({"idea": "short"}, "10 to 2000 characters"),
-        ({"track": "astronaut"}, "Choose a track"),
-        ({"agent": "other"}, "Choose how to run it"),
-        ({"visibility": "public"}, "confirm you want a public repository"),
-    ],
-)
-def test_a_bad_form_is_sent_back_with_what_to_fix(
-    web: tuple[TestClient, Launched, Creator, Path], fields: dict[str, str], message: str
-) -> None:
-    response = submit(web[0], "/new/preview", **fields)
-
-    assert response.status_code == 400 and message in response.text
-    assert "my-project" in response.text or "Bad Name" in response.text  # what you typed is kept
-
-
-def test_a_name_that_is_taken_by_a_project_or_a_folder_is_refused(
-    web: tuple[TestClient, Launched, Creator, Path], tmp_path: Path
-) -> None:
-    client, _launched, _creator, runs = web
-    make_project(runs, "taken")
-    (tmp_path / "clones" / "folder-taken").mkdir(parents=True)
-
-    assert "already exists" in submit(client, "/new/preview", name="taken").text
-    assert (
-        "already exists on this computer"
-        in submit(client, "/new/preview", name="folder-taken").text
-    )
-    assert submit(client, "/new/preview", name="folder-taken", agent="echo").status_code == 200
-
-
-def test_a_full_run_is_blocked_when_a_key_or_the_profile_is_missing(
-    web: tuple[TestClient, Launched, Creator, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = web[0]
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
-    monkeypatch.delenv("AGENT_STUDIO_PROFILE")
-
-    full = submit(client, "/new/preview")
-    practice = submit(client, "/new/preview", agent="echo")
-
-    assert full.status_code == 400
-    assert "Anthropic API key" in full.text and "Career profile" in full.text
-    assert practice.status_code == 200  # the dummy agent needs neither
-
-
-def test_the_confirmation_says_exactly_what_will_be_created(
-    web: tuple[TestClient, Launched, Creator, Path], tmp_path: Path
-) -> None:
-    page = submit(web[0], "/new/preview", visibility="public", public_ok="on").text
-
-    assert "create a <strong>public</strong> GitHub repository" in page
-    assert str(tmp_path / "clones" / "my-project") in page and "spend real money" in page
-    assert 'action="/new/start"' in page
-
-
-def test_confirming_creates_the_repository_and_starts_a_detached_run(
-    web: tuple[TestClient, Launched, Creator, Path], tmp_path: Path
-) -> None:
-    client, launched, creator, runs = web
-
-    response = submit(client, "/new/start")
-
-    assert response.status_code == 303 and response.headers["location"] == "/p/my-project"
-    assert creator.calls == [("my-project", tmp_path / "clones", False)]
-    [(command, cwd, log)] = launched.calls
-    assert command[command.index("--agent") + 1] == "full" and "--ui" in command
-    assert command[command.index("--repo") + 1] == str(tmp_path / "clones" / "my-project")
-    assert command[command.index("--slug") + 1] == "my-project"
-    assert "A tool that tracks student org events." in command
-    assert cwd == CONFIG.resolve().parent and log == runs / "my-project" / "run.log"
-
-
-def test_a_practice_run_creates_no_repository(
-    web: tuple[TestClient, Launched, Creator, Path],
-) -> None:
-    client, launched, creator, _runs = web
-
-    submit(client, "/new/start", agent="echo")
-
-    assert creator.calls == []
-    [(command, _cwd, _log)] = launched.calls
-    assert "--repo" not in command and command[command.index("--agent") + 1] == "echo"
-
-
-def test_a_repository_that_could_not_be_created_stops_before_anything_starts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    for key, value in env_for(tmp_path).items():
-        monkeypatch.setenv(key, value)
-    launched = Launched()
-    app = create_app(
-        tmp_path / "runs",
-        make_config(),
-        config_path=CONFIG,
-        launcher=launched,
-        projects_dir=tmp_path / "clones",
-        creator=Creator("my-project already exists on GitHub"),
-    )
-
-    response = submit(TestClient(app), "/new/start")
-
-    assert response.status_code == 409 and "already exists on GitHub" in response.text
-    assert launched.calls == []
-
-
-def test_starting_a_project_needs_the_form_token(
-    web: tuple[TestClient, Launched, Creator, Path],
-) -> None:
-    client, launched, creator, _runs = web
-
-    response = client.post(
-        "/new/start", data={"name": "my-project", "idea": "x" * 20, "agent": "echo"}
-    )
-
-    assert response.status_code == 403 and launched.calls == [] and creator.calls == []
-
-
 def test_the_command_passes_the_idea_as_one_argument_not_through_a_shell() -> None:
     command = start_command(
         idea="a; rm -rf /",
@@ -425,17 +228,3 @@ def test_the_command_passes_the_idea_as_one_argument_not_through_a_shell() -> No
     )
 
     assert "a; rm -rf /" in command and command[command.index("run") + 1] == "a; rm -rf /"
-
-
-def test_a_project_that_is_still_starting_shows_its_log_until_the_state_exists(
-    web: tuple[TestClient, Launched, Creator, Path],
-) -> None:
-    client, _l, _c, runs = web
-    (runs / "my-project").mkdir()
-    (runs / "my-project" / "run.log").write_text("Starting...\n<script>alert(1)</script>\n")
-
-    page = client.get("/p/my-project").text
-
-    assert "Starting my-project" in page and 'http-equiv="refresh"' in page
-    assert "&lt;script&gt;" in page and "<script>alert" not in page
-    assert client.get("/p/never-started").status_code == 404

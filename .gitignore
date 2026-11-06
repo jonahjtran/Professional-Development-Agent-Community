@@ -16,3 +16,7 @@ runs/
 
 # Private learning notebook (learn-as-you-build skill)
 docs/learning/
+
+# The web UI: dependencies and the built React app
+frontend/node_modules/
+orchestrator/ui/static/app/

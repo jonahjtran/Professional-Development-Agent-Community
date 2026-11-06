@@ -1,10 +1,12 @@
-"""The web UI: a local control panel over a run directory.
+"""The web UI's server: a JSON API over a run directory, plus the React app that uses it.
 
 It only listens on this machine (the server binds to 127.0.0.1 and the app rejects any other Host
-header, which also blocks DNS-rebinding tricks). Pages here are read-only; they show what the
-orchestrator already wrote to `runs/`.
+header, which also blocks DNS-rebinding tricks). Reading is open to the local page; every change
+needs the session token in a header, a JSON body and a matching Origin, so no other website the
+browser has open can make it do anything. Agent-written text is escaped before it is sent.
 """
 
+import json
 import re
 import secrets
 import subprocess
@@ -14,9 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from orchestrator.artifacts import ArtifactStore
@@ -24,7 +25,6 @@ from orchestrator.config import Config
 from orchestrator.halt import request_halt
 from orchestrator.inbox import (
     AnswerRejected,
-    Pending,
     PendingKind,
     all_pending,
     answer,
@@ -41,13 +41,14 @@ from orchestrator.newproject import (
 )
 from orchestrator.state import ProjectState, Status, state_path
 from orchestrator.trace import EventType
-from orchestrator.ui import data
+from orchestrator.ui import data, serialize
 from orchestrator.ui import health as health_checks
-from orchestrator.ui.decisions import FormError, describe, payload_from_form
+from orchestrator.ui.decisions import FormError, payload_from_form
 from orchestrator.ui.render import artifact_kind, markdown_html, pretty_json
 from schemas import Track
 
 HERE = Path(__file__).parent
+FRONTEND = HERE / "static" / "app"  # the built React app (npm run build in frontend/)
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")  # the same rule as a project name in state.py
 
@@ -105,6 +106,13 @@ def start_command(
     return command + (["--repo", str(repo)] if repo is not None else [])
 
 
+_NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Agent Studio</title>
+<body style="font:17px system-ui;max-width:640px;margin:15vh auto;padding:0 20px">
+<h1>The web app is not built yet</h1>
+<p>Run this once, then reload:</p>
+<pre>npm --prefix frontend ci &amp;&amp; npm --prefix frontend run build</pre></body>"""
+
+
 def create_app(
     runs_dir: Path,
     config: Config,
@@ -114,6 +122,7 @@ def create_app(
     projects_dir: Path | None = None,
     creator: Creator = create_project,
     health: HealthRunner | None = None,
+    frontend_dir: Path = FRONTEND,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
@@ -122,28 +131,33 @@ def create_app(
         lambda: health_checks.run_checks(repo_root=config_path.resolve().parent)
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
-    app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
-    templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.globals["csrf"] = csrf_token
-    templates.env.globals["describe"] = describe
 
-    async def checked_form(request: Request) -> Any:
-        """The submitted form, after proving the post came from this site's own pages."""
+    @app.exception_handler(HTTPException)
+    async def http_error(_request: Request, error: HTTPException) -> JSONResponse:
+        return JSONResponse({"error": error.detail}, status_code=error.status_code)
+
+    async def checked_body(request: Request) -> dict[str, Any]:
+        """The JSON body of a change, after proving it came from this site's own page."""
         origin = request.headers.get("origin")
         if origin is not None and origin.split("://", 1)[-1] != request.headers.get("host"):
             raise HTTPException(403, "cross-site request refused")
-        form = await request.form()
-        sent = form.get("csrf")
-        if not isinstance(sent, str) or not secrets.compare_digest(sent, csrf_token):
-            raise HTTPException(403, "missing or wrong form token")
-        return form
+        if not request.headers.get("content-type", "").startswith("application/json"):
+            raise HTTPException(415, "send JSON")
+        sent = request.headers.get("x-csrf-token", "")
+        if not secrets.compare_digest(sent, csrf_token):
+            raise HTTPException(403, "missing or wrong session token")
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "the body is not valid JSON") from None
+        if not isinstance(body, dict):
+            raise HTTPException(400, "the body must be a JSON object")
+        return body
 
-    def message(request: Request, text: str, back: str, status: int = 200) -> HTMLResponse:
-        return templates.TemplateResponse(
-            request, "message.html", {"text": text, "back": back}, status_code=status
-        )
+    def fail(status: int, text: str) -> JSONResponse:
+        return JSONResponse({"error": text}, status_code=status)
 
-    def project_or_404(slug: str) -> data.ProjectView:
+    def view_or_404(slug: str) -> data.ProjectView:
         if not _SLUG.match(slug):
             raise HTTPException(404, "no such project")
         view = data.project_view(runs_dir, config, slug)
@@ -151,175 +165,143 @@ def create_app(
             raise HTTPException(404, "no such project")
         return view
 
-    @app.get("/", response_class=HTMLResponse)
-    def index(request: Request) -> HTMLResponse:
-        projects = data.list_projects(runs_dir, config)
-        return templates.TemplateResponse(request, "index.html", {"projects": projects})
+    # --- reading ---------------------------------------------------------------------------
 
-    @app.get("/p/{slug}", response_class=HTMLResponse)
-    def project(request: Request, slug: str) -> HTMLResponse:
+    @app.get("/api/session")
+    def session() -> dict[str, str]:
+        return {"csrf": csrf_token}
+
+    @app.get("/api/projects")
+    def projects() -> list[dict[str, Any]]:
+        return [serialize.summary(p) for p in data.list_projects(runs_dir, config)]
+
+    @app.get("/api/projects/{slug}")
+    def project(slug: str) -> dict[str, Any]:
         log = runs_dir / slug / "run.log"
         if _SLUG.match(slug) and not state_path(runs_dir, slug).exists() and log.exists():
             tail = "\n".join(log.read_text(errors="replace").splitlines()[-20:])
-            return templates.TemplateResponse(
-                request, "starting.html", {"slug": slug, "tail": tail}
-            )
-        view = project_or_404(slug)
-        return templates.TemplateResponse(
-            request, "project.html", {"view": view, "pending": pending_for(runs_dir, slug)}
-        )
+            return {"starting": True, "slug": slug, "log": tail}
+        return serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
 
-    @app.get("/p/{slug}/a/{name:path}", response_class=HTMLResponse)
-    def artifact(request: Request, slug: str, name: str) -> HTMLResponse:
-        view = project_or_404(slug)
+    @app.get("/api/projects/{slug}/artifacts/{name:path}")
+    def artifact(slug: str, name: str) -> dict[str, Any]:
+        view = view_or_404(slug)
         record = view.state.artifacts.get(name)  # only names the project recorded, never a path
         if record is None:
             raise HTTPException(404, "no such artifact")
         text = ArtifactStore(runs_dir, slug).read(record)
         kind = artifact_kind(name)
-        body = markdown_html(text) if kind == "markdown" else pretty_json(text)
-        return templates.TemplateResponse(
-            request,
-            "artifact.html",
-            {"view": view, "name": name, "record": record, "kind": kind, "body": body},
-        )
+        return {
+            "name": name,
+            "revision": record.revision,
+            "approved_at": record.approved_at.isoformat() if record.approved_at else None,
+            "kind": kind,
+            "html": markdown_html(text) if kind == "markdown" else None,
+            "text": pretty_json(text) if kind == "code" else None,
+        }
 
-    @app.get("/p/{slug}/trace", response_class=HTMLResponse)
-    def trace(request: Request, slug: str, type: str | None = None) -> HTMLResponse:
-        view = project_or_404(slug)
+    @app.get("/api/projects/{slug}/trace")
+    def trace(slug: str, type: str | None = None) -> dict[str, Any]:
+        view_or_404(slug)
         try:
             wanted = EventType(type) if type else None
         except ValueError:
             raise HTTPException(404, "no such event type") from None
         events = data.read_trace(runs_dir, slug, event=wanted)
-        return templates.TemplateResponse(
-            request,
-            "trace.html",
-            {"view": view, "events": events, "types": list(EventType), "selected": wanted},
-        )
+        return {
+            "types": [t.value for t in EventType],
+            "selected": wanted.value if wanted else None,
+            "events": [json.loads(e.model_dump_json()) for e in events],
+        }
 
-    # --- decisions -------------------------------------------------------------------------
+    @app.get("/api/inbox")
+    def inbox() -> list[dict[str, Any]]:
+        return [serialize.pending_item(p) for p in all_pending(runs_dir)]
 
-    def pending_or_404(slug: str, question_id: str) -> Pending:
-        project_or_404(slug)
+    @app.get("/api/projects/{slug}/questions/{question_id}")
+    def question(slug: str, question_id: str) -> dict[str, Any]:
+        view = view_or_404(slug)
         found = next((p for p in pending_for(runs_dir, slug) if p.id == question_id), None)
         if found is None:
+            if any(d["id"] == question_id for d in answered(runs_dir, slug)):
+                return {"status": "answered", "id": question_id, "project": slug}
             raise HTTPException(404, "this question is no longer open")
-        return found
-
-    @app.get("/inbox", response_class=HTMLResponse)
-    def inbox(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request, "inbox.html", {"items": all_pending(runs_dir)})
-
-    @app.get("/api/pending")
-    def api_pending() -> JSONResponse:
-        return JSONResponse(
-            [
-                {
-                    "id": p.id,
-                    "project": p.project,
-                    "title": describe(p)[0],
-                    "url": f"/p/{p.project}/q/{p.id}",
-                }
-                for p in all_pending(runs_dir)
-            ]
-        )
-
-    @app.get("/p/{slug}/q/{question_id}", response_class=HTMLResponse)
-    def question(request: Request, slug: str, question_id: str) -> HTMLResponse:
-        view = project_or_404(slug)
-        try:
-            pending = pending_or_404(slug, question_id)
-        except HTTPException:
-            done = next((d for d in answered(runs_dir, slug) if d["id"] == question_id), None)
-            if done is None:
-                raise
-            return message(request, "This question was already answered.", f"/p/{slug}")
-        summary = pending.request.get("summary")
         workbench = (
             data.career_workbench(runs_dir, view.state)
-            if pending.kind == PendingKind.GATE and pending.request.get("stage") == "career_coach"
+            if found.kind == PendingKind.GATE and found.request.get("stage") == "career_coach"
             else None
         )
-        return templates.TemplateResponse(
-            request,
-            "question.html",
-            {
-                "view": view,
-                "q": pending,
-                "summary_html": markdown_html(summary) if isinstance(summary, str) else "",
-                "refused": rejection_reason(runs_dir, slug, question_id),
-                "wb": workbench,
-                "readme_html": markdown_html(workbench.plan.readme_md) if workbench else "",
-                "case_html": markdown_html(workbench.plan.case_study_md) if workbench else "",
-            },
-        )
+        return serialize.question(found, rejection_reason(runs_dir, slug, question_id), workbench)
 
-    @app.post("/p/{slug}/q/{question_id}")
-    async def decide(request: Request, slug: str, question_id: str) -> Response:
-        form = await checked_form(request)
-        try:
-            pending = pending_or_404(slug, question_id)
-        except HTTPException:
-            return message(
-                request,
-                "This question is no longer open: it was answered, or the run moved on.",
-                "/inbox",
-                409,
+    @app.get("/api/health")
+    def health_report() -> dict[str, Any]:
+        checks = run_health()
+        return {
+            "checks": [serialize.check(c) for c in checks],
+            "failing": len(health_checks.blocking(checks)),
+        }
+
+    # --- deciding --------------------------------------------------------------------------
+
+    @app.post("/api/projects/{slug}/questions/{question_id}")
+    async def decide(request: Request, slug: str, question_id: str) -> JSONResponse:
+        body = await checked_body(request)
+        view_or_404(slug)
+        found = next((p for p in pending_for(runs_dir, slug) if p.id == question_id), None)
+        if found is None:
+            return fail(
+                409, "This question is no longer open: it was answered, or the run moved on."
             )
+        fields = body.get("fields", {})
+        items = body.get("items", [])
+        if not isinstance(fields, dict) or not isinstance(items, list):
+            return fail(400, "fields must be an object and items a list")
         try:
-            payload = payload_from_form(pending, form, [str(v) for v in form.getlist("items")])
+            payload = payload_from_form(found, fields, [str(i) for i in items])
         except FormError as error:
-            return message(request, str(error), f"/p/{slug}/q/{question_id}", 400)
+            return fail(400, str(error))
         try:
             answer(runs_dir, slug, question_id, payload)
         except AnswerRejected as error:
-            return message(request, str(error), "/inbox", 409)
-        return RedirectResponse("/inbox", status_code=303)
+            return fail(409, str(error))
+        return JSONResponse({"ok": True})
 
-    # --- controls --------------------------------------------------------------------------
-
-    @app.post("/p/{slug}/halt")
-    async def halt(request: Request, slug: str) -> Response:
-        await checked_form(request)
-        view = project_or_404(slug)
+    @app.post("/api/projects/{slug}/halt")
+    async def halt(request: Request, slug: str) -> JSONResponse:
+        await checked_body(request)
+        view = view_or_404(slug)
         if view.state.status in (Status.DONE, Status.HALTED):
-            return message(request, f"{slug} is already {view.state.status.value}.", f"/p/{slug}")
+            return fail(409, f"{slug} is already {view.state.status.value}.")
         request_halt(runs_dir, slug)
-        return RedirectResponse(f"/p/{slug}", status_code=303)
+        return JSONResponse({"ok": True})
 
-    @app.post("/p/{slug}/resume")
-    async def resume(request: Request, slug: str) -> Response:
-        await checked_form(request)
-        view = project_or_404(slug)
-        state = view.state
+    @app.post("/api/projects/{slug}/resume")
+    async def resume(request: Request, slug: str) -> JSONResponse:
+        await checked_body(request)
+        state = view_or_404(slug).state
         if state.status not in (Status.RUNNING, Status.AWAITING_HUMAN):
-            return message(
-                request, f"{slug} is {state.status.value}; nothing to resume.", f"/p/{slug}"
-            )
+            return fail(409, f"{slug} is {state.status.value}; nothing to resume.")
         if run_is_alive(runs_dir, slug):
-            return message(request, f"{slug} is already running.", f"/p/{slug}")
+            return fail(409, f"{slug} is already running.")
         command = resume_command(state, config_path, runs_dir)
         if command is None:
-            return message(
-                request,
-                "This project did not record how it was started, so resume it from the terminal.",
-                f"/p/{slug}",
+            return fail(
                 409,
+                "This project did not record how it was started, so resume it from the terminal.",
             )
         launcher(command, config_path.resolve().parent, runs_dir / slug / "run.log")
-        return RedirectResponse(f"/p/{slug}", status_code=303)
+        return JSONResponse({"ok": True})
 
     # --- starting a project ----------------------------------------------------------------
 
-    def problems_with(form: Any) -> tuple[dict[str, str], list[str]]:
+    def problems_with(body: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
         fields = {
-            "name": str(form.get("name", "")).strip(),
-            "idea": str(form.get("idea", "")).strip(),
-            "track": str(form.get("track", "engineering")),
-            "agent": str(form.get("agent", "full")),
-            "visibility": str(form.get("visibility", "private")),
-            "public_ok": "on" if form.get("public_ok") == "on" else "",
+            "name": str(body.get("name", "")).strip(),
+            "idea": str(body.get("idea", "")).strip(),
+            "track": str(body.get("track", "engineering")),
+            "agent": str(body.get("agent", "full")),
+            "visibility": str(body.get("visibility", "private")),
+            "public_ok": "on" if body.get("public_ok") in (True, "on") else "",
         }
         problems: list[str] = []
         if not _NAME.match(fields["name"]):
@@ -354,33 +336,18 @@ def create_app(
             ]
         return fields, problems
 
-    @app.get("/new", response_class=HTMLResponse)
-    def new_form(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(
-            request, "new.html", {"fields": {}, "problems": [], "tracks": list(Track)}
-        )
-
-    @app.post("/new/preview", response_class=HTMLResponse)
-    async def new_preview(request: Request) -> HTMLResponse:
-        form = await checked_form(request)
-        fields, problems = problems_with(form)
+    @app.post("/api/new/preview")
+    async def new_preview(request: Request) -> JSONResponse:
+        fields, problems = problems_with(await checked_body(request))
         if problems:
-            return templates.TemplateResponse(
-                request,
-                "new.html",
-                {"fields": fields, "problems": problems, "tracks": list(Track)},
-                status_code=400,
-            )
-        return templates.TemplateResponse(
-            request, "confirm_new.html", {"f": fields, "clone": clones / fields["name"]}
-        )
+            return JSONResponse({"ok": False, "problems": problems, "fields": fields}, 400)
+        return JSONResponse({"ok": True, "fields": fields, "clone": str(clones / fields["name"])})
 
-    @app.post("/new/start")
-    async def new_start(request: Request) -> Response:
-        form = await checked_form(request)
-        fields, problems = problems_with(form)
+    @app.post("/api/new/start")
+    async def new_start(request: Request) -> JSONResponse:
+        fields, problems = problems_with(await checked_body(request))
         if problems:
-            return message(request, " ".join(problems), "/new", 400)
+            return JSONResponse({"ok": False, "problems": problems, "fields": fields}, 400)
         name, agent = fields["name"], fields["agent"]
         repo: Path | None = None
         if agent == "full":
@@ -389,7 +356,7 @@ def create_app(
                     name, clones, public=fields["visibility"] == "public", confirm=lambda _q: True
                 )
             except NewProjectError as error:
-                return message(request, str(error), "/new", 409)
+                return fail(409, str(error))
             repo = created.path
         command = start_command(
             idea=fields["idea"],
@@ -401,13 +368,23 @@ def create_app(
             runs_dir=runs_dir,
         )
         launcher(command, config_path.resolve().parent, runs_dir / name / "run.log")
-        return RedirectResponse(f"/p/{name}", status_code=303)
+        return JSONResponse({"ok": True, "slug": name})
 
-    @app.get("/health", response_class=HTMLResponse)
-    def health_page(request: Request) -> HTMLResponse:
-        checks = run_health()
-        return templates.TemplateResponse(
-            request, "health.html", {"checks": checks, "failing": health_checks.blocking(checks)}
-        )
+    # --- the React app ---------------------------------------------------------------------
+
+    index = frontend_dir / "index.html"
+    if (frontend_dir / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=frontend_dir / "assets"), name="assets")
+
+    @app.get("/{path:path}", response_model=None)
+    def spa(path: str) -> FileResponse | HTMLResponse:
+        if path.startswith("api/"):
+            raise HTTPException(404, "no such endpoint")
+        candidate = (frontend_dir / path).resolve()
+        if path and candidate.is_file() and frontend_dir.resolve() in candidate.parents:
+            return FileResponse(candidate)  # favicon and the like, never outside the app folder
+        if index.exists():
+            return FileResponse(index)
+        return HTMLResponse(_NOT_BUILT, status_code=503)
 
     return app
