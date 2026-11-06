@@ -548,6 +548,40 @@ def test_a_failed_explanation_is_reported_not_raised(
     }
 
 
+# --- what each agent is doing ----------------------------------------------------------------
+
+
+def test_the_activity_of_each_agent_is_served(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    people = client.get("/api/projects/demo/activity").json()["agents"]
+
+    assert [p["stage"] for p in people] == [
+        "product_owner",
+        "architect",
+        "developer",
+        "qa",
+        "career_coach",
+    ]
+    by = {p["stage"]: p for p in people}
+    assert by["product_owner"]["status"] == "done"
+    assert by["qa"]["status"] == "upcoming" and by["qa"]["waiting_on"] == "Developer"
+    assert by["developer"]["status"] == "stopped"  # no live run was started in this test
+
+
+def test_a_live_run_shows_the_agent_as_working(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        people = client.get("/api/projects/demo/activity").json()["agents"]
+
+    assert {p["stage"]: p for p in people}["developer"]["status"] == "working"
+
+
+def test_the_activity_of_an_unknown_project_is_a_404(client: TestClient) -> None:
+    assert client.get("/api/projects/ghost/activity").status_code == 404
+
+
 # --- action items ----------------------------------------------------------------------------
 
 
