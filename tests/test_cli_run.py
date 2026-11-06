@@ -100,8 +100,8 @@ def test_a_halted_project_exits_nonzero_and_says_so(tmp_path: Path) -> None:
     result = invoke(tmp_path, "run", "Track events", "--slug", "demo", input="reject\nNo\ny\n")
 
     assert result.exit_code == 2
-    assert "halted" in result.output.lower()
-    assert load_state(tmp_path, "demo").status == Status.HALTED
+    assert "paused" in result.output.lower()
+    assert load_state(tmp_path, "demo").status == Status.HALTED  # stored as halted, shown as paused
 
 
 def test_a_budget_cap_stops_the_run_and_abandon_halts_it(tmp_path: Path) -> None:
@@ -137,6 +137,30 @@ def test_resume_continues_a_run_that_stopped_at_a_gate(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert load_state(tmp_path, "demo").status == Status.DONE
+
+
+def test_a_paused_project_can_be_resumed_and_finished(tmp_path: Path) -> None:
+    invoke(tmp_path, "run", "Track events", "--slug", "demo", input="reject\nNo\ny\n")
+    assert load_state(tmp_path, "demo").status == Status.HALTED
+
+    result = invoke(tmp_path, "resume", "demo", input="approve\n\n" * 5)
+
+    assert result.exit_code == 0, result.output
+    assert load_state(tmp_path, "demo").status == Status.DONE
+
+
+def test_resume_clears_an_old_pause_request_so_the_run_does_not_stop_at_once(
+    tmp_path: Path,
+) -> None:
+    from orchestrator.halt import halt_requested, request_halt
+
+    invoke(tmp_path, "run", "Track events", "--slug", "demo", input="approve\n\n")
+    request_halt(tmp_path, "demo")
+
+    result = invoke(tmp_path, "resume", "demo", input="approve\n\n" * 5)
+
+    assert result.exit_code == 0, result.output
+    assert not halt_requested(tmp_path, "demo")
 
 
 def test_resume_with_ui_answers_through_files_and_keeps_a_heartbeat(

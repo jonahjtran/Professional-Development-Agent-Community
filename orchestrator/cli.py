@@ -27,7 +27,7 @@ from orchestrator.default_specs import (
 )
 from orchestrator.dev_runner import DevRunner
 from orchestrator.echo_agent import EchoAgent
-from orchestrator.halt import request_halt
+from orchestrator.halt import clear_halt, request_halt
 from orchestrator.inbox import (
     FileCapBackend,
     FileGateBackend,
@@ -44,7 +44,7 @@ from orchestrator.publish import Publisher, PublishError, load_token, strip_cred
 from orchestrator.qa_prepare import GitQaPreparer
 from orchestrator.runner import SdkRunner
 from orchestrator.stages import StageSpec, career_stage
-from orchestrator.state import ProjectState, Stage, Status, load_state, state_path
+from orchestrator.state import ProjectState, Stage, Status, load_state, save_state, state_path
 from orchestrator.tool_hooks import ToolPermissionBackend
 from schemas import Track
 
@@ -300,7 +300,10 @@ def _finish(state: ProjectState, runs_dir: Path) -> None:
         typer.echo(f"Project {state.project_slug} is done. Spent ${state.total_cost_usd:.2f}.")
         _show_career_results(state, runs_dir)
         return
-    typer.echo(f"Project {state.project_slug} halted. Spent ${state.total_cost_usd:.2f}.")
+    typer.echo(
+        f"Project {state.project_slug} paused. Spent ${state.total_cost_usd:.2f}. "
+        f"Continue any time with: studio resume {state.project_slug}"
+    )
     raise typer.Exit(_HALTED_EXIT_CODE)
 
 
@@ -344,10 +347,14 @@ def resume(
         state = load_state(runs_dir, project)
     except FileNotFoundError:
         raise _fail(f"No project named {project} in {runs_dir}") from None
-    if state.status in (Status.DONE, Status.HALTED):
-        typer.echo(f"Project {project} is {state.status.value}; nothing to resume.")
+    if state.status == Status.DONE:
+        typer.echo(f"Project {project} is done; nothing to resume.")
         return
     project_repo = _repo_for_resume(state, agent, repo)
+    clear_halt(runs_dir, project)  # an old pause request must not stop the run at once
+    if state.status == Status.HALTED:  # paused: pick it up where it stopped
+        state = state.evolve(status=Status.RUNNING, intervention=None)
+        save_state(runs_dir, state)
     ctx = _context(config, runs_dir, agent, project_repo, state.repo_url, project=project, ui=ui)
     with _marked(runs_dir, project, ui):
         finished = run_pipeline(state, ctx)
@@ -410,21 +417,36 @@ def ui(
         stop.set()
 
 
-@app.command()
-def halt(
-    project: Annotated[str, typer.Argument(help="Project name.")],
-    runs_dir: RunsDirOption = Path("runs"),
-) -> None:
-    """Stop a running project: it halts before its next step, and a running Developer stops."""
+def _pause(project: str, runs_dir: Path) -> None:
     try:
         state = load_state(runs_dir, project)
     except FileNotFoundError:
         raise _fail(f"No project named {project} in {runs_dir}") from None
     if state.status in (Status.DONE, Status.HALTED):
-        typer.echo(f"Project {project} is {state.status.value}; nothing to stop.")
+        word = "paused" if state.status == Status.HALTED else "done"
+        typer.echo(f"Project {project} is {word}; nothing to stop.")
         return
     request_halt(runs_dir, project)
-    typer.echo(f"Halt requested. Project {project} will stop before its next step.")
+    typer.echo(f"Pause requested. Project {project} will stop before its next step.")
+
+
+@app.command()
+def pause(
+    project: Annotated[str, typer.Argument(help="Project name.")],
+    runs_dir: RunsDirOption = Path("runs"),
+) -> None:
+    """Stop a project from spending more: it pauses before its next step and a running Developer
+    stops. Nothing is lost; `studio resume` continues it."""
+    _pause(project, runs_dir)
+
+
+@app.command(hidden=True)
+def halt(
+    project: Annotated[str, typer.Argument(help="Project name.")],
+    runs_dir: RunsDirOption = Path("runs"),
+) -> None:
+    """The old name for `studio pause`."""
+    _pause(project, runs_dir)
 
 
 @app.command()

@@ -124,4 +124,4 @@ def test_a_small_budget_cap_halts_the_run_before_the_next_agent_call(tmp_path: P
     state = load_state(tmp_path, "demo")
     assert state.status == Status.HALTED
     assert state.total_cost_usd < 0.35  # stopped before the Developer, not after every stage
-    assert "halted" in out.lower()
+    assert "paused" in out.lower()

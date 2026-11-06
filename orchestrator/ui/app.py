@@ -266,12 +266,14 @@ def create_app(
             return fail(409, str(error))
         return JSONResponse({"ok": True})
 
-    @app.post("/api/projects/{slug}/halt")
-    async def halt(request: Request, slug: str) -> JSONResponse:
+    @app.post("/api/projects/{slug}/pause")
+    async def pause(request: Request, slug: str) -> JSONResponse:
         await checked_body(request)
         view = view_or_404(slug)
-        if view.state.status in (Status.DONE, Status.HALTED):
-            return fail(409, f"{slug} is already {view.state.status.value}.")
+        if view.state.status == Status.DONE:
+            return fail(409, f"{slug} is already done.")
+        if view.state.status == Status.HALTED:
+            return fail(409, f"{slug} is already paused.")
         request_halt(runs_dir, slug)
         return JSONResponse({"ok": True})
 
@@ -279,8 +281,8 @@ def create_app(
     async def resume(request: Request, slug: str) -> JSONResponse:
         await checked_body(request)
         state = view_or_404(slug).state
-        if state.status not in (Status.RUNNING, Status.AWAITING_HUMAN):
-            return fail(409, f"{slug} is {state.status.value}; nothing to resume.")
+        if state.status == Status.DONE:
+            return fail(409, f"{slug} is done; nothing to resume.")
         if run_is_alive(runs_dir, slug):
             return fail(409, f"{slug} is already running.")
         command = resume_command(state, config_path, runs_dir)

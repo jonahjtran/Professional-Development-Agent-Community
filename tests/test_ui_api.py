@@ -465,20 +465,38 @@ def test_the_token_endpoint_only_answers_this_machine(client: TestClient) -> Non
 # --- controls --------------------------------------------------------------------------------
 
 
-def test_halt_drops_the_kill_switch_for_a_running_project(client: TestClient, runs: Path) -> None:
+def test_pause_stops_a_running_project_from_spending_more(client: TestClient, runs: Path) -> None:
     make_project(runs, stage=Stage.DEVELOPER)
 
-    assert post(client, "/api/projects/demo/halt").status_code == 200
+    assert post(client, "/api/projects/demo/pause").status_code == 200
     assert halt_requested(runs, "demo")
 
 
-def test_halting_a_finished_project_is_refused(client: TestClient, runs: Path) -> None:
+def test_pausing_a_finished_project_is_refused(client: TestClient, runs: Path) -> None:
     make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE)
 
-    response = post(client, "/api/projects/demo/halt")
+    response = post(client, "/api/projects/demo/pause")
 
     assert response.status_code == 409 and "already done" in response.json()["error"]
     assert not halt_requested(runs, "demo")
+
+
+def test_pausing_a_paused_project_is_refused(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER, status=Status.HALTED)
+
+    response = post(client, "/api/projects/demo/pause")
+
+    assert response.status_code == 409 and "already paused" in response.json()["error"]
+
+
+def test_a_paused_project_can_be_resumed(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER, status=Status.HALTED, agent="full")
+
+    assert post(client, "/api/projects/demo/resume").status_code == 200
+
+    assert len(launched.calls) == 1
 
 
 def test_resume_starts_a_detached_run_with_the_projects_own_settings(
