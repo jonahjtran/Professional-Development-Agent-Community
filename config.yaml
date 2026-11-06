@@ -67,3 +67,8 @@ sandbox:
     - registry.npmjs.org
     - pypi.org
     - files.pythonhosted.org
+
+assistant:
+  # The chat assistant (read-only on the code; everything consequential is a proposal you confirm).
+  max_chat_usd: 1.0 # one chat ends here; its cost is shown apart from the project's spend
+  max_turns: 15 # tool steps the assistant may take to answer one message

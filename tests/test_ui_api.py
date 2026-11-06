@@ -548,6 +548,117 @@ def test_a_failed_explanation_is_reported_not_raised(
     }
 
 
+# --- the chat ---------------------------------------------------------------------------------
+
+
+class FakeChat:
+    def __init__(self) -> None:
+        self.turns: list[dict[str, Any]] = []
+
+    def repos(self) -> list[dict[str, str]]:
+        return [{"id": "studio", "label": "Agent Studio (this app)"}]
+
+    async def turn(self, message: str, **kw: Any) -> Any:
+        self.turns.append({"message": message, **kw})
+        yield {"type": "session", "id": "s1"}
+        yield {"type": "text", "delta": "Hi"}
+        yield {"type": "done", "html": "<p>Hi</p>", "cost_usd": 0.01, "proposals": []}
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.fixture
+def chat() -> FakeChat:
+    return FakeChat()
+
+
+@pytest.fixture
+def chatting_client(runs: Path, tmp_path: Path, chat: FakeChat) -> TestClient:
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        projects_dir=tmp_path / "clones",
+        chat=chat,
+        health=lambda: run_all(tmp_path),
+    )
+    return TestClient(app)
+
+
+def events_of(response: Any) -> list[dict[str, Any]]:
+    return [
+        json.loads(line[len("data: ") :])
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+def test_the_repositories_to_ask_about_are_listed(chatting_client: TestClient) -> None:
+    body = chatting_client.get("/api/chat/repos").json()
+
+    assert body["repos"] == [{"id": "studio", "label": "Agent Studio (this app)"}]
+
+
+def test_a_chat_turn_streams_events_as_they_happen(
+    chatting_client: TestClient, chat: FakeChat
+) -> None:
+    response = post(
+        chatting_client,
+        "/api/chat",
+        {"message": "why did QA fail?", "repo": "studio", "tier": "fast", "session_id": "s0"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert [e["type"] for e in events_of(response)] == ["session", "text", "done"]
+    assert chat.turns[0]["message"] == "why did QA fail?" and chat.turns[0]["tier"] == "fast"
+    assert chat.turns[0]["session_id"] == "s0" and chat.turns[0]["repo"] == "studio"
+
+
+def test_the_context_of_a_question_is_passed_on(
+    chatting_client: TestClient, chat: FakeChat
+) -> None:
+    post(
+        chatting_client,
+        "/api/chat",
+        {"message": "?", "repo": "studio", "context": {"project": "demo", "question_id": "q1"}},
+    )
+
+    assert chat.turns[0]["context"] == {"project": "demo", "question_id": "q1"}
+    assert chat.turns[0]["tier"] == "strong"  # the default
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"message": "", "repo": "studio"},
+        {"message": "x" * 4001, "repo": "studio"},
+        {"message": "hi"},
+        {"message": "hi", "repo": "studio", "tier": "huge"},
+        {"message": "hi", "repo": "studio", "context": "nope"},
+    ],
+)
+def test_a_malformed_chat_request_is_refused(
+    chatting_client: TestClient, body: dict[str, Any]
+) -> None:
+    assert post(chatting_client, "/api/chat", body).status_code == 400
+
+
+def test_the_chat_needs_the_session_token_and_a_local_origin(chatting_client: TestClient) -> None:
+    body = {"message": "hi", "repo": "studio"}
+
+    assert chatting_client.post("/api/chat", json=body).status_code == 403
+    assert (
+        chatting_client.post(
+            "/api/chat",
+            json=body,
+            headers={"x-csrf-token": csrf(chatting_client), "origin": "https://evil.example"},
+        ).status_code
+        == 403
+    )
+
+
 # --- proposals from the chat ------------------------------------------------------------------
 
 
