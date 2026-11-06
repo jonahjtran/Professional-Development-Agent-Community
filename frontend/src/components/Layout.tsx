@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { useInbox, useTodos } from "../hooks";
+import { useAttention } from "../hooks";
 
 export function Layout() {
-  const inbox = useInbox();
-  const { data: todos } = useTodos();
-  const waiting = inbox.length + (todos?.todos.length ?? 0);
+  const { questions, todos } = useAttention();
+  const waiting = questions.length + todos.length;
   const [askable, setAskable] = useState(
     typeof Notification !== "undefined" && Notification.permission === "default",
   );
@@ -17,7 +16,7 @@ export function Layout() {
           <NavLink className="brand" to="/">Agent Studio</NavLink>
           <NavLink className={link} to="/" end>Projects</NavLink>
           <NavLink className={link} to="/inbox">
-            Inbox{waiting > 0 && <span id="badge"> ({waiting})</span>}
+            Inbox{waiting > 0 && <span id="badge" className={todos.length > 0 ? "alert" : ""}> ({waiting})</span>}
           </NavLink>
           <NavLink className={link} to="/new">New project</NavLink>
           <NavLink className={link} to="/rules">Rules</NavLink>

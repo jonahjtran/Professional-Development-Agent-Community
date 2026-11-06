@@ -406,7 +406,10 @@ def ui(
     stop = threading.Event()
     if mac_notify:
         threading.Thread(
-            target=notify.watch, args=(runs_dir, notify.mac_notify, stop), daemon=True
+            target=notify.watch,
+            args=(runs_dir, notify.mac_notify, stop),
+            kwargs={"alert": notify.mac_alert},
+            daemon=True,
         ).start()
     try:
         uvicorn.run(

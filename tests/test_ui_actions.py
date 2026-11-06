@@ -13,7 +13,7 @@ from orchestrator.state import (
     ProjectState,
 )
 from orchestrator.ui.app import create_app, resume_command
-from orchestrator.ui.notify import _applescript_quote, watch
+from orchestrator.ui.notify import _applescript_quote, mac_script, watch
 from tests.factories import make_config
 from tests.test_ui import make_project
 
@@ -135,6 +135,41 @@ def test_the_watcher_announces_only_new_questions(runs: Path) -> None:
     thread.join(timeout=2)
 
     assert heard == [("Agent Studio needs you", "demo: Merge your pull requests")]
+
+
+def test_the_watcher_alerts_loudly_once_for_each_new_action_item(runs: Path) -> None:
+    from orchestrator.todos import add_todo
+
+    make_project(runs)
+    add_todo(runs, "demo", key="old", title="Already open", source="developer")
+    quiet: list[tuple[str, str]] = []
+    loud: list[tuple[str, str]] = []
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=watch,
+        args=(runs, lambda t, b: quiet.append((t, b)), stop),
+        kwargs={"interval": 0.02, "alert": lambda t, b: loud.append((t, b))},
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(0.2)
+    assert loud == []  # the item open at the start is not announced
+
+    add_todo(runs, "demo", key="new", title="Add the Apollo key", source="developer")
+    deadline = time.time() + 5
+    while not loud and time.time() < deadline:
+        time.sleep(0.02)
+    time.sleep(0.2)
+    stop.set()
+    thread.join(timeout=2)
+
+    assert loud == [("You need to do something", "demo: Add the Apollo key")]
+    assert quiet == []  # an action item is not announced as an ordinary question
+
+
+def test_an_alert_is_raised_with_a_sound_and_a_quiet_notification_is_not() -> None:
+    assert 'sound name "Glass"' in mac_script("t", "b", sound="Glass")
+    assert "sound name" not in mac_script("t", "b")
 
 
 def test_text_put_into_an_applescript_is_quoted() -> None:
