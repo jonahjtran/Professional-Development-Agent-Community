@@ -26,7 +26,7 @@ limits:
   max_turns: # per agent run
     product_owner: 20
     architect: 20
-    developer: 40
+    developer: 80
     qa: 20
     career_coach: 20
 
