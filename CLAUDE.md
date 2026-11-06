@@ -132,6 +132,16 @@ with the same models the terminal uses, then the question moves to `done/` with 
 keeps `run.json` fresh with a heartbeat so the UI can tell a live run from a dead one. The terminal
 still works without `--ui`.
 
+**Assistant tools (MCP).** `orchestrator/ui/studio_mcp.py` is an in-process MCP server with three
+tiers: *read* tools (projects, status, activity, steps, open questions, documents, rules,
+explanations); *direct* tools that are reversible and cheap (pause a project, mark an action item
+done); and *propose* tools for everything consequential (answer a gate, a budget limit or a command
+request, resume, change the autonomy level, leave a note for the Developer). A propose tool only
+writes a proposal (`runs/<project>/proposals.json`); the server builds the card from the proposal's
+own arguments and Confirm (which needs the session token) carries it out through the same code as
+the normal form. Text returned from agents or files is labelled untrusted. A note for the Developer
+(`runs/<project>/notes.json`) is added to its next task prompt once.
+
 Rules that must keep holding: the server only binds to 127.0.0.1 and rejects any other Host
 header; every change needs the session token in `X-CSRF-Token`, a JSON body and a matching Origin;
 agent-written text is escaped by the server (Markdown without raw HTML) before it is sent, and the

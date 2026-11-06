@@ -548,6 +548,139 @@ def test_a_failed_explanation_is_reported_not_raised(
     }
 
 
+# --- proposals from the chat ------------------------------------------------------------------
+
+
+def propose(runs: Path, action: str, args: dict[str, Any], summary: str = "A proposal") -> str:
+    from orchestrator.proposals import create_proposal
+
+    return create_proposal(runs, "demo", action, args, summary).id
+
+
+def test_pending_proposals_are_listed(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    pid = propose(runs, "set_autonomy", {"level": "autonomous"}, "Set demo to autonomous")
+
+    body = client.get("/api/proposals").json()
+
+    assert [(p["id"], p["summary"], p["status"]) for p in body["proposals"]] == [
+        (pid, "Set demo to autonomous", "pending")
+    ]
+
+
+def test_confirming_an_answer_carries_it_out_like_the_normal_form(
+    client: TestClient, runs: Path
+) -> None:
+    make_project(runs)
+    gate = write_pending(runs, PendingKind.GATE, GATE)
+    pid = propose(
+        runs,
+        "answer_question",
+        {
+            "question_id": gate,
+            "fields": {"outcome": "approve", "comments": ""},
+            "items": ["readme"],
+        },
+    )
+
+    response = post(client, f"/api/projects/demo/proposals/{pid}/confirm")
+
+    assert response.status_code == 200
+    answers = list((runs / "demo" / "answers").glob("*.json"))
+    assert len(answers) == 1
+    assert json.loads(answers[0].read_text())["outcome"] == "approve"
+    assert client.get("/api/proposals?status=confirmed").json()["proposals"][0]["id"] == pid
+
+
+def test_confirming_a_command_decision_can_save_the_rule(client: TestClient, runs: Path) -> None:
+    from orchestrator.rules import project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "npx next lint")
+    pid = propose(
+        runs,
+        "answer_question",
+        {
+            "question_id": qid,
+            "fields": {"allow": "yes", "message": "", "remember": "project", "rule_modes": "exact"},
+            "items": [],
+        },
+    )
+
+    post(client, f"/api/projects/demo/proposals/{pid}/confirm")
+
+    assert project_store(runs, "demo").load()[0].argv == ["npx", "next", "lint"]
+
+
+def test_a_proposal_for_a_question_that_has_since_closed_fails_without_harm(
+    client: TestClient, runs: Path
+) -> None:
+    make_project(runs)
+    pid = propose(
+        runs,
+        "answer_question",
+        {"question_id": "gone", "fields": {"outcome": "approve", "comments": ""}, "items": []},
+    )
+
+    response = post(client, f"/api/projects/demo/proposals/{pid}/confirm")
+
+    assert response.status_code == 409 and "no longer open" in response.json()["error"]
+    assert client.get("/api/proposals?status=failed").json()["proposals"][0]["id"] == pid
+
+
+def test_confirming_resume_starts_a_run(client: TestClient, runs: Path, launched: Launched) -> None:
+    make_project(runs, stage=Stage.DEVELOPER, status=Status.HALTED, agent="full")
+    pid = propose(runs, "resume_project", {})
+
+    assert post(client, f"/api/projects/demo/proposals/{pid}/confirm").status_code == 200
+
+    assert len(launched.calls) == 1
+
+
+def test_confirming_autonomy_and_a_note_applies_them(client: TestClient, runs: Path) -> None:
+    from orchestrator.notes import pending_notes
+    from orchestrator.project_settings import get_autonomy
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    a = propose(runs, "set_autonomy", {"level": "autonomous"})
+    n = propose(runs, "leave_note", {"text": "Use server actions"})
+
+    post(client, f"/api/projects/demo/proposals/{a}/confirm")
+    post(client, f"/api/projects/demo/proposals/{n}/confirm")
+
+    assert get_autonomy(runs, "demo") == "autonomous"
+    assert [x.text for x in pending_notes(runs, "demo")] == ["Use server actions"]
+
+
+def test_a_proposal_can_be_dismissed_and_does_nothing(client: TestClient, runs: Path) -> None:
+    from orchestrator.project_settings import get_autonomy
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    pid = propose(runs, "set_autonomy", {"level": "autonomous"})
+
+    assert post(client, f"/api/projects/demo/proposals/{pid}/dismiss").status_code == 200
+
+    assert get_autonomy(runs, "demo") == "standard"
+    assert client.get("/api/proposals?status=dismissed").json()["proposals"][0]["id"] == pid
+
+
+def test_a_proposal_can_only_be_decided_once(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    pid = propose(runs, "set_autonomy", {"level": "autonomous"})
+
+    assert post(client, f"/api/projects/demo/proposals/{pid}/confirm").status_code == 200
+    assert post(client, f"/api/projects/demo/proposals/{pid}/confirm").status_code == 409
+
+
+def test_deciding_a_proposal_needs_the_session_token(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    pid = propose(runs, "set_autonomy", {"level": "autonomous"})
+
+    response = client.post(f"/api/projects/demo/proposals/{pid}/confirm", json={})
+
+    assert response.status_code == 403
+
+
 # --- what each agent is doing ----------------------------------------------------------------
 
 

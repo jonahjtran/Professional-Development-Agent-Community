@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from orchestrator.config import Config
 from orchestrator.envsafe import SECRET_ENV_NAME
 from orchestrator.halt import halt_requested
+from orchestrator.notes import consume_notes, pending_notes
 from orchestrator.permissions import PolicyContext
 from orchestrator.pipeline import AgentError, AgentRequest, AgentResult
 from orchestrator.project_settings import get_autonomy
@@ -102,10 +103,20 @@ class DevRunner:
             )
         except WorktreeError as error:
             raise AgentError(f"worktree problem: {error}") from error
+        notes = pending_notes(self._runs_dir, request.project)
         try:
-            return asyncio.run(
-                self._session(request, task, worktree, branches_before, interrupted=interrupted)
+            result = asyncio.run(
+                self._session(
+                    request,
+                    task,
+                    worktree,
+                    branches_before,
+                    interrupted=interrupted,
+                    notes=[n.text for n in notes],
+                )
             )
+            consume_notes(self._runs_dir, request.project, [n.id for n in notes])
+            return result
         finally:
             _clean_up(worktree)  # the branch, with its commits, stays in the repository
             for stray in local_branches(self._repo) - branches_before - {worktree.branch}:
@@ -158,13 +169,14 @@ class DevRunner:
         branches_before: set[str],
         *,
         interrupted: bool = False,
+        notes: list[str] | None = None,
     ) -> AgentResult:
         head_before = head_sha(worktree.path)
         base_before = branch_sha(self._repo, self._base)
         options = self._options(request, task, worktree)
 
         async with self._client_factory(options) as client:
-            await client.query(self._task_prompt(request, task, worktree, interrupted))
+            await client.query(self._task_prompt(request, task, worktree, interrupted, notes or []))
             turn = await _collect(client)
             report, problem = _parse_report(turn.result.result or "")
             if report is None:
@@ -223,7 +235,12 @@ class DevRunner:
             raise fail(f"the Developer left uncommitted changes, which would be lost: {shown}")
 
     def _task_prompt(
-        self, request: AgentRequest, task: Task, worktree: Worktree, interrupted: bool = False
+        self,
+        request: AgentRequest,
+        task: Task,
+        worktree: Worktree,
+        interrupted: bool = False,
+        notes: list[str] | None = None,
     ) -> str:
         parts = [
             f"Your task is {task.id}: {task.title}",
@@ -240,6 +257,11 @@ class DevRunner:
                 "uncommitted changes are already on this branch: run `git log` and `git status`, "
                 "check what is there against the acceptance criteria, and continue from it "
                 "instead of starting over."
+            )
+        if notes:
+            parts.append(
+                "Notes from the person who runs this project (their own instructions, follow "
+                "them unless they conflict with your rules):\n" + "\n".join(f"- {n}" for n in notes)
             )
         if request.previous_draft is not None:
             parts.append(f"Your previous report:\n{request.previous_draft}")
