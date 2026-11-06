@@ -83,6 +83,13 @@ class SandboxConfig(_Strict):
     allowed_domains: list[str] = Field(default_factory=list)
 
 
+class AssistantConfig(_Strict):
+    """The chat assistant: its dollar cap per chat and the turns one question may take."""
+
+    max_chat_usd: float = Field(default=1.0, gt=0)
+    max_turns: int = Field(default=15, ge=1)
+
+
 class Config(_Strict):
     models: Models
     budget: Budget
@@ -90,6 +97,7 @@ class Config(_Strict):
     pricing: Pricing
     qa: QaConfig
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    assistant: AssistantConfig = Field(default_factory=AssistantConfig)
 
 
 def load_config(path: Path) -> Config:

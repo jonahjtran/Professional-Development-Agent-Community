@@ -11,13 +11,13 @@ import re
 import secrets
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -59,6 +59,7 @@ from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
 from orchestrator.trace import EventType
 from orchestrator.ui import data, serialize
 from orchestrator.ui import health as health_checks
+from orchestrator.ui.chat import ChatService
 from orchestrator.ui.decisions import FormError, payload_from_form
 from orchestrator.ui.render import artifact_kind, markdown_html, pretty_json
 from schemas import Track
@@ -96,6 +97,22 @@ def resume_command(state: ProjectState, config_path: Path, runs_dir: Path) -> li
         "resume", state.project_slug, "--agent", state.agent, "--ui",
         "--config", str(config_path.resolve()), "--runs-dir", str(runs_dir.resolve()),
     ]  # fmt: skip
+
+
+class Chatting(Protocol):
+    def repos(self) -> list[dict[str, str]]: ...
+
+    def turn(
+        self,
+        message: str,
+        *,
+        session_id: str | None,
+        repo: str,
+        tier: str,
+        context: dict[str, Any] | None,
+    ) -> AsyncIterator[dict[str, Any]]: ...
+
+    async def close(self) -> None: ...
 
 
 class Explaining(Protocol):
@@ -144,6 +161,7 @@ def create_app(
     health: HealthRunner | None = None,
     frontend_dir: Path = FRONTEND,
     explainer: Explaining | None = None,
+    chat: Chatting | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
@@ -152,6 +170,14 @@ def create_app(
         lambda: health_checks.run_checks(repo_root=config_path.resolve().parent)
     )
     explain_with = explainer or Explainer(config, runs_dir)
+    chatting: Chatting = chat or ChatService(
+        runs_dir,
+        config,
+        explain_with,
+        studio_root=config_path.resolve().parent,
+        projects_dir=clones,
+    )
+    app.router.on_shutdown.append(chatting.close)
     quick_checks = health or (
         lambda: health_checks.run_checks(
             repo_root=config_path.resolve().parent, fetch=None, network=False
@@ -501,6 +527,37 @@ def create_app(
         if error is not None:
             return fail(status, error)
         return JSONResponse({"ok": True})
+
+    # --- the chat --------------------------------------------------------------------------
+
+    @app.get("/api/chat/repos")
+    def chat_repos() -> dict[str, Any]:
+        return {"repos": chatting.repos()}
+
+    @app.post("/api/chat")
+    async def chat_turn(request: Request) -> StreamingResponse:
+        body = await checked_body(request)
+        message = body.get("message")
+        repo = body.get("repo")
+        tier = body.get("tier", "strong")
+        context = body.get("context")
+        session_id = body.get("session_id")
+        if not isinstance(message, str) or not 1 <= len(message.strip()) <= 4000:
+            raise HTTPException(400, "write a message of 1 to 4000 characters")
+        if not isinstance(repo, str) or tier not in ("strong", "fast"):
+            raise HTTPException(400, "choose a repository, and a strong or fast model")
+        if context is not None and not isinstance(context, dict):
+            raise HTTPException(400, "context must be an object")
+        if session_id is not None and not isinstance(session_id, str):
+            raise HTTPException(400, "session_id must be a string")
+
+        async def events() -> AsyncIterator[str]:
+            async for event in chatting.turn(
+                message.strip(), session_id=session_id, repo=repo, tier=tier, context=context
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
 
     # --- proposals from the chat -----------------------------------------------------------
 

@@ -7,7 +7,6 @@ and turn limit) and afterwards checks the repository itself instead of trusting 
 
 import asyncio
 import json
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +16,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClie
 from pydantic import ValidationError
 
 from orchestrator.config import Config
-from orchestrator.envsafe import SECRET_ENV_NAME
+from orchestrator.envsafe import hidden_env
 from orchestrator.halt import halt_requested
 from orchestrator.notes import consume_notes, pending_notes
 from orchestrator.permissions import PolicyContext
@@ -157,7 +156,7 @@ class DevRunner:
                 "excludedCommands": ["git"],
                 "network": {"allowedDomains": list(self._config.sandbox.allowed_domains)},
             },
-            env=_hidden_env(),
+            env=hidden_env(),
             **hooks.sdk_options(),
         )
 
@@ -301,21 +300,6 @@ def _find_task(request: AgentRequest) -> Task:
         if task.id == request.task_id:
             return task
     raise AgentError(f"task {request.task_id} is not in tasks.json")
-
-
-def _hidden_env() -> dict[str, str]:
-    """Environment overrides for the agent's subprocess: scrub credentials it must not see.
-
-    The SDK flag strips Anthropic and cloud credentials from the agent's shell. Other secrets in
-    our own environment (a GitHub token, say) are blanked here. Anthropic and Claude variables are
-    left alone because blanking them would break the agent's own login.
-    """
-    hidden = {
-        name: ""
-        for name in os.environ
-        if SECRET_ENV_NAME.search(name) and not name.startswith(("ANTHROPIC_", "CLAUDE"))
-    }
-    return {**hidden, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"}
 
 
 async def _collect(client: Any) -> _Turn:

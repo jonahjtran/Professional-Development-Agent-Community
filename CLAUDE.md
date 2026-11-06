@@ -142,6 +142,17 @@ own arguments and Confirm (which needs the session token) carries it out through
 the normal form. Text returned from agents or files is labelled untrusted. A note for the Developer
 (`runs/<project>/notes.json`) is added to its next task prompt once.
 
+**Chat backend.** `POST /api/chat` (Server-Sent Events: `session`, `text`, `step`, `done`, `error`)
+talks to one assistant, "Studio", through `orchestrator/ui/chat.py`. It runs the Agent SDK in the
+chosen repository (this app or any project clone) with only `Read`, `Glob` and `Grep` (the same
+secret and path rules as the Developer, enforced by a PreToolUse guard) plus the studio MCP tools,
+with no shell, edits or web. Sessions are in memory; each chat is capped by
+`assistant.max_chat_usd` in `config.yaml` (and `max_turns`), `tier` picks the strong or fast model,
+and its cost goes to a ledger apart from projects (`assistant_cost.json`; `runs/_studio/` for this
+app). The reply streams as escaped text and is replaced by server-rendered Markdown when the turn
+ends; proposals made during the turn come back in the `done` event. Live check (a few cents):
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k chat`.
+
 Rules that must keep holding: the server only binds to 127.0.0.1 and rejects any other Host
 header; every change needs the session token in `X-CSRF-Token`, a JSON body and a matching Origin;
 agent-written text is escaped by the server (Markdown without raw HTML) before it is sent, and the
