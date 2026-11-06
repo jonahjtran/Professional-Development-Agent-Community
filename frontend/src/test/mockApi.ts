@@ -16,6 +16,11 @@ export function mockApi(routes: Record<string, Reply | { status: number; body: u
     const raw = key === "GET /api/session" ? { csrf: "tok" } : routes[key];
     if (raw === undefined) return new Response(JSON.stringify({ error: `no route ${key}` }), { status: 500 });
     const reply = typeof raw === "function" ? (raw as (b: unknown) => unknown)(body) : raw;
+    if (reply && typeof reply === "object" && "stream" in reply) {
+      const events = (reply as { stream: unknown[] }).stream;
+      const text = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+      return new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
     if (reply && typeof reply === "object" && "status" in reply && "body" in reply) {
       const r = reply as { status: number; body: unknown };
       return new Response(JSON.stringify(r.body), { status: r.status });

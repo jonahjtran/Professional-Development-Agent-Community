@@ -249,3 +249,17 @@ ul.plain li { padding: 4px 0; }
 .board .column h3 { margin: 0 0 8px; font-size: 15px; }
 .board .task { background: var(--surface); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; box-shadow: 0 0 0 1px var(--separator); }
 .board .task.waiting { opacity: .75; }
+
+/* The chat page. */
+.chat-bar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 16px; margin: 12px 0 18px; }
+.chat-log { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+.turn.you { align-self: flex-end; max-width: 80%; }
+.bubble-you { background: var(--blue); color: #fff; padding: 10px 14px; border-radius: 18px 18px 4px 18px; white-space: pre-wrap; }
+.turn.assistant .steps { font-size: 14px; margin-bottom: 6px; }
+.streaming { white-space: pre-wrap; }
+.proposal { margin-top: 12px; padding: 12px; border-radius: var(--radius-sm); background: var(--orange-bg); box-shadow: 0 0 0 1px var(--orange); }
+.proposal.confirmed { background: var(--green-bg); box-shadow: 0 0 0 1px var(--green); }
+.proposal.dismissed, .proposal.failed { background: var(--fill); box-shadow: 0 0 0 1px var(--separator); }
+.chat-input { display: flex; gap: 12px; align-items: end; position: sticky; bottom: 0; padding: 12px 0; background: var(--bg); }
+.chat-input .field { flex: 1; margin: 0; }
+.chat-input textarea { width: 100%; resize: vertical; font: inherit; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--separator); background: var(--surface); color: inherit; }

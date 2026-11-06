@@ -532,7 +532,7 @@ def create_app(
 
     @app.get("/api/chat/repos")
     def chat_repos() -> dict[str, Any]:
-        return {"repos": chatting.repos()}
+        return {"repos": chatting.repos(), "cap_usd": config.assistant.max_chat_usd}
 
     @app.post("/api/chat")
     async def chat_turn(request: Request) -> StreamingResponse:

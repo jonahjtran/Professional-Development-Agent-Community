@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, get, post } from "./api";
+import { ApiError, get, post, postStream } from "./api";
 import { mockApi } from "./test/mockApi";
 
 describe("api", () => {
@@ -14,6 +14,35 @@ describe("api", () => {
     expect(first?.headers).toMatchObject({ "content-type": "application/json", "x-csrf-token": "tok" });
     expect(second?.body).toEqual({ a: 2 });
     expect(api.calls.filter((c) => c.url === "/api/session")).toHaveLength(1);
+  });
+
+  it("reads streamed events, even when they arrive split across chunks", async () => {
+    const encoder = new TextEncoder();
+    const chunks = ['data: {"type":"te', 'xt","delta":"Hel"}\n\ndata: {"type":"text","delta":"lo"}\n', '\ndata: {"type":"done"}\n\n'];
+    mockApi({});
+    const stream = new ReadableStream({
+      start(controller) {
+        chunks.forEach((c) => controller.enqueue(encoder.encode(c)));
+        controller.close();
+      },
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string) =>
+      url === "/api/session"
+        ? new Response(JSON.stringify({ csrf: "tok" }))
+        : new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })) as typeof fetch;
+
+    const seen: unknown[] = [];
+    await postStream("/api/chat", {}, (e) => seen.push(e));
+    globalThis.fetch = original;
+
+    expect(seen).toEqual([{ type: "text", delta: "Hel" }, { type: "text", delta: "lo" }, { type: "done" }]);
+  });
+
+  it("raises the server's words when a stream is refused", async () => {
+    mockApi({ "POST /api/chat": { status: 400, body: { error: "write a message" } } });
+
+    await expect(postStream("/api/chat", {}, () => undefined)).rejects.toMatchObject({ status: 400, message: "write a message" });
   });
 
   it("turns an error reply into an ApiError carrying the server's words", async () => {

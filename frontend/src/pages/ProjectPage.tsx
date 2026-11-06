@@ -98,7 +98,10 @@ export function ProjectPage() {
       )}
       {summary.status === "halted" && (
         <Banner>
-          Paused. Nothing is using credits. <Button onClick={() => void act("resume")}>Resume</Button>
+          Paused. Nothing is using credits. <Button onClick={() => void act("resume")}>Resume</Button>{" "}
+          <Link to={`/chat?project=${slug}&prompt=${encodeURIComponent(`Why is ${slug} paused, and what should I do next?`)}`}>
+            Ask the assistant about this
+          </Link>
         </Banner>
       )}
       {active && !summary.alive && (

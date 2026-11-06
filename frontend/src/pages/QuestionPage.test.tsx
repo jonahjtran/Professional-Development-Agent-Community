@@ -306,6 +306,19 @@ describe("remembering an approval", () => {
   });
 });
 
+describe("asking the assistant", () => {
+  it("offers to ask about this question, carrying the question as context", async () => {
+    open(gate);
+
+    const link = await screen.findByRole("link", { name: /Ask the assistant/ });
+
+    const url = new URL(link.getAttribute("href") ?? "", "http://x");
+    expect(url.pathname).toBe("/chat");
+    expect(url.searchParams.get("project")).toBe("demo");
+    expect(url.searchParams.get("question")).toBe("abc");
+  });
+});
+
 describe("a question that is gone", () => {
   it("says it was answered, or that it is no longer open", async () => {
     open({ status: "answered", id: "abc", project: "demo" });

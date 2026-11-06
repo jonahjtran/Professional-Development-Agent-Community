@@ -153,6 +153,12 @@ app). The reply streams as escaped text and is replaced by server-rendered Markd
 ends; proposals made during the turn come back in the `done` event. Live check (a few cents):
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k chat`.
 
+**Chat page.** `/chat`: pick what to ask about (this app or a project), a Strong or Fast model, and
+see this chat's cost against its cap. Answers stream in as plain text with the steps taken, then are
+replaced by the server's rendered Markdown. A proposal appears as a card ("Waiting for you: nothing
+has happened yet") with Confirm and Dismiss. "Ask the assistant about this" on a question or a
+paused project opens the chat with that question as context.
+
 Rules that must keep holding: the server only binds to 127.0.0.1 and rejects any other Host
 header; every change needs the session token in `X-CSRF-Token`, a JSON body and a matching Origin;
 agent-written text is escaped by the server (Markdown without raw HTML) before it is sent, and the

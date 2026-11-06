@@ -598,6 +598,7 @@ def test_the_repositories_to_ask_about_are_listed(chatting_client: TestClient) -
     body = chatting_client.get("/api/chat/repos").json()
 
     assert body["repos"] == [{"id": "studio", "label": "Agent Studio (this app)"}]
+    assert body["cap_usd"] == 1.0  # the per-chat cap from config.yaml, so the page can show it
 
 
 def test_a_chat_turn_streams_events_as_they_happen(
