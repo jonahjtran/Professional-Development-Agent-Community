@@ -381,6 +381,15 @@ def ui(
         raise _fail(f"Config file not found: {config}") from None
     except ValidationError as error:
         raise _fail(f"Invalid config {config}:\n{error}") from None
+    from orchestrator.ui.app import FRONTEND
+
+    if not (FRONTEND / "index.html").exists():
+        typer.echo(
+            "The web app is not built yet. Run once:\n"
+            "  npm --prefix frontend ci && npm --prefix frontend run build",
+            err=True,
+        )
+        raise typer.Exit(1)
     url = f"http://127.0.0.1:{port}"
     typer.echo(f"Agent Studio UI at {url} (Ctrl-C to stop)")
     if open_browser:

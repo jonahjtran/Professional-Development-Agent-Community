@@ -1,9 +1,0 @@
-{% extends "base.html" %}
-{% block title %}{{ name }} · {{ view.summary.slug }}{% endblock %}
-{% block body %}
-<p><a href="/p/{{ view.summary.slug }}">← {{ view.summary.slug }}</a></p>
-<h1>{{ name }}</h1>
-<p class="muted">Revision {{ record.revision }} ·
-  {% if record.approved_at %}approved {{ record.approved_at.strftime('%Y-%m-%d %H:%M') }}{% else %}not approved yet{% endif %}</p>
-{% if kind == 'markdown' %}<div class="md">{{ body|safe }}</div>{% else %}<pre>{{ body }}</pre>{% endif %}
-{% endblock %}

@@ -238,145 +238,20 @@ def test_json_is_pretty_printed_and_other_text_is_left_alone() -> None:
     assert artifact_kind("prd.md") == "markdown" and artifact_kind("tasks.json") == "code"
 
 
-# --- the pages -------------------------------------------------------------------------------
-
-
-def test_the_front_page_lists_projects_with_their_state_and_spend(
-    client: TestClient, runs: Path
-) -> None:
-    make_project(runs, stage=Stage.ARCHITECT, cost_usd={Stage.ARCHITECT: 1.5})
-
-    page = client.get("/").text
-
-    assert 'href="/p/demo"' in page and "architect" in page and "$1.50 of $20" in page
-
-
-def test_the_front_page_has_a_message_when_there_are_no_projects(client: TestClient) -> None:
-    assert "No projects yet" in client.get("/").text
-
-
-def test_the_project_page_shows_the_timeline_spend_decisions_and_documents(
-    client: TestClient, runs: Path
-) -> None:
-    make_project(
-        runs,
-        artifacts={"prd.md": "# PRD"},
-        stage=Stage.DEVELOPER,
-        cost_usd={Stage.DEVELOPER: 1.0},
-        gate_history=[
-            GateRecord(
-                stage=Stage.ARCHITECT, outcome=GateOutcome.APPROVE, comments="looks good", ts=NOW
-            )
-        ],
-    )
-
-    page = client.get("/p/demo").text
-
-    for label in ("Product Owner", "Architect", "Developer", "QA", "Career coach"):
-        assert label in page
-    assert "$1.00 of $" in page and "looks good" in page and 'href="/p/demo/a/prd.md"' in page
-    assert "80% warning" in page
-
-
-def test_a_project_waiting_for_the_human_says_what_for(client: TestClient, runs: Path) -> None:
-    make_project(
-        runs,
-        status=Status.AWAITING_HUMAN,
-        stage=Stage.QA,
-        intervention=Intervention(kind=InterventionKind.GATE, detail="Review the qa output"),
-    )
-
-    assert "Review the qa output" in client.get("/p/demo").text
-
-
-def test_a_run_that_is_not_active_says_how_to_resume_it(client: TestClient, runs: Path) -> None:
-    make_project(runs, stage=Stage.DEVELOPER)  # running status, but no heartbeat
-
-    page = client.get("/p/demo").text
-
-    assert "not active" in page and "studio resume demo --agent full --ui" in page
-
-
-def test_an_artifact_is_shown_rendered_and_a_script_in_it_is_not_run(
-    client: TestClient, runs: Path
-) -> None:
-    make_project(runs, artifacts={"prd.md": "# PRD\n\n<script>alert(1)</script>"})
-
-    page = client.get("/p/demo/a/prd.md").text
-
-    assert "<h1>PRD</h1>" in page and "<script>alert" not in page and "approved" in page
-
-
-def test_a_json_artifact_is_pretty_printed_and_escaped(client: TestClient, runs: Path) -> None:
-    make_project(runs, artifacts={"x.json": '{"a": "<b>"}'})
-
-    page = client.get("/p/demo/a/x.json").text
-
-    assert "&lt;b&gt;" in page and "<b>" not in page
-
-
-def test_only_documents_the_project_recorded_can_be_opened(client: TestClient, runs: Path) -> None:
-    make_project(runs, artifacts={"prd.md": "# PRD"})
-
-    assert client.get("/p/demo/a/nope.md").status_code == 404
-    assert client.get("/p/demo/a/../state.json").status_code == 404
-    assert client.get("/p/demo/a/%2e%2e/state.json").status_code == 404
-
-
-def test_unknown_or_unsafe_project_names_are_not_found(client: TestClient, runs: Path) -> None:
-    make_project(runs)
-
-    assert client.get("/p/nobody").status_code == 404
-    assert client.get("/p/%2e%2e").status_code == 404
-    assert client.get("/p/Bad_Name").status_code == 404
-
-
-def test_the_trace_page_lists_events_and_filters_by_type(client: TestClient, runs: Path) -> None:
-    make_project(runs)
-    trace(
-        runs,
-        "demo",
-        event(
-            EventType.AGENT_END,
-            agent="architect",
-            model="opus",
-            prompt_version="v2",
-            tokens_in=100,
-            tokens_out=50,
-            cost_usd=0.1234,
-            latency_ms=2500,
-        ),
-        event(EventType.GATE, details={"outcome": "approve"}),
-    )
-
-    everything = client.get("/p/demo/trace").text
-    only_gates = client.get("/p/demo/trace?type=gate").text
-
-    assert "opus" in everything and "100 / 50" in everything and "$0.1234" in everything
-    assert "2.5s" in everything and "approve" in everything
-    assert "opus" not in only_gates and "approve" in only_gates
-    assert client.get("/p/demo/trace?type=nonsense").status_code == 404
-
-
-def test_requests_with_a_foreign_host_header_are_refused(client: TestClient, runs: Path) -> None:
-    make_project(runs)
-
-    assert client.get("/", headers={"host": "evil.example"}).status_code == 400
-    assert client.get("/", headers={"host": "127.0.0.1:8765"}).status_code == 200
-    assert client.get("/", headers={"host": "localhost:8765"}).status_code == 200
-
-
-def test_the_stylesheet_is_served_and_the_api_docs_are_off(client: TestClient) -> None:
-    assert client.get("/static/style.css").status_code == 200
-    assert client.get("/docs").status_code == 404 and client.get("/openapi.json").status_code == 404
-
-
 # --- the command -----------------------------------------------------------------------------
 
 
+def built_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<div id=root></div>")
+    monkeypatch.setattr("orchestrator.ui.app.FRONTEND", dist)
+
+
 def test_the_ui_command_serves_on_this_machine_only(
-    runs: Path, monkeypatch: pytest.MonkeyPatch
+    runs: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    built_app(tmp_path, monkeypatch)
     served: dict[str, Any] = {}
     monkeypatch.setattr("uvicorn.run", lambda app, **kw: served.update(kw))
     opened: list[str] = []
@@ -391,6 +266,18 @@ def test_the_ui_command_serves_on_this_machine_only(
     assert result.exit_code == 0, result.output
     assert served["host"] == "127.0.0.1" and served["port"] == 9123
     assert "http://127.0.0.1:9123" in result.output and opened == []
+
+
+def test_the_ui_command_says_how_to_build_the_app_when_it_is_missing(
+    runs: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("orchestrator.ui.app.FRONTEND", tmp_path / "nothing")
+    config = Path(__file__).parent.parent / "config.yaml"
+
+    result = CliRunner().invoke(cli_app, ["ui", "--config", str(config), "--runs-dir", str(runs)])
+
+    assert result.exit_code == 1
+    assert "npm --prefix frontend ci && npm --prefix frontend run build" in result.output
 
 
 def test_the_ui_command_stops_early_without_a_config(tmp_path: Path) -> None:

@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from orchestrator.artifacts import ArtifactStore, record_artifacts
-from orchestrator.inbox import PendingKind
 from orchestrator.state import ProjectState, Stage, save_state
 from orchestrator.ui import data
 from orchestrator.ui.app import create_app
@@ -13,7 +12,7 @@ from tests.factories import make_config
 from tests.test_career_rules import bullet, change, entry
 from tests.test_career_stage import good_plan
 from tests.test_ui import make_project
-from tests.test_ui_actions import GATE, write_pending
+from tests.test_ui_actions import GATE
 
 EVIDENCE = EvidenceSet(
     items=[
@@ -112,78 +111,3 @@ def test_a_damaged_plan_is_not_a_workbench_and_not_an_error(runs: Path) -> None:
     (runs / "demo" / state.artifacts["career_plan.json"].path).write_text("{broken")
 
     assert data.career_workbench(runs, state) is None
-
-
-# --- the page --------------------------------------------------------------------------------
-
-
-def test_the_career_gate_shows_each_claim_beside_its_evidence(
-    client: TestClient, runs: Path
-) -> None:
-    project_at_career(runs)
-    qid = write_pending(runs, PendingKind.GATE, CAREER_GATE)
-
-    page = client.get(f"/p/demo/q/{qid}").text
-
-    assert "Fit with your goals" in page and "strategy consulting" in page
-    assert "Passed 9 checks for M&amp;A teams" in page
-    assert "9 of 9 checks passed" in page and "Replaces: Old project" in page
-    assert "LaTeX for Overleaf" in page and 'class="copy"' in page
-
-
-def test_the_website_entry_is_previewed_and_its_text_is_escaped(
-    client: TestClient, runs: Path
-) -> None:
-    project_at_career(runs)
-    qid = write_pending(runs, PendingKind.GATE, CAREER_GATE)
-
-    page = client.get(f"/p/demo/q/{qid}").text
-
-    assert "Agent Studio" in page and "Merging it is what puts this live" in page
-    assert "Client work &lt;b&gt;x&lt;/b&gt;" in page and "<b>x</b>" not in page
-    assert "Spend was $4.20" in page
-
-
-def test_the_readme_and_case_study_are_shown_with_raw_html_escaped(
-    client: TestClient, runs: Path
-) -> None:
-    project_at_career(runs)
-    qid = write_pending(runs, PendingKind.GATE, CAREER_GATE)
-
-    page = client.get(f"/p/demo/q/{qid}").text
-
-    assert "<h1>Project README</h1>" in page and "<h1>Case study</h1>" in page
-    assert "<script>alert" not in page
-
-
-def test_the_items_questions_and_decision_buttons_are_still_there(
-    client: TestClient, runs: Path
-) -> None:
-    project_at_career(runs)
-    qid = write_pending(runs, PendingKind.GATE, CAREER_GATE)
-
-    page = client.get(f"/p/demo/q/{qid}").text
-
-    assert "Replace README" in page and "How many users?" in page
-    assert "Approve</button>" in page and "Request changes" in page
-
-
-def test_other_gates_and_a_career_gate_without_a_plan_use_the_plain_view(
-    client: TestClient, runs: Path
-) -> None:
-    make_project(runs, stage=Stage.QA)
-    qa = write_pending(runs, PendingKind.GATE, GATE)
-
-    plain = client.get(f"/p/demo/q/{qa}").text
-
-    assert "Fit with your goals" not in plain and "<h1>Report</h1>" in plain
-
-    make_project(runs, stage=Stage.CAREER_COACH)  # no plan stored
-    career = write_pending(runs, PendingKind.GATE, CAREER_GATE, slug="demo")
-    assert "Fit with your goals" not in client.get(f"/p/demo/q/{career}").text
-
-
-def test_the_copy_script_reads_the_snippet_from_the_page() -> None:
-    script = (Path(data.__file__).parent / "static" / "notify.js").read_text()
-
-    assert "pre.latex" in script and "clipboard.writeText" in script
