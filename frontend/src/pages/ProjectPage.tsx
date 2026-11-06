@@ -15,6 +15,7 @@ import {
   Steps,
   StatusPill,
 } from "../components/ui";
+import { TodoRow } from "../components/TodoRow";
 import { useLoad } from "../hooks";
 import type { Project, StartingProject } from "../types";
 
@@ -86,6 +87,15 @@ export function ProjectPage() {
         </Banner>
       ))}
       {summary.detail && data.pending.length === 0 && <Banner>{summary.detail}</Banner>}
+      {data.todos.length > 0 && (
+        <Section title="Action needed: only you can do these">
+          <Group>
+            {data.todos.map((t) => (
+              <TodoRow key={t.id} todo={t} onChange={reload} />
+            ))}
+          </Group>
+        </Section>
+      )}
       {summary.status === "halted" && (
         <Banner>
           Paused. Nothing is using credits. <Button onClick={() => void act("resume")}>Resume</Button>

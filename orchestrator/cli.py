@@ -45,6 +45,7 @@ from orchestrator.qa_prepare import GitQaPreparer
 from orchestrator.runner import SdkRunner
 from orchestrator.stages import StageSpec, career_stage
 from orchestrator.state import ProjectState, Stage, Status, load_state, save_state, state_path
+from orchestrator.todos import close_source
 from orchestrator.tool_hooks import ToolPermissionBackend
 from schemas import Track
 
@@ -352,6 +353,7 @@ def resume(
         return
     project_repo = _repo_for_resume(state, agent, repo)
     clear_halt(runs_dir, project)  # an old pause request must not stop the run at once
+    close_source(runs_dir, project, "error")  # the pause that item reported is over
     if state.status == Status.HALTED:  # paused: pick it up where it stopped
         state = state.evolve(status=Status.RUNNING, intervention=None)
         save_state(runs_dir, state)

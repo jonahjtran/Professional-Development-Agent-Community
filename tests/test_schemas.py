@@ -262,3 +262,19 @@ def test_a_cut_that_lands_on_a_hyphen_leaves_no_trailing_hyphen() -> None:
     adr = ADR(number=1, title=title, context="c", decision="d", consequences="e")
 
     assert adr.filename == "001-" + "a" * 49 + ".md"
+
+
+def test_a_developer_report_may_say_what_it_needs_from_the_human() -> None:
+    from schemas import DevReport
+
+    plain = DevReport(task_id="T1", summary="Did it", deviations_from_plan=[], known_gaps=[])
+    asking = DevReport(
+        task_id="T1",
+        summary="Did it",
+        deviations_from_plan=[],
+        known_gaps=[],
+        needs_from_human=["Add APOLLO_API_KEY to the Supabase project settings"],
+    )
+
+    assert plain.needs_from_human == []  # old reports without the field still load
+    assert asking.needs_from_human == ["Add APOLLO_API_KEY to the Supabase project settings"]

@@ -39,6 +39,7 @@ export interface Project {
   warn_fraction: number;
   helper: { explain_usd: number; chat_usd: number };
   autonomy: "cautious" | "standard" | "autonomous";
+  todos: TodoItem[];
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
   links: { label: string; url: string }[];
   artifacts: string[];
@@ -196,4 +197,14 @@ export interface RuleView {
 export interface RulesReply {
   global: RuleView[];
   projects: Record<string, RuleView[]>;
+}
+
+export interface TodoItem {
+  id: string;
+  project: string | null;
+  title: string;
+  detail: string;
+  source: "developer" | "error" | "qa" | "system";
+  created: string | null;
+  can_mark_done: boolean;
 }

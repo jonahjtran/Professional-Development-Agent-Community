@@ -14,7 +14,7 @@ function project(over: Record<string, unknown> = {}, summary: Record<string, unk
   return {
     starting: false,
     summary: { slug: "demo", idea: "An idea", stage: "developer", status: "running", detail: "", cost_usd: 3.4, cap_usd: 20, pending: 0, alive: true, ...summary },
-    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", gates: [], links: [], artifacts: [], pending: [], ...over,
+    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], gates: [], links: [], artifacts: [], pending: [], ...over,
   };
 }
 
@@ -93,6 +93,19 @@ describe("the project page", () => {
   it("shows helper spend apart from the caps", async () => {
     open(project());
     expect(await screen.findByText(/Helper calls.*\$0\.002/)).toBeInTheDocument();
+  });
+
+  it("lists what only you can do on this project, and marks it done", async () => {
+    const todo = {
+      id: "t1", project: "demo", title: "Add the Apollo API key", detail: "Raised by the Developer on T3",
+      source: "developer", created: "2026-11-06T01:05:00Z", can_mark_done: true,
+    };
+    const api = open(project({ todos: [todo] }), { "POST /api/projects/demo/todos/t1/done": { ok: true } });
+
+    expect(await screen.findByText("Add the Apollo API key")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Mark done" }));
+
+    await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/todos/t1/done"]));
   });
 
   it("shows the autonomy level and changes it", async () => {

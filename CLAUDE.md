@@ -93,6 +93,11 @@ Each tool approval shows a plain-English explanation (what it does, why, what it
 risk label) from one cheap `fast` model call. It is advice only, never sends file contents or
 anything that looks like a secret, and its cost goes to `runs/<project>/assistant_cost.json`,
 shown apart from the project's caps.
+**Action needed.** Things only you can do are listed apart from questions (inbox, project page, nav
+count) and never block a run: what the Developer says it needs from you (`needs_from_human` in its
+report), a project that paused on an error, a QA tool that is not installed (for example
+`gitleaks`), and failing setup checks. Mark an item done, or resume the project to close an error
+item; setup items clear themselves when fixed.
 
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).

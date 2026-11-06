@@ -548,6 +548,62 @@ def test_a_failed_explanation_is_reported_not_raised(
     }
 
 
+# --- action items ----------------------------------------------------------------------------
+
+
+def test_action_items_are_listed_with_their_project(client: TestClient, runs: Path) -> None:
+    from orchestrator.todos import add_todo
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    todo = add_todo(
+        runs, "demo", key="k", title="Add the key", detail="In .env", source="developer"
+    )
+
+    body = client.get("/api/todos").json()
+
+    [mine] = [t for t in body["todos"] if t["id"] == todo.id]
+    assert mine["project"] == "demo" and mine["title"] == "Add the key"
+    assert mine["can_mark_done"] is True
+
+
+def test_an_action_item_can_be_marked_done(client: TestClient, runs: Path) -> None:
+    from orchestrator.todos import add_todo, open_todos
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    todo = add_todo(runs, "demo", key="k", title="Add the key", source="developer")
+
+    assert post(client, f"/api/projects/demo/todos/{todo.id}/done").status_code == 200
+
+    assert open_todos(runs, "demo") == []
+    assert post(client, f"/api/projects/demo/todos/{todo.id}/done").status_code == 404
+
+
+def test_a_failing_health_check_is_listed_as_an_item_that_clears_itself(
+    runs: Path, tmp_path: Path
+) -> None:
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        projects_dir=tmp_path / "clones",
+        health=lambda: run_all(tmp_path, env={}),  # no keys at all
+    )
+
+    body = TestClient(app).get("/api/todos").json()
+
+    system = [t for t in body["todos"] if t["source"] == "system"]
+    assert system and all(t["can_mark_done"] is False and t["project"] is None for t in system)
+
+
+def test_a_project_lists_its_own_open_items(client: TestClient, runs: Path) -> None:
+    from orchestrator.todos import add_todo
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    add_todo(runs, "demo", key="k", title="Add the key", source="developer")
+
+    assert [t["title"] for t in client.get("/api/projects/demo").json()["todos"]] == ["Add the key"]
+
+
 # --- always allow ----------------------------------------------------------------------------
 
 

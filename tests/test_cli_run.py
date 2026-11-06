@@ -163,6 +163,18 @@ def test_resume_clears_an_old_pause_request_so_the_run_does_not_stop_at_once(
     assert not halt_requested(tmp_path, "demo")
 
 
+def test_resuming_closes_the_items_raised_by_an_error_pause(tmp_path: Path) -> None:
+    from orchestrator.todos import add_todo, open_todos
+
+    invoke(tmp_path, "run", "Track events", "--slug", "demo", input="reject\nNo\ny\n")
+    add_todo(tmp_path, "demo", key="e", title="demo paused", source="error")
+    add_todo(tmp_path, "demo", key="d", title="Add a key", source="developer")
+
+    invoke(tmp_path, "resume", "demo", input="approve\n\n" * 5)
+
+    assert [t.title for t in open_todos(tmp_path, "demo")] == ["Add a key"]
+
+
 def test_resume_with_ui_answers_through_files_and_keeps_a_heartbeat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
