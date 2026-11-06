@@ -43,8 +43,10 @@ from orchestrator.newproject import (
     create_project,
     default_projects_dir,
 )
+from orchestrator.notes import add_note
 from orchestrator.permissions import PolicyContext
 from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy, set_autonomy
+from orchestrator.proposals import Proposal, get_proposal, list_proposals, set_status
 from orchestrator.rule_options import RuleOptions, rule_options
 from orchestrator.rules import (
     Rule,
@@ -434,29 +436,36 @@ def create_app(
 
     # --- deciding --------------------------------------------------------------------------
 
+    def apply_answer(
+        slug: str, question_id: str, fields: dict[str, Any], items: list[str]
+    ) -> tuple[int, str | None]:
+        """Answer an open question exactly as the form does. (status, error message or None)."""
+        found = next((p for p in pending_for(runs_dir, slug) if p.id == question_id), None)
+        if found is None:
+            return 409, "This question is no longer open: it was answered, or the run moved on."
+        try:
+            payload = payload_from_form(found, fields, items)
+        except FormError as error:
+            return 400, str(error)
+        try:
+            answer(runs_dir, slug, question_id, payload)
+        except AnswerRejected as error:
+            return 409, str(error)
+        if found.kind == PendingKind.TOOL and payload.get("allow") is True:
+            remember(slug, found.request, fields)
+        return 200, None
+
     @app.post("/api/projects/{slug}/questions/{question_id}")
     async def decide(request: Request, slug: str, question_id: str) -> JSONResponse:
         body = await checked_body(request)
         view_or_404(slug)
-        found = next((p for p in pending_for(runs_dir, slug) if p.id == question_id), None)
-        if found is None:
-            return fail(
-                409, "This question is no longer open: it was answered, or the run moved on."
-            )
         fields = body.get("fields", {})
         items = body.get("items", [])
         if not isinstance(fields, dict) or not isinstance(items, list):
             return fail(400, "fields must be an object and items a list")
-        try:
-            payload = payload_from_form(found, fields, [str(i) for i in items])
-        except FormError as error:
-            return fail(400, str(error))
-        try:
-            answer(runs_dir, slug, question_id, payload)
-        except AnswerRejected as error:
-            return fail(409, str(error))
-        if found.kind == PendingKind.TOOL and payload.get("allow") is True:
-            remember(slug, found.request, fields)
+        status, error = apply_answer(slug, question_id, fields, [str(i) for i in items])
+        if error is not None:
+            return fail(status, error)
         return JSONResponse({"ok": True})
 
     @app.post("/api/projects/{slug}/pause")
@@ -470,21 +479,99 @@ def create_app(
         request_halt(runs_dir, slug)
         return JSONResponse({"ok": True})
 
-    @app.post("/api/projects/{slug}/resume")
-    async def resume(request: Request, slug: str) -> JSONResponse:
-        await checked_body(request)
-        state = view_or_404(slug).state
+    def start_resume(slug: str, state: ProjectState) -> tuple[int, str | None]:
         if state.status == Status.DONE:
-            return fail(409, f"{slug} is done; nothing to resume.")
+            return 409, f"{slug} is done; nothing to resume."
         if run_is_alive(runs_dir, slug):
-            return fail(409, f"{slug} is already running.")
+            return 409, f"{slug} is already running."
         command = resume_command(state, config_path, runs_dir)
         if command is None:
-            return fail(
+            return (
                 409,
                 "This project did not record how it was started, so resume it from the terminal.",
             )
         launcher(command, config_path.resolve().parent, runs_dir / slug / "run.log")
+        return 200, None
+
+    @app.post("/api/projects/{slug}/resume")
+    async def resume(request: Request, slug: str) -> JSONResponse:
+        await checked_body(request)
+        state = view_or_404(slug).state
+        status, error = start_resume(slug, state)
+        if error is not None:
+            return fail(status, error)
+        return JSONResponse({"ok": True})
+
+    # --- proposals from the chat -----------------------------------------------------------
+
+    def proposal_view(p: Proposal) -> dict[str, Any]:
+        return {
+            "id": p.id,
+            "project": p.project,
+            "action": p.action,
+            "summary": p.summary,
+            "status": p.status,
+            "result": p.result,
+            "created": p.created.isoformat(),
+        }
+
+    @app.get("/api/proposals")
+    def proposals_list(project: str | None = None, status: str | None = None) -> dict[str, Any]:
+        if project is not None:
+            view_or_404(project)
+        wanted: Any = status if status in ("pending", "confirmed", "dismissed", "failed") else None
+        found = list_proposals(runs_dir, project=project, status=wanted)
+        found.sort(key=lambda p: p.created, reverse=True)
+        return {"proposals": [proposal_view(p) for p in found]}
+
+    def run_proposal(p: Proposal) -> tuple[int, str]:
+        """Carry out a confirmed proposal. (HTTP status, a message for the human)."""
+        view = view_or_404(p.project)
+        if p.action == "answer_question":
+            status, error = apply_answer(
+                p.project,
+                str(p.args.get("question_id", "")),
+                dict(p.args.get("fields", {})),
+                [str(i) for i in p.args.get("items", [])],
+            )
+            return status, error or "Answered."
+        if p.action == "resume_project":
+            status, error = start_resume(p.project, view.state)
+            return status, error or "Resuming."
+        if p.action == "set_autonomy":
+            level = str(p.args.get("level", ""))
+            if level not in AUTONOMY_LEVELS:
+                return 400, "unknown autonomy level"
+            set_autonomy(runs_dir, p.project, level)
+            return 200, f"Autonomy set to {level}."
+        if p.action == "leave_note":
+            try:
+                add_note(runs_dir, p.project, str(p.args.get("text", "")))
+            except ValueError as error:
+                return 400, str(error)
+            return 200, "The Developer will see this note on its next task."
+        return 400, "unknown action"
+
+    @app.post("/api/projects/{slug}/proposals/{proposal_id}/confirm")
+    async def proposal_confirm(request: Request, slug: str, proposal_id: str) -> JSONResponse:
+        await checked_body(request)
+        view_or_404(slug)
+        proposal = get_proposal(runs_dir, slug, proposal_id)
+        if proposal is None or proposal.status != "pending":
+            return fail(409, "This proposal was already decided.")
+        status, message = run_proposal(proposal)
+        if status != 200:
+            set_status(runs_dir, slug, proposal_id, "failed", message)
+            return fail(status, message)
+        set_status(runs_dir, slug, proposal_id, "confirmed", message)
+        return JSONResponse({"ok": True, "result": message})
+
+    @app.post("/api/projects/{slug}/proposals/{proposal_id}/dismiss")
+    async def proposal_dismiss(request: Request, slug: str, proposal_id: str) -> JSONResponse:
+        await checked_body(request)
+        view_or_404(slug)
+        if set_status(runs_dir, slug, proposal_id, "dismissed", "Dismissed.") is None:
+            return fail(409, "This proposal was already decided.")
         return JSONResponse({"ok": True})
 
     # --- starting a project ----------------------------------------------------------------

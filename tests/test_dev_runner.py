@@ -677,3 +677,38 @@ def test_the_projects_autonomy_level_reaches_the_policy(repo: Path, tmp_path: Pa
     harness.runner().run(request())
 
     assert _bash_decision(harness, "npx next lint") == "ask"  # cautious ignores saved rules
+
+
+def test_notes_from_the_human_reach_the_developer_once(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.notes import add_note, pending_notes
+
+    add_note(tmp_path / "runs", "demo", "Use server actions, not API routes")
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    assert "Use server actions, not API routes" in harness.prompts[0]
+    assert "Notes from the person" in harness.prompts[0]
+    assert pending_notes(tmp_path / "runs", "demo") == []  # used, so not repeated on the next task
+
+
+def test_a_task_with_no_notes_has_no_notes_section(repo: Path, tmp_path: Path) -> None:
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    assert "Notes from the person" not in harness.prompts[0]
+
+
+def test_a_failed_task_keeps_the_notes_for_the_next_attempt(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.notes import add_note, pending_notes
+
+    add_note(tmp_path / "runs", "demo", "Use server actions")
+
+    def lazy(cwd: Path) -> list[Any]:
+        return [result_message()]  # no commits: the run fails
+
+    with pytest.raises(AgentError):
+        Harness(repo, tmp_path, lazy).runner().run(request())
+
+    assert [n.text for n in pending_notes(tmp_path / "runs", "demo")] == ["Use server actions"]
