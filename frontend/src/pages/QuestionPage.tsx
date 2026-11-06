@@ -65,6 +65,11 @@ function Body({ q }: { q: OpenQuestion }) {
     <>
       <p className="back"><Link to="/inbox">‹ Inbox</Link> · <Link to={`/p/${q.project}`}>{q.project}</Link></p>
       <h1>{q.title}</h1>
+      <p className="hint">
+        <Link to={`/chat?project=${q.project}&question=${q.id}&prompt=${encodeURIComponent("What is this asking me to decide, and what should I check before I do?")}`}>
+          Ask the assistant about this
+        </Link>
+      </p>
       {q.refused && <Banner>Your last answer was refused: {q.refused}. Please answer again.</Banner>}
       {error && <Banner>{error}</Banner>}
       {q.kind === "gate" && <GateForm q={q} submit={submit} busy={busy} />}

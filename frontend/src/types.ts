@@ -228,3 +228,24 @@ export interface AgentActivity {
   notes: string[];
   recent: string[];
 }
+
+export interface ProposalView {
+  id: string;
+  project: string;
+  action: string;
+  summary: string;
+  status: "pending" | "confirmed" | "dismissed" | "failed";
+  result?: string | null;
+}
+
+export type ChatEvent =
+  | { type: "session"; id: string }
+  | { type: "step"; text: string }
+  | { type: "text"; delta: string }
+  | { type: "error"; message: string }
+  | { type: "done"; html: string; cost_usd: number; session_cost_usd: number; proposals: ProposalView[] };
+
+export interface ChatRepos {
+  repos: { id: string; label: string }[];
+  cap_usd: number;
+}

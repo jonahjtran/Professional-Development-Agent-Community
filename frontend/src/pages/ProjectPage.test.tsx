@@ -108,6 +108,14 @@ describe("the project page", () => {
     await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/todos/t1/done"]));
   });
 
+  it("offers to ask the assistant about a paused project", async () => {
+    open(project({}, { status: "halted", alive: false }));
+
+    const link = await screen.findByRole("link", { name: /Ask the assistant/ });
+
+    expect(link.getAttribute("href")).toContain("/chat?project=demo");
+  });
+
   it("links to the team page", async () => {
     open(project());
 
