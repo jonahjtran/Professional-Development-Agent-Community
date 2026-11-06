@@ -12,6 +12,7 @@ import secrets
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -20,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from orchestrator.activity import project_activity
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.assistant_cost import assistant_totals
 from orchestrator.config import Config
@@ -209,6 +211,13 @@ def create_app(
         shown["autonomy"] = get_autonomy(runs_dir, slug)
         shown["todos"] = [todo_view(t) for t in open_todos(runs_dir, slug)]
         return shown
+
+    @app.get("/api/projects/{slug}/activity")
+    def activity(slug: str) -> dict[str, Any]:
+        """Who is doing what, derived from the saved state and the trace (no model call)."""
+        view = view_or_404(slug)
+        people = project_activity(runs_dir, view.state, alive=view.summary.alive)
+        return {"agents": [asdict(p) for p in people]}
 
     @app.get("/api/projects/{slug}/artifacts/{name:path}")
     def artifact(slug: str, name: str) -> dict[str, Any]:

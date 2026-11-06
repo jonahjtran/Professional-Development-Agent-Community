@@ -103,6 +103,11 @@ A new action item raises a louder alert than a question: a macOS notification wi
 and "Action needed" in the tab title. Each item alerts once; ones open when the page loads are
 not announced again.
 
+`GET /api/projects/<p>/activity` says what each agent is doing (done, working, waiting for you,
+paused, stopped, or waiting on the agent before it), with the current task, the Developer's agenda,
+notes from what the agents reported and the last steps in plain words. It is built from the saved
+state, the trace and `tasks.json`, never from a model call.
+
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).
 It lives in `frontend/` and builds into `orchestrator/ui/static/app/` (git-ignored), which the
