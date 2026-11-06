@@ -6,11 +6,13 @@ import pytest
 from orchestrator.worktree import (
     SELF_PROTECTED,
     WorktreeError,
+    branch_has_commits,
     commits_ahead,
     create_worktree,
     default_worktree_root,
     discard_unused,
     has_uncommitted_changes,
+    leftover_work,
     protected_for,
     remove_worktree,
     uncommitted_paths,
@@ -419,3 +421,95 @@ def test_a_detached_checkout_refuses_an_unsafe_name(remote_and_clone: tuple[Path
 
     with pytest.raises(WorktreeError, match="unsafe"):
         checkout_detached(clone, "../escape")
+
+
+# --- leftovers when the remote's main has moved on -------------------------------------------
+
+
+@pytest.fixture
+def clone_behind_origin(tmp_path: Path) -> Path:
+    """A clone whose local main is behind origin/main, as after pull requests merge on GitHub."""
+    origin = tmp_path / "origin.git"
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git(seed, "init", "-q", "-b", "main")
+    (seed / "app.py").write_text("v1\n")
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "first")
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(origin)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
+    (seed / "app.py").write_text("v2\n")  # a pull request merged on GitHub
+    git(seed, "commit", "-q", "-am", "merged pull request")
+    git(seed, "push", "-q", str(origin), "main")
+    git(clone, "fetch", "-q", "origin")  # origin/main moves; the local main does not
+    assert git(clone, "rev-parse", "main") != git(clone, "rev-parse", "origin/main")
+    return clone
+
+
+def test_an_empty_leftover_branch_is_recognised_even_when_local_main_is_behind_origin(
+    clone_behind_origin: Path,
+) -> None:
+    create_worktree(clone_behind_origin, "T3")  # cut from origin/main, then the run died
+
+    assert branch_has_commits(clone_behind_origin, "T3") is False
+    assert leftover_work(clone_behind_origin, "T3") is False
+    assert discard_unused(clone_behind_origin, "T3") is True
+    assert "agent/T3" not in branches(clone_behind_origin)
+
+
+def test_real_work_is_still_recognised_when_local_main_is_behind_origin(
+    clone_behind_origin: Path,
+) -> None:
+    wt = create_worktree(clone_behind_origin, "T3")
+    (wt.path / "b.py").write_text("y = 2\n")
+    git(wt.path, "add", "-A")
+    git(wt.path, "commit", "-q", "-m", "real work")
+    remove_worktree(wt)
+
+    assert branch_has_commits(clone_behind_origin, "T3") is True
+    assert leftover_work(clone_behind_origin, "T3") is True
+    assert discard_unused(clone_behind_origin, "T3") is False
+
+
+# --- picking up where a killed run stopped ---------------------------------------------------
+
+
+def test_leftover_work_means_commits_or_uncommitted_changes_in_the_folder(repo: Path) -> None:
+    assert leftover_work(repo, "T1") is False  # nothing there at all
+
+    wt = create_worktree(repo, "T1")
+    assert leftover_work(repo, "T1") is False  # a folder and a branch, but no work
+
+    (wt.path / "partial.py").write_text("x = 1\n")
+    assert leftover_work(repo, "T1") is True  # uncommitted work counts
+
+    git(wt.path, "add", "-A")
+    git(wt.path, "commit", "-q", "-m", "work")
+    assert leftover_work(repo, "T1") is True  # and so do commits
+
+
+def test_resuming_reuses_the_folder_of_a_killed_run_and_keeps_its_uncommitted_work(
+    repo: Path,
+) -> None:
+    first = create_worktree(repo, "T1")
+    (first.path / "partial.py").write_text("x = 1\n")  # the process died before committing
+
+    again = create_worktree(repo, "T1", resume=True)
+
+    assert again.path == first.path and again.branch == "agent/T1"
+    assert (again.path / "partial.py").read_text() == "x = 1\n"
+
+
+def test_resuming_after_the_folder_was_deleted_checks_the_branch_out_again(repo: Path) -> None:
+    import shutil
+
+    first = create_worktree(repo, "T1")
+    (first.path / "b.py").write_text("y = 2\n")
+    git(first.path, "add", "-A")
+    git(first.path, "commit", "-q", "-m", "work")
+    shutil.rmtree(first.path)  # the folder is gone but git still lists it
+
+    again = create_worktree(repo, "T1", resume=True)
+
+    assert (again.path / "b.py").read_text() == "y = 2\n"

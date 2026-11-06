@@ -505,7 +505,7 @@ def test_leftovers_of_a_crashed_run_are_cleaned_up_before_starting(
     assert DevResult.model_validate_json(result.output).branch == "agent/T1"
 
 
-def test_a_leftover_branch_that_has_real_work_is_never_thrown_away(
+def test_a_leftover_branch_that_has_real_work_is_resumed_not_thrown_away(
     repo: Path, tmp_path: Path
 ) -> None:
     git(repo, "checkout", "-q", "-b", "agent/T1")
@@ -513,11 +513,40 @@ def test_a_leftover_branch_that_has_real_work_is_never_thrown_away(
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "work from an earlier run")
     git(repo, "checkout", "-q", "main")
+    harness = Harness(repo, tmp_path)
 
-    with pytest.raises(AgentError, match="worktree"):
-        Harness(repo, tmp_path).runner().run(request())
+    result = harness.runner().run(request())
 
-    assert "precious.py" in git(repo, "ls-tree", "--name-only", "agent/T1")
+    assert DevResult.model_validate_json(result.output).branch == "agent/T1"
+    files = git(repo, "ls-tree", "--name-only", "agent/T1")
+    assert "precious.py" in files  # the earlier work is still there
+    assert git(repo, "rev-list", "--count", "main..agent/T1") == "2"  # and the new work is on top
+    assert "interrupted" in harness.prompts[0]
+
+
+def test_the_folder_and_uncommitted_work_of_a_killed_run_are_picked_up_again(
+    repo: Path, tmp_path: Path
+) -> None:
+    from orchestrator.worktree import create_worktree
+
+    killed = create_worktree(repo, "T1")
+    (killed.path / "half_done.py").write_text("x = 1\n")  # the process died before committing
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    assert "interrupted" in harness.prompts[0]
+    # the half-finished file was still in the folder when the new session started, and the good
+    # turn's `git add -A` committed it along with its own work
+    assert "half_done.py" in git(repo, "ls-tree", "--name-only", "agent/T1")
+
+
+def test_a_fresh_task_is_not_described_as_interrupted(repo: Path, tmp_path: Path) -> None:
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    assert "interrupted" not in harness.prompts[0]
 
 
 def _decision_for(harness: Harness, tool_input: dict[str, str]) -> Any:

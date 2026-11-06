@@ -106,6 +106,12 @@ def create_worktree(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if resume and _ok(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
+        existing = _registered_worktree(repo, branch)
+        if existing is not None and existing.exists():
+            # A killed run left its folder behind: pick up where it stopped, uncommitted work
+            # included, instead of checking the branch out a second time.
+            return Worktree(repo=repo, path=existing, branch=branch, base=base_ref)
+        _git(repo, "worktree", "prune")  # forget a folder that was deleted by hand
         _git(repo, "worktree", "add", "--quiet", str(path), branch)
     else:
         _git(repo, "worktree", "add", "--quiet", "-b", branch, str(path), base_ref)
@@ -172,8 +178,7 @@ def discard_unused(repo: Path, task_id: str) -> bool:
     branch = f"{BRANCH_PREFIX}{task_id}"
     if branch_sha(repo, branch) is None:
         return False
-    base = "main" if branch_sha(repo, "main") else "HEAD"
-    if int(_git(repo, "rev-list", "--count", f"{base}..{branch}").stdout.strip()) > 0:
+    if _commits_beyond_base(repo, branch) > 0:
         return False
     for line in _git(repo, "worktree", "list", "--porcelain").stdout.splitlines():
         if line.startswith("worktree ") and line.endswith(f"/{task_id}"):
@@ -188,8 +193,45 @@ def branch_has_commits(repo: Path, task_id: str) -> bool:
     branch = f"{BRANCH_PREFIX}{task_id}"
     if branch_sha(repo, branch) is None:
         return False
-    base = "main" if branch_sha(repo, "main") else "HEAD"
-    return int(_git(repo, "rev-list", "--count", f"{base}..{branch}").stdout.strip()) > 0
+    return _commits_beyond_base(repo, branch) > 0
+
+
+def _commits_beyond_base(repo: Path, branch: str) -> int:
+    """How many commits `branch` has that the branch it was cut from does not.
+
+    Task branches are cut from `origin/main`, which moves when pull requests are merged on GitHub
+    while the local `main` stays where it was. Comparing with the local `main` would count every
+    merged pull request as this branch's own work, so the remote's main is used when there is one.
+    """
+    if _ok(repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"):
+        base = "origin/main"
+    else:
+        base = "main" if branch_sha(repo, "main") else "HEAD"
+    return int(_git(repo, "rev-list", "--count", f"{base}..{branch}").stdout.strip())
+
+
+def _registered_worktree(repo: Path, branch: str) -> Path | None:
+    """The folder git has `branch` checked out in, if it is checked out anywhere."""
+    folder: Path | None = None
+    for line in _git(repo, "worktree", "list", "--porcelain").stdout.splitlines():
+        if line.startswith("worktree "):
+            folder = Path(line.removeprefix("worktree "))
+        elif line == f"branch refs/heads/{branch}":
+            return folder
+    return None
+
+
+def leftover_work(repo: Path, task_id: str) -> bool:
+    """True if an earlier, killed run left real work for this task: commits on its branch, or
+    uncommitted changes in its folder. A branch and folder with nothing in them are not work."""
+    if branch_has_commits(repo, task_id):
+        return True
+    folder = _registered_worktree(repo, f"{BRANCH_PREFIX}{task_id}")
+    if folder is None or not folder.exists():
+        return False
+    out = _git(folder, "status", "--porcelain", "--untracked-files=all").stdout
+    paths = [line[3:] for line in out.splitlines()]
+    return any(not _CACHE_DIRS & set(Path(p).parts) and not p.endswith(".pyc") for p in paths)
 
 
 def commit_all(path: Path, message: str) -> None:
