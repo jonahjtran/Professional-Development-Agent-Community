@@ -243,6 +243,69 @@ describe("an explained approval", () => {
   });
 });
 
+describe("remembering an approval", () => {
+  const tool = {
+    status: "open", id: "abc", project: "demo", kind: "tool", title: "Permission needed: Bash", detail: "",
+    request: { tool: "Bash", summary: "npx next lint --fix", reason: "not on the allowed list" },
+    summary_html: "", refused: null, workbench: null,
+  };
+  const noExplanation = {
+    "GET /api/projects/demo/questions/abc/explanation": { explanation: null, error: "off", cost_usd: 0 },
+  };
+  const options = {
+    available: true, reason: null,
+    parts: [{ label: "npx next lint --fix", exact: ["npx", "next", "lint", "--fix"], any_label: "npx next …any arguments" }],
+  };
+
+  it("allows once by default, without asking to remember", async () => {
+    const api = open(tool, { ...noExplanation, "GET /api/projects/demo/questions/abc/rule-options": options });
+    await screen.findByText("npx next lint --fix");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Allow once" }));
+
+    await waitFor(() => expect(api.posts()).toHaveLength(1));
+    expect(api.posts()[0]?.body).toEqual({ fields: { allow: "yes", message: "" }, items: [] });
+  });
+
+  it("can remember the wider pattern for this project", async () => {
+    const api = open(tool, { ...noExplanation, "GET /api/projects/demo/questions/abc/rule-options": options });
+    await userEvent.click(await screen.findByLabelText("Always in this project"));
+    await userEvent.selectOptions(screen.getByLabelText("npx next lint --fix"), "any");
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow and remember" }));
+
+    await waitFor(() => expect(api.posts()).toHaveLength(1));
+    expect(api.posts()[0]?.body).toEqual({
+      fields: { allow: "yes", message: "", remember: "project", rule_modes: "any" }, items: [],
+    });
+  });
+
+  it("can remember exactly this command everywhere", async () => {
+    const api = open(tool, { ...noExplanation, "GET /api/projects/demo/questions/abc/rule-options": options });
+    await userEvent.click(await screen.findByLabelText("Always everywhere"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Allow and remember" }));
+
+    await waitFor(() => expect(api.posts()).toHaveLength(1));
+    expect(api.posts()[0]?.body).toEqual({
+      fields: { allow: "yes", message: "", remember: "global", rule_modes: "exact" }, items: [],
+    });
+  });
+
+  it("explains why a command cannot be remembered, and still allows it once", async () => {
+    open(tool, {
+      ...noExplanation,
+      "GET /api/projects/demo/questions/abc/rule-options": {
+        available: false, reason: "This cannot be remembered: git push.", parts: [],
+      },
+    });
+
+    expect(await screen.findByText(/cannot be remembered/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Always in this project")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  });
+});
+
 describe("a question that is gone", () => {
   it("says it was answered, or that it is no longer open", async () => {
     open({ status: "answered", id: "abc", project: "demo" });

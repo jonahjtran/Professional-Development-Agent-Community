@@ -38,6 +38,7 @@ export interface Project {
   stages: StageRow[];
   warn_fraction: number;
   helper: { explain_usd: number; chat_usd: number };
+  autonomy: "cautious" | "standard" | "autonomous";
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
   links: { label: string; url: string }[];
   artifacts: string[];
@@ -177,4 +178,22 @@ export interface ExplanationReply {
   explanation: ToolExplanation | null;
   error: string | null;
   cost_usd: number;
+}
+
+export interface RuleOptionsReply {
+  available: boolean;
+  reason: string | null;
+  parts: { label: string; exact: string[]; any_label: string | null }[];
+}
+
+export interface RuleView {
+  id: string;
+  description: string;
+  uses: number;
+  last_used: string | null;
+}
+
+export interface RulesReply {
+  global: RuleView[];
+  projects: Record<string, RuleView[]>;
 }

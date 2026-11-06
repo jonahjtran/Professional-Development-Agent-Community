@@ -19,6 +19,12 @@ def _worktrees_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_STUDIO_WORKTREES", str(tmp_path / "worktrees"))
 
 
+@pytest.fixture(autouse=True)
+def _studio_home_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never read or write the real ~/.config/agent-studio (the everywhere rules)."""
+    monkeypatch.setenv("AGENT_STUDIO_HOME", str(tmp_path / "studio-home"))
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--live", action="store_true", default=False, help="run live API tests")
 

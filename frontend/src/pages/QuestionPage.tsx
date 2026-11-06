@@ -2,9 +2,16 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, post } from "../api";
 import { Workbench } from "../components/Workbench";
-import { Banner, Button, Card, Loading, Rendered, Section, SwitchRow, Group } from "../components/ui";
+import { Banner, Button, Card, Group, Loading, Rendered, Section, Segmented, SwitchRow } from "../components/ui";
 import { useLoad } from "../hooks";
-import type { CapRequest, ExplanationReply, GateRequest, OpenQuestion, Question } from "../types";
+import type {
+  CapRequest,
+  ExplanationReply,
+  GateRequest,
+  OpenQuestion,
+  Question,
+  RuleOptionsReply,
+} from "../types";
 
 type Submit = (fields: Record<string, string>, items?: string[]) => Promise<void>;
 
@@ -213,20 +220,65 @@ function Explanation({ project, id }: { project: string; id: string }) {
   );
 }
 
+type Remember = "none" | "project" | "global";
+
 function ToolForm({ project, id, request, submit, busy }: FormProps & { project: string; id: string; request: { tool: string; summary: string; reason: string } }) {
   const [message, setMessage] = useState("");
+  const [remember, setRemember] = useState<Remember>("none");
+  const [modes, setModes] = useState<string[]>([]);
+  const { data: options } = useLoad<RuleOptionsReply>(`/api/projects/${project}/questions/${id}/rule-options`);
+  const canRemember = options?.available === true;
+
+  function allow() {
+    const fields: Record<string, string> = { allow: "yes", message };
+    if (canRemember && remember !== "none") {
+      fields.remember = remember;
+      fields.rule_modes = (options?.parts ?? []).map((_, i) => modes[i] ?? "exact").join(",");
+    }
+    void submit(fields);
+  }
+
   return (
     <>
       <p>The Developer wants to use <strong>{request.tool}</strong>:</p>
       <pre>{request.summary}</pre>
       <Explanation project={project} id={id} />
       <p className="muted">Why you are being asked: {request.reason}</p>
+      {options && !options.available && options.reason && <p className="hint">{options.reason}</p>}
+      {canRemember && (
+        <div className="choices">
+          <span className="muted">Next time</span>
+          <Segmented<Remember>
+            name="remember"
+            value={remember}
+            onChange={setRemember}
+            options={[
+              { value: "none", label: "Allow once" },
+              { value: "project", label: "Always in this project" },
+              { value: "global", label: "Always everywhere" },
+            ]}
+          />
+          {remember !== "none" &&
+            options.parts.map((part, i) => (
+              <label key={part.label} className="field">
+                {part.label}
+                <select value={modes[i] ?? "exact"} onChange={(e) => setModes((m) => Object.assign([...m], { [i]: e.target.value }))}>
+                  <option value="exact">only exactly this</option>
+                  {part.any_label && <option value="any">{part.any_label}</option>}
+                </select>
+              </label>
+            ))}
+          {remember !== "none" && (
+            <p className="hint">Saved rules never override a refusal, and you can revoke them on the Rules page.</p>
+          )}
+        </div>
+      )}
       <label className="field">
         If you deny, tell the agent why (optional)
         <input type="text" value={message} onChange={(e) => setMessage(e.target.value)} />
       </label>
       <div className="actions">
-        <Button disabled={busy} onClick={() => void submit({ allow: "yes", message })}>Allow once</Button>
+        <Button disabled={busy} onClick={allow}>{remember === "none" || !canRemember ? "Allow once" : "Allow and remember"}</Button>
         <Button tone="destructive" disabled={busy} onClick={() => void submit({ allow: "no", message })}>Deny</Button>
       </div>
     </>

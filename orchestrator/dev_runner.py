@@ -21,7 +21,9 @@ from orchestrator.envsafe import SECRET_ENV_NAME
 from orchestrator.halt import halt_requested
 from orchestrator.permissions import PolicyContext
 from orchestrator.pipeline import AgentError, AgentRequest, AgentResult
+from orchestrator.project_settings import get_autonomy
 from orchestrator.prompts import Prompt
+from orchestrator.rules import active_rules
 from orchestrator.tool_hooks import ToolPermissionBackend, ToolPermissionHooks, git_current_branch
 from orchestrator.worktree import (
     Worktree,
@@ -115,6 +117,8 @@ class DevRunner:
             policy=PolicyContext(
                 worktree=worktree.path,
                 protected=protected_for(self._repo, studio_root=self._studio_root),
+                rules=lambda: active_rules(self._runs_dir, request.project),
+                autonomy=get_autonomy(self._runs_dir, request.project),
             ),
             backend=self._backend,
             runs_dir=self._runs_dir,

@@ -673,3 +673,103 @@ def test_public_addresses_that_merely_look_internal_are_not_denied(wt: Path) -> 
 
 def test_other_unlisted_tools_are_still_denied(wt: Path) -> None:
     assert verdict("WebFetch", {"url": "https://example.com"}, wt).verdict == D
+
+
+# --- rules the human saved with "always allow" -----------------------------------------------
+
+from orchestrator.rules import Rule  # noqa: E402
+
+
+def with_rules(*rules: Rule) -> dict[str, Any]:
+    return {"rules": lambda: list(rules)}
+
+
+def test_a_saved_rule_allows_the_command_it_names(wt: Path) -> None:
+    rule = Rule(id="r1", argv=["npx", "next", "lint"], any_args=False)
+
+    decision = bash("npx next lint", wt, **with_rules(rule))
+
+    assert decision.verdict == A and "r1" in decision.rule_ids
+
+
+def test_a_rule_for_a_prefix_allows_other_arguments(wt: Path) -> None:
+    rule = Rule(id="r1", argv=["npx", "next"], any_args=True)
+
+    assert bash("npx next build --debug", wt, **with_rules(rule)).verdict == A
+
+
+def test_without_the_rule_the_same_command_still_asks(wt: Path) -> None:
+    assert bash("npx next lint", wt).verdict == Q
+
+
+def test_a_rule_for_one_command_does_not_allow_another(wt: Path) -> None:
+    rule = Rule(id="r1", argv=["npx", "next", "lint"], any_args=False)
+
+    assert bash("npx next build", wt, **with_rules(rule)).verdict == Q
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /",
+        "git push origin main",
+        "sudo ls",
+        "cat .env",
+        "curl https://example.com",
+        "bash install.sh",
+        "echo $(whoami)",
+        "FOO=1 pytest",
+        "ls ../../etc",
+    ],
+)
+def test_a_rule_can_never_override_a_refusal_or_a_special_ask(wt: Path, command: str) -> None:
+    argv = command.split()
+    sweeping = Rule(id="r1", argv=[argv[0]], any_args=True)
+
+    decision = bash(command, wt, **with_rules(sweeping))
+
+    assert decision.verdict != A, command
+
+
+def test_a_rule_does_not_excuse_a_path_outside_the_worktree(wt: Path) -> None:
+    rule = Rule(id="r1", argv=["mytool"], any_args=True)
+
+    assert bash("mytool ../../elsewhere", wt, **with_rules(rule)).verdict != A
+
+
+def test_a_rule_covers_only_its_own_part_of_a_compound_command(wt: Path) -> None:
+    rule = Rule(id="r1", argv=["npx", "next", "lint"], any_args=False)
+
+    assert bash("npx next lint && npx next build", wt, **with_rules(rule)).verdict == Q
+    assert bash("npx next lint | tail -5", wt, **with_rules(rule)).verdict == A
+
+
+def test_a_cautious_project_ignores_saved_rules(wt: Path) -> None:
+    rule = Rule(id="r1", argv=["npx", "next", "lint"], any_args=False)
+
+    decision = bash("npx next lint", wt, autonomy="cautious", **with_rules(rule))
+
+    assert decision.verdict == Q
+
+
+@pytest.mark.parametrize(
+    ("command", "lockfile", "autonomy", "expected"),
+    [
+        ("npm ci", "package-lock.json", "autonomous", A),
+        ("npm install --no-audit --no-fund", "package-lock.json", "autonomous", A),
+        ("npm install", "pnpm-lock.yaml", "autonomous", A),
+        ("npm install left-pad", "package-lock.json", "autonomous", Q),
+        ("npm install --save-dev left-pad", "package-lock.json", "autonomous", Q),
+        ("npm install --global x", "package-lock.json", "autonomous", Q),
+        ("npm install", None, "autonomous", Q),
+        ("npm install", "package-lock.json", "standard", Q),
+        ("npm ci", "package-lock.json", "standard", Q),
+    ],
+)
+def test_installing_what_the_lockfile_lists_is_allowed_only_when_autonomous(
+    wt: Path, command: str, lockfile: str | None, autonomy: str, expected: Verdict
+) -> None:
+    if lockfile:
+        (wt / lockfile).write_text("{}")
+
+    assert bash(command, wt, autonomy=autonomy).verdict == expected

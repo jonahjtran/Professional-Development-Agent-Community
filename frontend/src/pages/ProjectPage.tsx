@@ -11,6 +11,7 @@ import {
   Meter,
   money,
   Section,
+  Segmented,
   Steps,
   StatusPill,
 } from "../components/ui";
@@ -62,6 +63,16 @@ export function ProjectPage() {
     }
   }
 
+  async function setAutonomy(level: string) {
+    setProblem(null);
+    try {
+      await post(`/api/projects/${slug}/autonomy`, { level });
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   return (
     <>
       <Link className="back" to="/">‹ Projects</Link>
@@ -94,6 +105,25 @@ export function ProjectPage() {
       {active && (
         <Button onClick={() => void act("pause")}>Pause</Button>
       )}
+
+      <Section title="Approvals">
+        <Card>
+          <Segmented
+            name="autonomy"
+            value={data.autonomy}
+            onChange={(level) => void setAutonomy(level)}
+            options={[
+              { value: "cautious", label: "Cautious" },
+              { value: "standard", label: "Standard" },
+              { value: "autonomous", label: "Autonomous" },
+            ]}
+          />
+          <p className="hint">
+            Cautious ignores your saved rules. Standard uses them. Autonomous also allows installing what the
+            lockfile already lists. None of them can allow what is always refused.
+          </p>
+        </Card>
+      </Section>
 
       <Section title="Spend">
         <Card>

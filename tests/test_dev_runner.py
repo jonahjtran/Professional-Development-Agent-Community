@@ -627,3 +627,53 @@ def test_the_package_registries_in_the_config_are_the_only_hosts_allowed_without
     assert sandbox is not None
     assert sandbox["network"] == {"allowedDomains": ["registry.npmjs.org", "pypi.org"]}
     assert sandbox["enabled"] is True and sandbox["excludedCommands"] == ["git"]
+
+
+def _bash_decision(harness: Harness, command: str) -> Any:
+    import asyncio
+
+    assert harness.options[0].hooks is not None
+    hook: Any = harness.options[0].hooks["PreToolUse"][0].hooks[0]
+    data = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "tool_use_id": "t",
+    }
+    output: Any = asyncio.run(hook(data, "t", {"signal": None}))
+    return output.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+
+def test_the_developer_uses_the_projects_saved_rules(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.rules import project_store
+
+    project_store(tmp_path / "runs", "demo").add(["npx", "next", "lint"], any_args=False)
+    harness = Harness(repo, tmp_path)
+    harness.runner().run(request())
+
+    assert _bash_decision(harness, "npx next lint") == "allow"
+    assert _bash_decision(harness, "npx next build") == "ask"
+
+
+def test_a_rule_saved_while_the_task_runs_applies_at_once(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.rules import project_store
+
+    harness = Harness(repo, tmp_path)
+    harness.runner().run(request())
+    assert _bash_decision(harness, "npx next lint") == "ask"
+
+    project_store(tmp_path / "runs", "demo").add(["npx", "next", "lint"], any_args=False)
+
+    assert _bash_decision(harness, "npx next lint") == "allow"
+
+
+def test_the_projects_autonomy_level_reaches_the_policy(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.project_settings import set_autonomy
+    from orchestrator.rules import project_store
+
+    project_store(tmp_path / "runs", "demo").add(["npx", "next", "lint"], any_args=False)
+    set_autonomy(tmp_path / "runs", "demo", "cautious")
+    harness = Harness(repo, tmp_path)
+    harness.runner().run(request())
+
+    assert _bash_decision(harness, "npx next lint") == "ask"  # cautious ignores saved rules

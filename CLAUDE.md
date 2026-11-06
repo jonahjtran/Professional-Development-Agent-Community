@@ -56,6 +56,14 @@ Three details that decide how many approvals you see:
   double quotes) still ask.
 - `npm test` and `npm run test|typecheck|build|lint|check|format`, and `npx vitest|tsc|eslint|jest|prettier`,
   run without asking. `npm install`, `npm ci`, other scripts and other `npx` packages still ask.
+- **Always allow.** When you approve a command you can remember it for this project or everywhere,
+  exactly or as a prefix with any arguments (never for installs, publishing or programs that run
+  other code). Rules live in `runs/<project>/rules.json` and `~/.config/agent-studio/rules.json`
+  (override with `AGENT_STUDIO_HOME`), are listed on the Rules page, and can be revoked there. A rule
+  is applied last, so it can never allow anything the policy refuses or asks about for a special
+  reason (secrets, push, paths outside the worktree, `sudo`, shell expansion...). Each project also
+  has an autonomy level: *cautious* ignores rules, *standard* (default) uses them, *autonomous*
+  also allows `npm ci` and a bare `npm install` when a lockfile exists.
 - The sandbox may reach only the hosts in `sandbox.allowed_domains` in `config.yaml` (the npm and
   PyPI registries). Any other host is shown to you. This computer and private networks (localhost,
   `169.254.x.x`, `10.x`, `192.168.x`, ...) are never reachable, so the agent cannot call the web UI.
