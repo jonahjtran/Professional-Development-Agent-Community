@@ -77,12 +77,19 @@ class Pricing(_Strict):
         return self.strong if tier == "strong" else self.fast
 
 
+class SandboxConfig(_Strict):
+    """Hosts the Developer's sandbox may reach without asking. Any other host is asked about."""
+
+    allowed_domains: list[str] = Field(default_factory=list)
+
+
 class Config(_Strict):
     models: Models
     budget: Budget
     limits: Limits
     pricing: Pricing
     qa: QaConfig
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
 def load_config(path: Path) -> Config:

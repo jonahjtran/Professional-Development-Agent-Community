@@ -58,3 +58,12 @@ qa:
     - {name: types, command: "uv run --with mypy mypy .", requires: uv}
     - {name: dependency audit, command: "uv run --with pip-audit pip-audit", requires: uv}
     - {name: secret scan, command: "gitleaks detect --no-banner --redact", requires: gitleaks}
+
+sandbox:
+  # The only hosts the Developer's sandbox may reach without asking you: the package registries, so
+  # installing a dependency works. Any other host is shown to you first, and this machine and
+  # private networks are never allowed. Edit this list here; the agent cannot change config.yaml.
+  allowed_domains:
+    - registry.npmjs.org
+    - pypi.org
+    - files.pythonhosted.org

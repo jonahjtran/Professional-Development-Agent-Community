@@ -168,3 +168,19 @@ def test_the_shipped_config_limits_one_developer_task() -> None:
     config = load_config(REPO_ROOT / "config.yaml")
 
     assert 0 < config.limits.max_task_usd <= config.budget.stage_caps_usd.developer
+
+
+def test_the_shipped_config_allows_only_the_package_registries_through_the_sandbox() -> None:
+    config = load_config(REPO_ROOT / "config.yaml")
+
+    assert config.sandbox.allowed_domains == [
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+    ]
+
+
+def test_a_config_without_a_sandbox_section_allows_no_hosts(tmp_path: Path) -> None:
+    config = load_config(write_yaml(tmp_path, valid_config()))
+
+    assert config.sandbox.allowed_domains == []

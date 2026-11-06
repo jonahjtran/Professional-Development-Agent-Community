@@ -219,6 +219,44 @@ def test_the_callback_re_checks_the_policy_so_a_denied_call_never_reaches_the_hu
     assert backend.requests == []
 
 
+def test_a_sandbox_network_request_reaches_the_human_with_the_host_and_is_traced(
+    tmp_path: Path, wt: Path
+) -> None:
+    backend = ScriptedBackend(ToolAnswer(allow=True))
+    hooks = make_hooks(tmp_path, wt, backend)
+
+    result = ask(hooks, "SandboxNetworkAccess", {"host": "example.com", "port": 443})
+
+    assert isinstance(result, PermissionResultAllow)
+    [request] = backend.requests
+    assert request.tool == "SandboxNetworkAccess"
+    assert request.summary == "host=example.com, port=443"
+    assert events(tmp_path)[-1]["details"]["verdict"] == "human_allowed"
+
+
+def test_a_network_request_the_human_refuses_is_denied_with_their_words(
+    tmp_path: Path, wt: Path
+) -> None:
+    backend = ScriptedBackend(ToolAnswer(allow=False, message="no downloads"))
+    hooks = make_hooks(tmp_path, wt, backend)
+
+    result = ask(hooks, "SandboxNetworkAccess", {"host": "example.com"})
+
+    assert isinstance(result, PermissionResultDeny) and result.message == "no downloads"
+
+
+def test_a_request_for_this_machine_never_reaches_the_human(tmp_path: Path, wt: Path) -> None:
+    backend = ScriptedBackend(ToolAnswer(allow=True))
+    hooks = make_hooks(tmp_path, wt, backend)
+
+    for host in ("localhost:8765", "127.0.0.1", "169.254.169.254"):
+        result = ask(hooks, "SandboxNetworkAccess", {"host": host})
+        assert isinstance(result, PermissionResultDeny), host
+
+    assert backend.requests == []
+    assert events(tmp_path)[-1]["event"] == "tool_denied"
+
+
 # --- wiring into the SDK options -------------------------------------------------------------
 
 

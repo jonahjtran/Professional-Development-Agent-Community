@@ -119,11 +119,18 @@ def test_the_watcher_announces_only_new_questions(runs: Path) -> None:
         daemon=True,
     )
     thread.start()
-    time.sleep(0.1)
+    time.sleep(
+        0.2
+    )  # long enough for several polls: the question open at the start stays unannounced
     assert heard == []
 
     write_pending(runs, PendingKind.MERGE, {"pr_urls": ["u"]})
-    time.sleep(0.15)
+    deadline = time.time() + 5
+    while (
+        not heard and time.time() < deadline
+    ):  # wait for the announcement, however slow the machine
+        time.sleep(0.02)
+    time.sleep(0.2)  # and give a wrongly repeated announcement time to show up
     stop.set()
     thread.join(timeout=2)
 

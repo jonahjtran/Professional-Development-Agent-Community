@@ -122,12 +122,15 @@ class DevRunner:
             max_turns=self._config.limits.max_turns.developer,
             max_budget_usd=self._config.limits.max_task_usd,
             setting_sources=[],
-            # The sandbox blocks writes outside the worktree and all network. git is excluded
-            # because the sandbox protects .git; the permission policy guards git instead.
+            # The sandbox blocks writes outside the worktree and, apart from the package
+            # registries in config.yaml, all network (anything else is asked about, see
+            # permissions._network). git is excluded because the sandbox protects .git; the
+            # permission policy guards git instead.
             sandbox={
                 "enabled": True,
                 "autoAllowBashIfSandboxed": True,
                 "excludedCommands": ["git"],
+                "network": {"allowedDomains": list(self._config.sandbox.allowed_domains)},
             },
             env=_hidden_env(),
             **hooks.sdk_options(),
