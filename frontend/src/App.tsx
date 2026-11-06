@@ -8,6 +8,7 @@ import { NotFound } from "./pages/NotFound";
 import { ProjectPage } from "./pages/ProjectPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { QuestionPage } from "./pages/QuestionPage";
+import { RulesPage } from "./pages/RulesPage";
 import { TracePage } from "./pages/TracePage";
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
         <Route path="p/:slug/q/:id" element={<QuestionPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="new" element={<NewProjectPage />} />
+        <Route path="rules" element={<RulesPage />} />
         <Route path="health" element={<HealthPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>

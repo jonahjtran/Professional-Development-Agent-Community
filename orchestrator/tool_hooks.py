@@ -8,7 +8,7 @@ If the policy itself crashes, the call is blocked.
 
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,10 +21,11 @@ from claude_agent_sdk import (
 )
 
 from orchestrator.permissions import Decision, PolicyContext, Verdict, evaluate
+from orchestrator.rules import touch_rule
 from orchestrator.state import Stage
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 
-_SUMMARY_LIMIT = 400
+SUMMARY_LIMIT = 400
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,7 @@ def summarize(tool: str, tool_input: dict[str, Any]) -> str:
         text = str(
             tool_input.get("file_path") or tool_input.get("path") or tool_input.get("pattern", "")
         )
-    return text if len(text) <= _SUMMARY_LIMIT else text[: _SUMMARY_LIMIT - 3] + "..."
+    return text if len(text) <= SUMMARY_LIMIT else text[: SUMMARY_LIMIT - 3] + "..."
 
 
 class ToolPermissionHooks:
@@ -91,6 +92,7 @@ class ToolPermissionHooks:
     ) -> None:
         self._policy = policy
         self._backend = backend
+        self._runs_dir = runs_dir
         self._trace = TraceWriter(runs_dir, project)
         self._project = project
         self._task_id = task_id
@@ -109,20 +111,25 @@ class ToolPermissionHooks:
 
     def _decide(self, tool: str, tool_input: dict[str, Any]) -> Decision:
         try:
-            policy = PolicyContext(
-                worktree=self._policy.worktree,
-                protected=self._policy.protected,
-                ask_paths=self._policy.ask_paths,
-                current_branch=self._branch(),
-                branch_prefix=self._policy.branch_prefix,
-            )
+            policy = replace(self._policy, current_branch=self._branch())
             return evaluate(tool, tool_input, policy)
         except Exception as error:  # fail closed: a bug in the policy must never allow a call
             return Decision(Verdict.DENY, f"the permission policy failed ({error!r}); blocking")
 
     def _record(
-        self, event: EventType, tool: str, tool_input: dict[str, Any], verdict: str, reason: str
+        self,
+        event: EventType,
+        tool: str,
+        tool_input: dict[str, Any],
+        verdict: str,
+        reason: str,
+        rule_ids: tuple[str, ...] = (),
     ) -> None:
+        extra: dict[str, Any] = {}
+        if rule_ids:
+            extra["rule"] = ", ".join(rule_ids)
+            for rule_id in rule_ids:
+                touch_rule(self._runs_dir, self._project, rule_id)
         self._trace.write(
             TraceEvent(
                 project=self._project,
@@ -135,6 +142,7 @@ class ToolPermissionHooks:
                     "summary": summarize(tool, tool_input),
                     "verdict": verdict,
                     "reason": reason,
+                    **extra,
                 },
             )
         )
@@ -158,7 +166,12 @@ class ToolPermissionHooks:
             self._record(EventType.TOOL_DENIED, tool, tool_input, "deny", decision.reason)
         else:
             self._record(
-                EventType.TOOL_CALL, tool, tool_input, decision.verdict.value, decision.reason
+                EventType.TOOL_CALL,
+                tool,
+                tool_input,
+                decision.verdict.value,
+                decision.reason,
+                decision.rule_ids,
             )
         if decision.verdict == Verdict.ALLOW:
             return {}

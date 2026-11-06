@@ -41,6 +41,15 @@ from orchestrator.newproject import (
     create_project,
     default_projects_dir,
 )
+from orchestrator.permissions import PolicyContext
+from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy, set_autonomy
+from orchestrator.rule_options import RuleOptions, rule_options
+from orchestrator.rules import (
+    Rule,
+    describe,
+    global_store,
+    project_store,
+)
 from orchestrator.state import ProjectState, Status, state_path
 from orchestrator.trace import EventType
 from orchestrator.ui import data, serialize
@@ -191,6 +200,7 @@ def create_app(
             return {"starting": True, "slug": slug, "log": tail}
         shown = serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
         shown["helper"] = assistant_totals(runs_dir, slug)  # kept apart from the project's spend
+        shown["autonomy"] = get_autonomy(runs_dir, slug)
         return shown
 
     @app.get("/api/projects/{slug}/artifacts/{name:path}")
@@ -268,6 +278,99 @@ def create_app(
             "cost_usd": result.cost_usd,
         }
 
+    def options_for(slug: str, request: dict[str, Any]) -> RuleOptions:
+        """What may be remembered for a request, worked out here and never taken from the page."""
+        stand_in = PolicyContext(worktree=runs_dir.resolve() / slug / "worktree")
+        tool, summary = str(request.get("tool", "")), str(request.get("summary", ""))
+        return rule_options(tool, summary, stand_in)
+
+    def rule_view(rule: Rule) -> dict[str, Any]:
+        return {
+            "id": rule.id,
+            "description": describe(rule),
+            "uses": rule.uses,
+            "last_used": rule.last_used.isoformat() if rule.last_used else None,
+        }
+
+    @app.get("/api/projects/{slug}/questions/{question_id}/rule-options")
+    def rule_choices(slug: str, question_id: str) -> dict[str, Any]:
+        view_or_404(slug)
+        found = next((p for p in pending_for(runs_dir, slug) if p.id == question_id), None)
+        if found is None or found.kind != PendingKind.TOOL:
+            raise HTTPException(404, "there is no open tool request with that id")
+        options = options_for(slug, found.request)
+        return {
+            "available": options.available,
+            "reason": options.reason,
+            "parts": [
+                {
+                    "label": part.label,
+                    "exact": part.exact,
+                    "any_label": " ".join(part.any_prefix) + " …any arguments"
+                    if part.any_prefix
+                    else None,
+                }
+                for part in options.parts
+            ],
+        }
+
+    def remember(slug: str, request: dict[str, Any], fields: dict[str, Any]) -> None:
+        """Save the rules the human chose, after validating the choice against fresh options."""
+        scope = str(fields.get("remember", ""))
+        if scope not in ("project", "global"):
+            return
+        options = options_for(slug, request)
+        if not options.available:
+            return
+        store = project_store(runs_dir, slug) if scope == "project" else global_store()
+        modes = str(fields.get("rule_modes", "")).split(",")
+        for index, part in enumerate(options.parts):
+            wide = index < len(modes) and modes[index] == "any" and part.any_prefix is not None
+            try:
+                if wide:
+                    assert part.any_prefix is not None
+                    store.add(part.any_prefix, any_args=True)
+                else:
+                    store.add(part.exact, any_args=False)
+            except ValueError:
+                continue
+
+    @app.get("/api/rules")
+    def rules_list() -> dict[str, Any]:
+        slugs = sorted(v.slug for v in data.list_projects(runs_dir, config))
+        return {
+            "global": [rule_view(r) for r in global_store().load()],
+            "projects": {
+                s: [rule_view(r) for r in project_store(runs_dir, s).load()] for s in slugs
+            },
+        }
+
+    @app.post("/api/rules/revoke")
+    async def rules_revoke(request: Request) -> JSONResponse:
+        body = await checked_body(request)
+        scope, rule_id = str(body.get("scope", "")), str(body.get("id", ""))
+        if scope == "global":
+            store = global_store()
+        elif scope == "project":
+            slug = str(body.get("project", ""))
+            view_or_404(slug)
+            store = project_store(runs_dir, slug)
+        else:
+            return fail(400, "scope must be global or project")
+        if not store.revoke(rule_id):
+            return fail(404, "no such rule")
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/projects/{slug}/autonomy")
+    async def autonomy(request: Request, slug: str) -> JSONResponse:
+        body = await checked_body(request)
+        view_or_404(slug)
+        level = str(body.get("level", ""))
+        if level not in AUTONOMY_LEVELS:
+            return fail(400, f"level must be one of {', '.join(AUTONOMY_LEVELS)}")
+        set_autonomy(runs_dir, slug, level)
+        return JSONResponse({"ok": True})
+
     @app.get("/api/health")
     def health_report() -> dict[str, Any]:
         checks = run_health()
@@ -299,6 +402,8 @@ def create_app(
             answer(runs_dir, slug, question_id, payload)
         except AnswerRejected as error:
             return fail(409, str(error))
+        if found.kind == PendingKind.TOOL and payload.get("allow") is True:
+            remember(slug, found.request, fields)
         return JSONResponse({"ok": True})
 
     @app.post("/api/projects/{slug}/pause")

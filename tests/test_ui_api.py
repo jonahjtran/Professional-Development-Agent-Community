@@ -548,6 +548,162 @@ def test_a_failed_explanation_is_reported_not_raised(
     }
 
 
+# --- always allow ----------------------------------------------------------------------------
+
+
+def tool_question(runs: Path, command: str) -> str:
+    return write_pending(
+        runs, PendingKind.TOOL, {"tool": "Bash", "summary": command, "reason": "not listed"}
+    )
+
+
+def test_a_tool_request_lists_what_can_be_remembered(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "npx next lint --fix")
+
+    body = client.get(question_url("demo", qid) + "/rule-options").json()
+
+    assert body["available"] is True
+    assert body["parts"] == [
+        {
+            "label": "npx next lint --fix",
+            "exact": ["npx", "next", "lint", "--fix"],
+            "any_label": "npx next …any arguments",
+        }
+    ]
+
+
+def test_a_refused_command_has_nothing_to_remember(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "git push origin main")
+
+    body = client.get(question_url("demo", qid) + "/rule-options").json()
+
+    assert body["available"] is False and body["reason"]
+
+
+def test_allowing_with_remember_saves_a_project_rule(client: TestClient, runs: Path) -> None:
+    from orchestrator.rules import project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "npx next lint --fix")
+
+    response = post(
+        client,
+        question_url("demo", qid),
+        {"fields": {"allow": "yes", "remember": "project", "rule_modes": "any"}, "items": []},
+    )
+
+    assert response.status_code == 200
+    [rule] = project_store(runs, "demo").load()
+    assert rule.argv == ["npx", "next"] and rule.any_args is True
+
+
+def test_remember_everywhere_saves_a_global_rule(client: TestClient, runs: Path) -> None:
+    from orchestrator.rules import global_store, project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "npx next lint")
+
+    post(
+        client,
+        question_url("demo", qid),
+        {"fields": {"allow": "yes", "remember": "global", "rule_modes": "exact"}, "items": []},
+    )
+
+    assert global_store().load()[0].argv == ["npx", "next", "lint"]
+    assert project_store(runs, "demo").load() == []
+
+
+def test_denying_never_saves_a_rule(client: TestClient, runs: Path) -> None:
+    from orchestrator.rules import project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "npx next lint")
+
+    post(
+        client,
+        question_url("demo", qid),
+        {"fields": {"allow": "no", "remember": "project", "rule_modes": "exact"}, "items": []},
+    )
+
+    assert project_store(runs, "demo").load() == []
+
+
+def test_a_wider_pattern_is_ignored_when_it_is_not_offered(client: TestClient, runs: Path) -> None:
+    from orchestrator.rules import project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "npm install left-pad")
+
+    post(
+        client,
+        question_url("demo", qid),
+        {"fields": {"allow": "yes", "remember": "project", "rule_modes": "any"}, "items": []},
+    )
+
+    [rule] = project_store(runs, "demo").load()
+    assert rule.argv == ["npm", "install", "left-pad"] and rule.any_args is False
+
+
+def test_a_command_that_cannot_be_remembered_is_still_allowed_once(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.rules import project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    qid = tool_question(runs, "FOO=1 pytest")
+
+    response = post(
+        client,
+        question_url("demo", qid),
+        {"fields": {"allow": "yes", "remember": "project", "rule_modes": "exact"}, "items": []},
+    )
+
+    assert response.status_code == 200 and project_store(runs, "demo").load() == []
+
+
+def test_rules_are_listed_and_can_be_revoked(client: TestClient, runs: Path) -> None:
+    from orchestrator.rules import global_store, project_store
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    mine = project_store(runs, "demo").add(["npx", "next"], any_args=True)
+    everywhere = global_store().add(["npm", "run", "x"], any_args=False)
+
+    listed = client.get("/api/rules").json()
+
+    assert [r["id"] for r in listed["projects"]["demo"]] == [mine.id]
+    assert listed["projects"]["demo"][0]["description"] == "npx next …any arguments"
+    assert [r["id"] for r in listed["global"]] == [everywhere.id]
+
+    assert (
+        post(client, "/api/rules/revoke", {"scope": "global", "id": everywhere.id}).status_code
+        == 200
+    )
+    assert (
+        post(
+            client, "/api/rules/revoke", {"scope": "project", "project": "demo", "id": mine.id}
+        ).status_code
+        == 200
+    )
+    assert client.get("/api/rules").json() == {"global": [], "projects": {"demo": []}}
+
+
+def test_revoking_an_unknown_rule_is_a_404(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    assert post(client, "/api/rules/revoke", {"scope": "global", "id": "nope"}).status_code == 404
+
+
+def test_the_autonomy_level_is_shown_and_can_be_changed(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    assert client.get("/api/projects/demo").json()["autonomy"] == "standard"
+
+    assert post(client, "/api/projects/demo/autonomy", {"level": "autonomous"}).status_code == 200
+    assert client.get("/api/projects/demo").json()["autonomy"] == "autonomous"
+    assert post(client, "/api/projects/demo/autonomy", {"level": "reckless"}).status_code == 400
+
+
 # --- controls --------------------------------------------------------------------------------
 
 

@@ -17,10 +17,13 @@ import ipaddress
 import os
 import re
 import shlex
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from orchestrator.rules import Rule, matches
 
 
 class Verdict(StrEnum):
@@ -33,6 +36,7 @@ class Verdict(StrEnum):
 class Decision:
     verdict: Verdict
     reason: str
+    rule_ids: tuple[str, ...] = ()  # saved always-allow rules this decision relied on
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,10 @@ class PolicyContext:
     ask_paths: tuple[str, ...] = (".github",)
     current_branch: str | None = None  # None skips the branch checks
     branch_prefix: str = "agent/"
+    # Saved always-allow rules, read on every call so a rule saved mid-task applies at once.
+    rules: Callable[[], Sequence[Rule]] | None = None
+    # "cautious" ignores saved rules; "autonomous" also allows lockfile installs.
+    autonomy: str = "standard"
 
 
 _OK = Decision(Verdict.ALLOW, "allowed")
@@ -305,7 +313,8 @@ def _combine(decisions: list[Decision]) -> Decision:
         reasons = [d.reason for d in decisions if d.verdict == wanted]
         if reasons:
             return Decision(wanted, "; ".join(dict.fromkeys(reasons)))
-    return _OK
+    ids = tuple(dict.fromkeys(i for d in decisions for i in d.rule_ids))
+    return Decision(Verdict.ALLOW, "allowed", ids) if ids else _OK
 
 
 def _expansion_marker(text: str) -> str | None:
@@ -455,6 +464,29 @@ def _bash(command: str, ctx: PolicyContext) -> Decision:
     return _combine(decisions)
 
 
+def segment_decisions(
+    command: str, ctx: PolicyContext
+) -> list[tuple[list[str], Decision]] | Decision:
+    """Each command of a Bash line with its own decision (for offering to remember it).
+
+    Returns a single Decision if the line cannot be analysed at all. Saved rules are left out so the
+    result shows what the policy itself says.
+    """
+    stripped = _strip_heredocs(command)
+    if isinstance(stripped, Decision):
+        return stripped
+    segments = _split(stripped)
+    if isinstance(segments, Decision):
+        return segments
+    plain = replace(ctx, rules=None)
+    cwd = ctx.worktree.resolve()
+    out: list[tuple[list[str], Decision]] = []
+    for segment in segments:
+        decision, cwd = _segment(segment, plain, cwd)
+        out.append((list(segment.argv), decision))
+    return out
+
+
 def _segment(segment: _Segment, ctx: PolicyContext, cwd: Path) -> tuple[Decision, Path]:
     decisions: list[Decision] = []
     for kind, target in segment.redirects:
@@ -484,8 +516,34 @@ def _segment(segment: _Segment, ctx: PolicyContext, cwd: Path) -> tuple[Decision
             return _combine(decisions), cwd
         return _combine(decisions), _real(target, cwd)
 
-    decisions.append(_command(command, args, segment.piped, ctx, cwd))
+    decision = _command(command, args, segment.piped, ctx, cwd)
+    decisions.append(_apply_rule(decision, argv, ctx, cwd))
     return _combine(decisions), cwd
+
+
+_NOT_LISTED = "is not on the allowed list"
+
+
+def is_ruleable(decision: Decision) -> bool:
+    """True for an ask that is only 'not on the list', which a saved rule may settle."""
+    return (
+        decision.verdict == Verdict.ASK
+        and _NOT_LISTED in decision.reason
+        and "runs other code" not in decision.reason
+    )
+
+
+def _apply_rule(decision: Decision, argv: list[str], ctx: PolicyContext, cwd: Path) -> Decision:
+    """Let a saved rule settle an ordinary 'not on the list' ask, and nothing else."""
+    if ctx.rules is None or ctx.autonomy == "cautious" or not is_ruleable(decision):
+        return decision
+    rule = matches(ctx.rules(), argv)
+    if rule is None:
+        return decision
+    checked = _paths(argv[1:], ctx, cwd, write=False)  # a rule never excuses a path outside
+    if checked.verdict != Verdict.ALLOW:
+        return checked
+    return Decision(Verdict.ALLOW, f"allowed by saved rule {rule.id}", (rule.id,))
 
 
 def _non_flags(args: list[str]) -> list[str]:
@@ -533,7 +591,7 @@ def _command(command: str, args: list[str], piped: bool, ctx: PolicyContext, cwd
     if command == "uv":
         return _uv(args, ctx, cwd)
     if command == "npm":
-        return _npm(args)
+        return _npm(args, ctx, cwd)
     if command == "npx":
         return _npx(args)
     if command in _FILE_UTILITIES:
@@ -541,10 +599,25 @@ def _command(command: str, args: list[str], piped: bool, ctx: PolicyContext, cwd
     return _ask(f"{command} is not on the allowed list")
 
 
-def _npm(args: list[str]) -> Decision:
+_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock")
+_INSTALL_FLAGS = {"--no-audit", "--no-fund", "--prefer-offline", "--ignore-scripts", "--silent"}
+
+
+def _lockfile_install(args: list[str], ctx: PolicyContext, cwd: Path) -> bool:
+    """`npm ci` or a bare `npm install` that only restores what a lockfile already lists."""
+    if ctx.autonomy != "autonomous" or args[:1] not in (["ci"], ["install"], ["i"]):
+        return False
+    if any(a not in _INSTALL_FLAGS for a in args[1:]):
+        return False  # a package name, --global, --save-dev ...: not just the lockfile
+    return any((cwd / name).is_file() for name in _LOCKFILES)
+
+
+def _npm(args: list[str], ctx: PolicyContext, cwd: Path) -> Decision:
     if args[:1] in (["test"], ["t"]) or (
         args[:1] == ["run"] and args[1:2] and args[1] in _NPM_SCRIPTS
     ):
+        return _OK
+    if _lockfile_install(args, ctx, cwd):
         return _OK
     return _ask(f"npm {' '.join(args[:2])} is not on the allowed list".replace("  ", " "))
 

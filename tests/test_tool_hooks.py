@@ -357,3 +357,43 @@ def test_a_repos_own_approval_paths_are_passed_through_to_the_policy(
 
     assert decision_of(asked) == "ask"
     assert decision_of(ci) is None  # not in this repo's approval list, so it is simply allowed
+
+
+# --- saved always-allow rules ---------------------------------------------------------------
+
+
+def test_a_saved_rule_lets_the_command_through_traces_it_and_counts_the_use(
+    tmp_path: Path, wt: Path
+) -> None:
+    from orchestrator.rules import project_store
+
+    rule = project_store(tmp_path / "runs", "demo").add(["npx", "next", "lint"], any_args=False)
+    hooks = ToolPermissionHooks(
+        policy=PolicyContext(worktree=wt, rules=lambda: [rule]),
+        backend=ScriptedBackend(),
+        runs_dir=tmp_path / "runs",
+        project="demo",
+        task_id="T1",
+        branch=lambda: "agent/t1",
+    )
+
+    output = pre(hooks, "Bash", {"command": "npx next lint"})
+
+    assert output == {}
+    [event] = events(tmp_path)
+    assert event["details"]["verdict"] == "allow" and event["details"]["rule"] == rule.id
+    assert project_store(tmp_path / "runs", "demo").load()[0].uses == 1
+
+
+def test_the_rules_and_autonomy_survive_the_per_call_policy_copy(tmp_path: Path, wt: Path) -> None:
+    (wt / "package-lock.json").write_text("{}")
+    hooks = ToolPermissionHooks(
+        policy=PolicyContext(worktree=wt, autonomy="autonomous"),
+        backend=ScriptedBackend(),
+        runs_dir=tmp_path / "runs",
+        project="demo",
+        task_id="T1",
+        branch=lambda: "agent/t1",
+    )
+
+    assert pre(hooks, "Bash", {"command": "npm ci"}) == {}
