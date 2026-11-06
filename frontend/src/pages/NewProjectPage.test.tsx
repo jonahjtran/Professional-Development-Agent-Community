@@ -26,7 +26,7 @@ async function fill() {
 const preview = (agent: string) => ({
   ok: true,
   clone: "/home/me/clones/my-project",
-  fields: { name: "my-project", idea: "A tool that tracks student org events.", track: "engineering", agent, visibility: "private", public_ok: false },
+  fields: { name: "my-project", idea: "A tool that tracks student org events.", track: "engineering", agent, visibility: "private" },
 });
 
 describe("new project", () => {
@@ -40,8 +40,33 @@ describe("new project", () => {
     expect(screen.getByText("/home/me/clones/my-project")).toBeInTheDocument();
     expect(screen.getByText(/spend real money/)).toBeInTheDocument();
     expect(api.posts()[0]?.body).toMatchObject({
-      name: "my-project", track: "engineering", agent: "full", visibility: "private", public_ok: false,
+      name: "my-project", track: "engineering", agent: "full", visibility: "private",
     });
+  });
+
+  it("warns on the confirmation that a public repository is visible to everyone", async () => {
+    setup({
+      "POST /api/new/preview": {
+        ...preview("full"),
+        fields: { ...preview("full").fields, visibility: "public" },
+      },
+    });
+    await fill();
+    await userEvent.click(screen.getByLabelText("Public"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    expect(await screen.findByText(/anyone on the internet will be able to see/)).toBeInTheDocument();
+  });
+
+  it("shows no such warning for a private repository", async () => {
+    setup({ "POST /api/new/preview": preview("full") });
+    await fill();
+
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    await screen.findByText("This will, on your behalf");
+    expect(screen.queryByText(/anyone on the internet/)).not.toBeInTheDocument();
   });
 
   it("a practice run says nothing is created or spent", async () => {

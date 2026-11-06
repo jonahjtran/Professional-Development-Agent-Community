@@ -301,7 +301,6 @@ def create_app(
             "track": str(body.get("track", "engineering")),
             "agent": str(body.get("agent", "full")),
             "visibility": str(body.get("visibility", "private")),
-            "public_ok": "on" if body.get("public_ok") in (True, "on") else "",
         }
         problems: list[str] = []
         if not _NAME.match(fields["name"]):
@@ -318,12 +317,6 @@ def create_app(
             problems.append("Choose how to run it.")
         if fields["visibility"] not in {"private", "public"}:
             problems.append("Choose private or public.")
-        if (
-            fields["visibility"] == "public"
-            and fields["agent"] == "full"
-            and not fields["public_ok"]
-        ):
-            problems.append("Tick the box to confirm you want a public repository.")
         if fields["agent"] == "full":
             problems += [
                 f"{c.name}: {c.detail} {c.fix}".strip()
