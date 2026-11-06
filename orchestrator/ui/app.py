@@ -51,6 +51,7 @@ from orchestrator.rules import (
     project_store,
 )
 from orchestrator.state import ProjectState, Status, state_path
+from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
 from orchestrator.trace import EventType
 from orchestrator.ui import data, serialize
 from orchestrator.ui import health as health_checks
@@ -147,6 +148,11 @@ def create_app(
         lambda: health_checks.run_checks(repo_root=config_path.resolve().parent)
     )
     explain_with = explainer or Explainer(config, runs_dir)
+    quick_checks = health or (
+        lambda: health_checks.run_checks(
+            repo_root=config_path.resolve().parent, fetch=None, network=False
+        )
+    )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
 
     @app.exception_handler(HTTPException)
@@ -201,6 +207,7 @@ def create_app(
         shown = serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
         shown["helper"] = assistant_totals(runs_dir, slug)  # kept apart from the project's spend
         shown["autonomy"] = get_autonomy(runs_dir, slug)
+        shown["todos"] = [todo_view(t) for t in open_todos(runs_dir, slug)]
         return shown
 
     @app.get("/api/projects/{slug}/artifacts/{name:path}")
@@ -369,6 +376,43 @@ def create_app(
         if level not in AUTONOMY_LEVELS:
             return fail(400, f"level must be one of {', '.join(AUTONOMY_LEVELS)}")
         set_autonomy(runs_dir, slug, level)
+        return JSONResponse({"ok": True})
+
+    def todo_view(todo: Todo) -> dict[str, Any]:
+        return {
+            "id": todo.id,
+            "project": todo.project,
+            "title": todo.title,
+            "detail": todo.detail,
+            "source": todo.source,
+            "created": todo.created.isoformat(),
+            "can_mark_done": True,
+        }
+
+    @app.get("/api/todos")
+    def todos() -> dict[str, Any]:
+        """Things only you can do: raised by agents and the pipeline, plus failing health checks."""
+        items = [todo_view(t) for t in all_open_todos(runs_dir)]
+        for check in health_checks.blocking(quick_checks()):
+            items.append(
+                {
+                    "id": f"system-{check.name}",
+                    "project": None,
+                    "title": check.name,
+                    "detail": f"{check.detail} {check.fix}".strip(),
+                    "source": "system",
+                    "created": None,
+                    "can_mark_done": False,
+                }
+            )
+        return {"todos": items}
+
+    @app.post("/api/projects/{slug}/todos/{todo_id}/done")
+    async def todo_done(request: Request, slug: str, todo_id: str) -> JSONResponse:
+        await checked_body(request)
+        view_or_404(slug)
+        if not mark_done(runs_dir, slug, todo_id):
+            return fail(404, "no such open item")
         return JSONResponse({"ok": True})
 
     @app.get("/api/health")

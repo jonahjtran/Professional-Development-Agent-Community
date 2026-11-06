@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, get } from "./api";
-import type { InboxItem } from "./types";
+import type { InboxItem, TodoItem } from "./types";
 
 export interface Loaded<T> {
   data: T | null;
@@ -68,4 +68,9 @@ export function useInbox(every = 5000): InboxItem[] {
   }, [data]);
 
   return items;
+}
+
+/** What only you can do, refreshed often so the nav count stays true. */
+export function useTodos(every = 5000): Loaded<{ todos: TodoItem[] }> {
+  return useLoad<{ todos: TodoItem[] }>("/api/todos", every);
 }

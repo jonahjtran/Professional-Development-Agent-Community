@@ -108,10 +108,17 @@ def test_the_first_architect_prompt_is_kept_for_comparison() -> None:
 def test_the_developer_prompt_explains_that_ci_changes_need_the_humans_approval() -> None:
     prompt = load_prompt("developer", DEFAULT_PROMPTS_DIR)
 
-    assert prompt.version == "v3"
+    assert prompt.version == "v4"
     assert ".github" in prompt.text
     assert "approval" in prompt.text.lower()
     assert "make a failing" in prompt.text.lower() or "make tests pass" in prompt.text.lower()
+
+
+def test_the_developer_prompt_asks_for_things_only_the_human_can_do() -> None:
+    prompt = load_prompt("developer", DEFAULT_PROMPTS_DIR)
+
+    assert "needs_from_human" in prompt.text
+    assert "never include a secret" in prompt.text.lower()
 
 
 def test_the_first_developer_prompt_is_kept_for_comparison() -> None:

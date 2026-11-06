@@ -414,3 +414,58 @@ def test_rejections_at_earlier_stages_do_not_count_as_developer_attempts(tmp_pat
     advance(at_developer(tmp_path, gate_history=[earlier]), make_ctx(tmp_path, agent))
 
     assert agent.requests[0].attempt == 0
+
+
+# --- things only the human can do ------------------------------------------------------------
+
+
+def test_what_the_developer_needs_from_the_human_becomes_an_action_item(tmp_path: Path) -> None:
+    from orchestrator.todos import open_todos
+
+    class Asking(DevAgent):
+        def run(self, request: AgentRequest) -> AgentResult:
+            if request.stage != Stage.DEVELOPER:
+                return super().run(request)
+            result = DevResult.model_validate_json(super().run(request).output)
+            asking = result.model_copy(update={"needs_from_human": ["Add the Apollo API key"]})
+            return AgentResult(output=asking.model_dump_json(), cost_usd=0.3)
+
+    run_pipeline(at_developer(tmp_path), make_ctx(tmp_path, Asking()))
+
+    todos = open_todos(tmp_path, "demo")  # each of the two tasks asked
+    assert {t.title for t in todos} == {"Add the Apollo API key"}
+    assert all(t.source == "developer" for t in todos)
+    assert any("T1" in t.detail for t in todos)
+
+
+def test_the_gate_shows_what_the_developer_needs_from_you(tmp_path: Path) -> None:
+    class Asking(DevAgent):
+        def run(self, request: AgentRequest) -> AgentResult:
+            if request.stage != Stage.DEVELOPER:
+                return super().run(request)
+            result = DevResult.model_validate_json(super().run(request).output)
+            asking = result.model_copy(update={"needs_from_human": ["Add the Apollo API key"]})
+            return AgentResult(output=asking.model_dump_json(), cost_usd=0.3)
+
+    gates = FakeGates()
+    run_pipeline(at_developer(tmp_path), make_ctx(tmp_path, Asking(), gates))
+
+    assert (
+        "Needs you" in gates.requests[0].summary and "Apollo API key" in gates.requests[0].summary
+    )
+
+
+def test_a_run_that_pauses_on_an_error_raises_an_action_item_with_the_reason(
+    tmp_path: Path,
+) -> None:
+    from orchestrator.todos import open_todos
+
+    class Failing(DevAgent):
+        def run(self, request: AgentRequest) -> AgentResult:
+            raise AgentError("the Developer made no commits", cost_usd=0.6)
+
+    run_pipeline(at_developer(tmp_path), make_ctx(tmp_path, Failing()))
+
+    [todo] = open_todos(tmp_path, "demo")
+    assert todo.source == "error" and "no commits" in todo.detail
+    assert "paused" in todo.title.lower()

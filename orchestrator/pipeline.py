@@ -61,9 +61,10 @@ from orchestrator.state import (
     Status,
     save_state,
 )
+from orchestrator.todos import add_todo
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 from orchestrator.worktree import WorktreeError
-from schemas import CareerPlan, DevResult, EvidenceSet, QaReport, TaskList
+from schemas import CareerPlan, CheckStatus, DevResult, EvidenceSet, QaReport, TaskList
 from schemas.tasks import Task
 
 __all__ = [
@@ -259,6 +260,7 @@ def _run_stage(
             latency_ms=int((time.monotonic() - started) * 1000),
             details={"error": str(error)},
         )
+        _raise_pause_todo(ctx, state, str(error))
         return record_cost(state, stage, error.cost_usd).evolve(status=Status.HALTED)
     state = record_cost(state, stage, result.cost_usd)
     spec = ctx.stages.get(stage)
@@ -272,9 +274,11 @@ def _run_stage(
             state, summary, details = _publish_task(state, ctx, task, result.output)
     except ValidationError as error:
         _trace_agent_end(ctx, state, result, started, details={"error": f"not valid: {error}"})
+        _raise_pause_todo(ctx, state, f"the {stage.value} result was not valid")
         return state.evolve(status=Status.HALTED)
     except PublishError as error:
         _trace_agent_end(ctx, state, result, started, details={"error": str(error)})
+        _raise_pause_todo(ctx, state, str(error))
         return state.evolve(status=Status.HALTED)
     _trace_agent_end(ctx, state, result, started, details=details)
 
@@ -283,6 +287,16 @@ def _run_stage(
         store = ArtifactStore(ctx.runs_dir, state.project_slug)
         report = QaReport.model_validate_json(store.read(state.artifacts["test_report.json"]))
         result = result.model_copy(update={"passed": report.passed})
+        for check in report.checks:
+            if check.status == CheckStatus.SKIPPED:
+                add_todo(
+                    ctx.runs_dir,
+                    state.project_slug,
+                    key=f"qa:{check.name}",
+                    title=f"Install what QA needs to run the {check.name}",
+                    detail=check.output_tail or f"The {check.name} did not run, so QA cannot pass.",
+                    source="qa",
+                )
 
     if stage == Stage.QA and result.passed is False:
         # With real QA tools there is no task to send back, so a failure always goes to the human.
@@ -586,15 +600,40 @@ def _publish_task(
     def bullets(items: list[str]) -> str:
         return "\n".join(f"- {i}" for i in items) or "None"
 
+    for need in result.needs_from_human:
+        add_todo(
+            ctx.runs_dir,
+            state.project_slug,
+            key=f"developer:{task.id}:{need}",
+            title=need,
+            detail=f"Raised by the Developer on {task.id}: {task.title}",
+            source="developer",
+        )
+    needs = (
+        f"## Needs you\n{bullets(result.needs_from_human)}\n\n" if result.needs_from_human else ""
+    )
     summary = (
         f"Pull request: {result.pr_url}\n"
         f"Branch: {result.branch}\n\n"
         f"## Summary\n{result.summary}\n\n"
+        f"{needs}"
         f"## Deviations from the plan\n{bullets(result.deviations_from_plan)}\n\n"
         f"## Known gaps\n{bullets(result.known_gaps)}\n\n"
         f"## Changes\n{stat}\n"
     )
     return state, summary, {"task_id": task.id, "pr_url": result.pr_url, "artifacts": [name]}
+
+
+def _raise_pause_todo(ctx: PipelineContext, state: ProjectState, reason: str) -> None:
+    """Tell the human the project stopped on its own and why; resuming closes this item."""
+    add_todo(
+        ctx.runs_dir,
+        state.project_slug,
+        key=f"error:{state.stage.value}:{reason}",
+        title=f"{state.project_slug} paused at the {state.stage.value} stage",
+        detail=reason,
+        source="error",
+    )
 
 
 def _next_stage(stage: Stage) -> Stage:

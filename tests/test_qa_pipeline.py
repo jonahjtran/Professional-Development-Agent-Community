@@ -249,6 +249,15 @@ def test_a_skipped_tool_fails_the_report(tmp_path: Path) -> None:
     assert not report_of(tmp_path, state).passed
 
 
+def test_a_skipped_tool_asks_the_human_to_install_it(tmp_path: Path) -> None:
+    from orchestrator.todos import open_todos
+
+    run_qa(tmp_path, QaAgent(), FakeQa([check("secret scan", CheckStatus.SKIPPED)]))
+
+    [todo] = open_todos(tmp_path, "demo")
+    assert todo.source == "qa" and "secret scan" in todo.title
+
+
 # --- running again ---------------------------------------------------------------------------
 
 
