@@ -55,39 +55,50 @@ describe("the project page", () => {
     await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/resume"]));
   });
 
-  it("has no Resume button while the run is alive, and no Halt once it is done", async () => {
+  it("has no Resume button while the run is alive, but can be paused", async () => {
     open(project());
     await screen.findByText("An idea");
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Halt/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Pause/ })).toBeInTheDocument();
   });
 
-  it("no halt button for a finished project", async () => {
+  it("no pause button for a finished project", async () => {
     open(project({}, { status: "done", alive: false }));
     await screen.findByText("An idea");
-    expect(screen.queryByRole("button", { name: /Halt/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pause/ })).not.toBeInTheDocument();
   });
 
-  it("asks before halting, and does nothing if you cancel", async () => {
-    const api = open(project(), { "POST /api/projects/demo/halt": { ok: true } });
+  it("asks before pausing, and does nothing if you cancel", async () => {
+    const api = open(project(), { "POST /api/projects/demo/pause": { ok: true } });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    await userEvent.click(await screen.findByRole("button", { name: /Halt/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Pause/ }));
     expect(confirm).toHaveBeenCalled();
     expect(api.posts()).toHaveLength(0);
 
     confirm.mockReturnValue(true);
-    await userEvent.click(screen.getByRole("button", { name: /Halt/ }));
-    await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/halt"]));
+    await userEvent.click(screen.getByRole("button", { name: /Pause/ }));
+    await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/pause"]));
   });
 
-  it("shows the server's reason when a halt is refused", async () => {
-    open(project(), { "POST /api/projects/demo/halt": { status: 409, body: { error: "demo is already done." } } });
+  it("shows the server's reason when a pause is refused", async () => {
+    open(project(), { "POST /api/projects/demo/pause": { status: 409, body: { error: "demo is already done." } } });
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    await userEvent.click(await screen.findByRole("button", { name: /Halt/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Pause/ }));
 
     expect(await screen.findByText("demo is already done.")).toBeInTheDocument();
+  });
+
+  it("shows a paused project as paused, with Resume and no Pause", async () => {
+    const api = open(project({}, { status: "halted", alive: false }), {
+      "POST /api/projects/demo/resume": { ok: true },
+    });
+
+    expect(await screen.findByText("paused")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pause/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/resume"]));
   });
 
   it("shows the log while a new project is still starting", async () => {

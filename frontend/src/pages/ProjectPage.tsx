@@ -46,8 +46,12 @@ export function ProjectPage() {
   const { summary, stages, warn_fraction: warn } = data;
   const active = summary.status === "running" || summary.status === "awaiting_human";
 
-  async function act(action: "halt" | "resume") {
-    if (action === "halt" && !window.confirm(`Stop ${slug} before its next step?`)) return;
+  async function act(action: "pause" | "resume") {
+    if (
+      action === "pause" &&
+      !window.confirm(`Pause ${slug}? It stops using credits before its next step. Nothing is lost, and you can resume at any time.`)
+    )
+      return;
     setProblem(null);
     try {
       await post(`/api/projects/${slug}/${action}`);
@@ -70,6 +74,11 @@ export function ProjectPage() {
         </Banner>
       ))}
       {summary.detail && data.pending.length === 0 && <Banner>{summary.detail}</Banner>}
+      {summary.status === "halted" && (
+        <Banner>
+          Paused. Nothing is using credits. <Button onClick={() => void act("resume")}>Resume</Button>
+        </Banner>
+      )}
       {active && !summary.alive && (
         <Banner>
           The run is not active (it stopped, or it was never started from here).{" "}
@@ -82,9 +91,7 @@ export function ProjectPage() {
 
       <Steps stages={stages} />
       {active && (
-        <Button tone="destructive" onClick={() => void act("halt")}>
-          Halt (kill switch)
-        </Button>
+        <Button onClick={() => void act("pause")}>Pause</Button>
       )}
 
       <Section title="Spend">

@@ -193,7 +193,7 @@ def invoke(tmp_path: Path, *args: str) -> Any:
 def test_studio_halt_sets_the_flag_for_a_running_project(tmp_path: Path) -> None:
     save_state(tmp_path, new_state())
 
-    result = invoke(tmp_path, "halt", "demo")
+    result = invoke(tmp_path, "pause", "demo")
 
     assert result.exit_code == 0, result.output
     assert halt_requested(tmp_path, "demo")

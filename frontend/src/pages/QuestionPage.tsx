@@ -149,7 +149,7 @@ export function GateForm({ q, submit, busy }: FormProps & { q: OpenQuestion }) {
           <Button tone="destructive" disabled={busy} onClick={() => decide("reject")}>Reject</Button>
         </div>
         <Group>
-          <SwitchRow label="With reject: halt the project instead of restarting this stage" checked={halt} onChange={setHalt} />
+          <SwitchRow label="With reject: pause the project instead of restarting this stage" checked={halt} onChange={setHalt} />
         </Group>
       </Section>
     </>
@@ -166,7 +166,7 @@ function CapForm({ request, detail, submit, busy }: FormProps & { request: CapRe
         {request.can_approve_anyway && (
           <Button disabled={busy} onClick={() => void submit({ action: "approve_anyway" })}>Approve anyway (this once)</Button>
         )}
-        <Button tone="destructive" disabled={busy} onClick={() => void submit({ action: "abandon" })}>Abandon the project</Button>
+        <Button tone="destructive" disabled={busy} onClick={() => void submit({ action: "abandon" })}>Stop here and pause the project</Button>
       </div>
       <label className="field">
         Raise by {request.unit === "revisions" ? "revisions" : "dollars"}
@@ -190,7 +190,7 @@ function MergeForm({ urls, submit, busy }: FormProps & { urls: string[] }) {
       </Card>
       <div className="actions">
         <Button disabled={busy} onClick={() => void submit({ merged: "yes" })}>I merged them: check again</Button>
-        <Button tone="destructive" disabled={busy} onClick={() => void submit({ merged: "no" })}>Give up and halt</Button>
+        <Button tone="destructive" disabled={busy} onClick={() => void submit({ merged: "no" })}>Give up for now and pause</Button>
       </div>
     </>
   );
