@@ -81,6 +81,10 @@ merge check, Developer tool requests) from one inbox. The career gate shows each
 next to its evidence, a copy button for each LaTeX snippet, and a preview of the website entry.
 Pause and Resume are buttons on the project page (a paused project loses nothing and can be resumed at any point; `studio resume` does the same), and `/health` checks the keys, token expiry,
 tools and folders before a run.
+Each tool approval shows a plain-English explanation (what it does, why, what it could change, a
+risk label) from one cheap `fast` model call. It is advice only, never sends file contents or
+anything that looks like a secret, and its cost goes to `runs/<project>/assistant_cost.json`,
+shown apart from the project's caps.
 
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).
