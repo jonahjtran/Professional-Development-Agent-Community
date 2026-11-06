@@ -134,6 +134,27 @@ def test_the_agenda_shows_each_task_as_done_working_waiting_or_ready(tmp_path: P
     assert agenda["T4"]["state"] == "ready"
 
 
+def test_a_finished_task_on_the_agenda_links_to_its_pull_request(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path, "demo")
+    report = {
+        "task_id": "T1",
+        "branch": "agent/T1",
+        "pr_url": "https://x/pull/1",
+        "summary": "Built it",
+        "deviations_from_plan": [],
+        "known_gaps": [],
+    }
+    state = record_artifacts(
+        project(tmp_path, stage=Stage.DEVELOPER, current_task_id="T2", completed_tasks=["T1"]),
+        {"dev/T1.json": store.write("dev/T1.json", json.dumps(report), revision=1)},
+    )
+
+    agenda = {t["id"]: t for t in by_stage(tmp_path, state)["developer"].agenda}
+
+    assert agenda["T1"]["pr_url"] == "https://x/pull/1"
+    assert agenda["T2"]["pr_url"] is None
+
+
 # --- recent steps -----------------------------------------------------------------------------
 
 

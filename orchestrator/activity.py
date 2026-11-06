@@ -133,10 +133,26 @@ def _tasks(runs_dir: Path, state: ProjectState) -> TaskList | None:
         return None
 
 
-def _agenda(state: ProjectState, tasks: TaskList | None) -> list[dict[str, Any]]:
+def _pr_urls(runs_dir: Path, state: ProjectState) -> dict[str, str]:
+    store = ArtifactStore(runs_dir, state.project_slug)
+    urls: dict[str, str] = {}
+    for name, record in state.artifacts.items():
+        if not name.startswith("dev/"):
+            continue
+        try:
+            report = json.loads(store.read(record))
+            if report.get("pr_url"):
+                urls[str(report["task_id"])] = str(report["pr_url"])
+        except (ValueError, KeyError, OSError, TypeError):
+            continue
+    return urls
+
+
+def _agenda(runs_dir: Path, state: ProjectState, tasks: TaskList | None) -> list[dict[str, Any]]:
     if tasks is None:
         return []
     done = set(state.completed_tasks)
+    urls = _pr_urls(runs_dir, state)
     rows: list[dict[str, Any]] = []
     for task in tasks.tasks:
         unmet = [d for d in task.depends_on if d not in done]
@@ -149,9 +165,13 @@ def _agenda(state: ProjectState, tasks: TaskList | None) -> list[dict[str, Any]]
         else:
             status = "ready"
         rows.append(
-            {"id": task.id, "title": task.title, "state": status, "waiting_on": unmet}
-            if status == "waiting"
-            else {"id": task.id, "title": task.title, "state": status, "waiting_on": []}
+            {
+                "id": task.id,
+                "title": task.title,
+                "state": status,
+                "waiting_on": unmet if status == "waiting" else [],
+                "pr_url": urls.get(task.id),
+            }
         )
     return rows
 
@@ -186,7 +206,7 @@ def project_activity(runs_dir: Path, state: ProjectState, *, alive: bool) -> lis
         common: dict[str, Any] = {
             "stage": stage.value,
             "name": label,
-            "agenda": _agenda(state, tasks) if is_developer else [],
+            "agenda": _agenda(runs_dir, state, tasks) if is_developer else [],
             "notes": _notes(runs_dir, state, stage),
         }
         running, finished = _WRITES[stage]
