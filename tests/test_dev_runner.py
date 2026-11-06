@@ -335,6 +335,37 @@ def test_uncommitted_changes_are_an_error_because_they_would_be_lost(
         Harness(repo, tmp_path, messy).runner().run(request())
 
 
+def test_a_failed_task_keeps_its_uncommitted_files_so_the_next_attempt_can_continue(
+    repo: Path, tmp_path: Path
+) -> None:
+    def messy(cwd: Path) -> list[Any]:
+        commit_a_file(cwd)
+        (cwd / "forgotten.py").write_text("x = 1\n")
+        return [result_message()]
+
+    with pytest.raises(AgentError, match="uncommitted"):
+        Harness(repo, tmp_path, messy).runner().run(request())
+
+    folder = tmp_path / "worktrees" / "project" / "T1"
+    assert (folder / "forgotten.py").exists()  # not thrown away with the folder
+    harness = Harness(repo, tmp_path)
+    harness.runner().run(request())  # the next attempt starts from it
+    assert "forgotten.py" in git(repo, "ls-tree", "--name-only", "agent/T1")
+
+
+def test_a_cleanup_problem_does_not_hide_the_real_error(repo: Path, tmp_path: Path) -> None:
+    def vanishing(cwd: Path) -> list[Any]:
+        commit_a_file(cwd)
+        git(repo, "worktree", "remove", "--force", str(cwd))  # git forgets the folder...
+        cwd.mkdir()  # ...but something recreates it, as a stray agent write would
+        return [result_message()]
+
+    with pytest.raises(AgentError) as error:
+        Harness(repo, tmp_path, vanishing).runner().run(request())
+
+    assert "not a working tree" not in str(error.value)
+
+
 def test_cache_folders_left_by_running_tests_do_not_count_as_uncommitted_work(
     repo: Path, tmp_path: Path
 ) -> None:

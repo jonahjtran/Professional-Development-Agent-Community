@@ -31,6 +31,7 @@ from orchestrator.worktree import (
     create_worktree,
     delete_branch,
     discard_unused,
+    has_uncommitted_changes,
     head_sha,
     leftover_work,
     local_branches,
@@ -103,7 +104,7 @@ class DevRunner:
                 self._session(request, task, worktree, branches_before, interrupted=interrupted)
             )
         finally:
-            remove_worktree(worktree)  # the branch, with its commits, stays in the repository
+            _clean_up(worktree)  # the branch, with its commits, stays in the repository
             for stray in local_branches(self._repo) - branches_before - {worktree.branch}:
                 delete_branch(self._repo, stray)  # a branch the agent made against the rules
 
@@ -242,6 +243,20 @@ class DevRunner:
 
 
 # --- helpers ----------------------------------------------------------------------------------
+
+
+def _clean_up(worktree: Worktree) -> None:
+    """Remove the task folder, unless it holds uncommitted work or cannot be removed.
+
+    Uncommitted files are kept so the next attempt can carry on from them (`leftover_work`).
+    A cleanup problem must never replace the error that explains why the task failed.
+    """
+    try:
+        if has_uncommitted_changes(worktree):
+            return
+        remove_worktree(worktree)
+    except WorktreeError:
+        pass  # the next start sorts out a folder git no longer knows about
 
 
 def _find_task(request: AgentRequest) -> Task:
