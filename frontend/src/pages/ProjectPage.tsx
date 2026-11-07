@@ -25,6 +25,7 @@ export function ProjectPage() {
   const [problem, setProblem] = useState<string | null>(null);
   const [sendTo, setSendTo] = useState("");
   const [sendNote, setSendNote] = useState("");
+  const [sentNotice, setSentNotice] = useState<string | null>(null);
 
   if (error) {
     return (
@@ -71,7 +72,11 @@ export function ProjectPage() {
   async function sendBack() {
     setProblem(null);
     try {
-      await post(`/api/projects/${slug}/send-back`, { to: sendTo || reached[0]?.stage, comment: sendNote.trim() });
+      const sent = await post<{ label: string; reason: string }>(`/api/projects/${slug}/send-back`, {
+        to: sendTo || "auto",
+        comment: sendNote.trim(),
+      });
+      setSentNotice(`Sent to the ${sent.label}. ${sent.reason}`);
       setSendNote("");
       reload();
     } catch (e) {
@@ -106,6 +111,7 @@ export function ProjectPage() {
       <p className="lede">{summary.idea}</p>
 
       {problem && <Banner>{problem}</Banner>}
+      {sentNotice && <Banner>{sentNotice}</Banner>}
       {data.pending.map((q) => (
         <Banner key={q.id}>
           <Link to={`/p/${slug}/q/${q.id}`}><strong>{q.title}</strong></Link> — {q.detail}
@@ -169,6 +175,7 @@ export function ProjectPage() {
             <label className="field">
               Send it back to
               <select value={sendTo} onChange={(e) => setSendTo(e.target.value)}>
+                <option value="">Let the coordinator decide (recommended)</option>
                 {reached.map((s) => (
                   <option key={s.stage} value={s.stage}>{s.label}</option>
                 ))}
@@ -180,8 +187,9 @@ export function ProjectPage() {
             </label>
             <Button disabled={sendNote.trim() === ""} onClick={() => void sendBack()}>Send back and continue</Button>
             <p className="hint">
-              Works on a paused or finished project. The agent you choose does it, you review it, and
-              the agents after it run again. This spends credits.
+              Works on a paused or finished project. Tell the coordinator what you want changed and it
+              picks the right agent and says why; or choose an agent yourself. You review the result,
+              and the agents after it run again. This spends credits.
             </p>
           </Card>
         ) : (

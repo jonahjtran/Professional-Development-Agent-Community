@@ -524,32 +524,37 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
 
     @register(
         "propose_send_back",
-        "Propose sending a PAUSED or FINISHED project back to an agent with the person's "
-        "instruction (agent is one of product_owner, architect, developer, qa, career_coach). "
-        "A finished project becomes active again and the run starts when they confirm. Use it when "
-        "they want to change something after the fact; use propose_note for a small hint to the "
-        "Developer instead.",
-        _schema({"project": "string", "agent": "string", "comment": "string"}),
+        "Propose reopening a PAUSED or FINISHED project with the person's instruction. Leave "
+        "agent out and the orchestrator's coordinator picks the right agent when they confirm "
+        "(preferred: they should not have to know the pipeline); name one only if they asked for "
+        "it (product_owner, architect, developer, qa, career_coach). A finished project becomes "
+        "active again and the run starts when they confirm. Use propose_note for a small hint to "
+        "the Developer instead.",
+        _schema({"project": "string", "comment": "string"}, {"agent": "string"}),
     )
     def _send_back(args: dict[str, Any]) -> str:
         view = _state(ctx, args["project"])
-        try:
-            target = Stage(args["agent"])
-        except ValueError:
-            raise ToolFailure(
-                "agent must be one of " + ", ".join(s.value for s in REWORKABLE)
-            ) from None
+        comment = str(args["comment"]).strip()
+        named = str(args.get("agent") or "auto").strip()
+        target: Stage = Stage.PRODUCT_OWNER  # any reachable agent will do for the dry run
+        if named != "auto":
+            try:
+                target = Stage(named)
+            except ValueError:
+                raise ToolFailure(
+                    "agent must be one of " + ", ".join(s.value for s in REWORKABLE)
+                ) from None
         # Check it the way the orchestrator will, so a refusal comes now, not at the click.
         try:
-            rework_send_back(ctx.runs_dir, view.state, target, str(args["comment"]), dry_run=True)
+            rework_send_back(ctx.runs_dir, view.state, target, comment, dry_run=True)
         except ReworkError as error:
             raise ToolFailure(str(error)) from None
-        comment = str(args["comment"]).strip()
+        where = "the right agent (the coordinator chooses)" if named == "auto" else LABELS[target]
         return propose(
             args["project"],
             "send_back",
-            {"to": target.value, "comment": comment},
-            f"Send {args['project']} back to the {LABELS[target]} and run it again: “{comment}”",
+            {"to": "auto" if named == "auto" else target.value, "comment": comment},
+            f"Send {args['project']} back to {where} and run it again: “{comment}”",
         )
 
     @register(

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from orchestrator.state import atomic_write
 
-_KINDS = ("explain_usd", "chat_usd")
+_KINDS = ("explain_usd", "chat_usd", "coordinator_usd")
 _LOCK = threading.Lock()
 
 

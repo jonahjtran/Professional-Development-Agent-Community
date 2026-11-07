@@ -370,6 +370,19 @@ def test_sending_a_project_back_is_a_proposal_and_changes_nothing(
     assert load_state(runs, "demo").status == Status.DONE  # nothing happened yet
 
 
+def test_without_an_agent_the_proposal_leaves_the_choice_to_the_coordinator(
+    tools: dict[str, Any], runs: Path
+) -> None:
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE)
+
+    text, error = call(tools, "propose_send_back", project="demo", comment="Make it pass the PRD")
+
+    assert not error and "awaiting" in text.lower()
+    [proposal] = list_proposals(runs)
+    assert proposal.args == {"to": "auto", "comment": "Make it pass the PRD"}
+    assert "coordinator" in proposal.summary.lower()
+
+
 @pytest.mark.parametrize(
     ("agent", "comment"), [("intake", "x"), ("nowhere", "x"), ("qa", "  "), ("qa", "x" * 2001)]
 )
