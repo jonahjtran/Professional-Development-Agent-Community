@@ -24,7 +24,16 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from orchestrator.activity import project_activity
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.assistant_cost import assistant_totals
-from orchestrator.config import Config
+from orchestrator.config import Config, LocalConfig
+from orchestrator.developer_backend import (
+    LocalStatus,
+    check_local,
+    developer_model,
+    get_default_backend,
+    get_developer_backend,
+    set_global_backend,
+    set_project_backend,
+)
 from orchestrator.explain import Explainer, ExplainInput, ExplainResult
 from orchestrator.halt import request_halt
 from orchestrator.inbox import (
@@ -37,6 +46,7 @@ from orchestrator.inbox import (
     rejection_reason,
     run_is_alive,
 )
+from orchestrator.models_view import agent_models
 from orchestrator.newproject import (
     NewProject,
     NewProjectError,
@@ -162,6 +172,7 @@ def create_app(
     frontend_dir: Path = FRONTEND,
     explainer: Explaining | None = None,
     chat: Chatting | None = None,
+    local_check: Callable[[LocalConfig], LocalStatus] = check_local,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
@@ -237,6 +248,12 @@ def create_app(
         shown = serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
         shown["helper"] = assistant_totals(runs_dir, slug)  # kept apart from the project's spend
         shown["autonomy"] = get_autonomy(runs_dir, slug)
+        choice = get_developer_backend(runs_dir, slug)
+        shown["developer"] = {
+            "backend": choice.backend,
+            "source": choice.source,
+            "model": developer_model(choice.backend, config),
+        }
         shown["todos"] = [todo_view(t) for t in open_todos(runs_dir, slug)]
         return shown
 
@@ -415,6 +432,72 @@ def create_app(
         set_autonomy(runs_dir, slug, level)
         return JSONResponse({"ok": True})
 
+    def local_health() -> health_checks.Check | None:
+        """A health check for the local model, only when something is set to use it."""
+        in_use = get_default_backend().backend == "local" or any(
+            get_developer_backend(runs_dir, p.slug).backend == "local"
+            for p in data.list_projects(runs_dir, config)
+        )
+        if not in_use:
+            return None
+        status = local_check(config.local)
+        return (
+            health_checks.Check("Local model (Ollama)", health_checks.OK, status.detail)
+            if status.ok
+            else health_checks.Check(
+                "Local model (Ollama)", health_checks.FAIL, status.detail, status.fix
+            )
+        )
+
+    def with_local(runner: Callable[[], list[health_checks.Check]]) -> Callable[[], list[Any]]:
+        def run() -> list[Any]:
+            extra = local_health()
+            return [*runner(), *([extra] if extra else [])]
+
+        return run
+
+    @app.get("/api/models")
+    def models() -> dict[str, Any]:
+        default = get_default_backend()
+        status = local_check(config.local)
+        return {
+            "developer": {
+                "default": default.backend,
+                "claude_model": config.models.developer,
+                "local_model": config.local.model,
+                "endpoint": config.local.endpoint,
+            },
+            "agents": [asdict(a) for a in agent_models(config, default.backend)],
+            "local": {
+                "ok": status.ok,
+                "reachable": status.reachable,
+                "installed": status.installed,
+                "context": status.context,
+                "detail": status.detail,
+                "fix": status.fix,
+            },
+        }
+
+    @app.post("/api/models/developer")
+    async def set_default_backend(request: Request) -> JSONResponse:
+        body = await checked_body(request)
+        try:
+            set_global_backend(str(body.get("backend", "")))
+        except ValueError as error:
+            return fail(400, str(error))
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/projects/{slug}/developer-backend")
+    async def set_project_developer(request: Request, slug: str) -> JSONResponse:
+        body = await checked_body(request)
+        view_or_404(slug)
+        choice = str(body.get("backend", ""))
+        try:
+            set_project_backend(runs_dir, slug, None if choice == "default" else choice)
+        except ValueError as error:
+            return fail(400, str(error))
+        return JSONResponse({"ok": True})
+
     def todo_view(todo: Todo) -> dict[str, Any]:
         return {
             "id": todo.id,
@@ -430,7 +513,7 @@ def create_app(
     def todos() -> dict[str, Any]:
         """Things only you can do: raised by agents and the pipeline, plus failing health checks."""
         items = [todo_view(t) for t in all_open_todos(runs_dir)]
-        for check in health_checks.blocking(quick_checks()):
+        for check in health_checks.blocking(with_local(quick_checks)()):
             items.append(
                 {
                     "id": f"system-{check.name}",
@@ -454,7 +537,7 @@ def create_app(
 
     @app.get("/api/health")
     def health_report() -> dict[str, Any]:
-        checks = run_health()
+        checks = with_local(run_health)()
         return {
             "checks": [serialize.check(c) for c in checks],
             "failing": len(health_checks.blocking(checks)),

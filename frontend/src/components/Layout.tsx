@@ -20,6 +20,7 @@ export function Layout() {
           </NavLink>
           <NavLink className={link} to="/chat">Chat</NavLink>
           <NavLink className={link} to="/new">New project</NavLink>
+          <NavLink className={link} to="/models">Models</NavLink>
           <NavLink className={link} to="/rules">Rules</NavLink>
           <NavLink className={link} to="/health">Health</NavLink>
           {askable && (

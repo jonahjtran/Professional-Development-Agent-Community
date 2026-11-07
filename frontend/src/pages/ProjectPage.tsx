@@ -64,6 +64,16 @@ export function ProjectPage() {
     }
   }
 
+  async function setDeveloper(backend: string) {
+    setProblem(null);
+    try {
+      await post(`/api/projects/${slug}/developer-backend`, { backend });
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   async function setAutonomy(level: string) {
     setProblem(null);
     try {
@@ -118,6 +128,29 @@ export function ProjectPage() {
       {active && (
         <Button onClick={() => void act("pause")}>Pause</Button>
       )}
+
+      <Section title="Developer model">
+        <Card>
+          <p>
+            <code>{data.developer.model}</code>{" "}
+            <span className="muted">
+              ({data.developer.backend === "local" ? "local" : "Claude"},{" "}
+              {data.developer.source === "project" ? "chosen for this project" : "the default"})
+            </span>
+          </p>
+          <Segmented<"default" | "claude" | "local">
+            name="developer-backend"
+            value={data.developer.source === "project" ? data.developer.backend : "default"}
+            onChange={(choice) => void setDeveloper(choice)}
+            options={[
+              { value: "default", label: "Follow the default" },
+              { value: "claude", label: "Claude" },
+              { value: "local", label: "Local model" },
+            ]}
+          />
+          <p className="hint">A switch applies from the next task; a task already running finishes on its model.</p>
+        </Card>
+      </Section>
 
       <Section title="Approvals">
         <Card>

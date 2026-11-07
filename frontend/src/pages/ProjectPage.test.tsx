@@ -14,7 +14,7 @@ function project(over: Record<string, unknown> = {}, summary: Record<string, unk
   return {
     starting: false,
     summary: { slug: "demo", idea: "An idea", stage: "developer", status: "running", detail: "", cost_usd: 3.4, cap_usd: 20, pending: 0, alive: true, ...summary },
-    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], gates: [], links: [], artifacts: [], pending: [], ...over,
+    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5" }, gates: [], links: [], artifacts: [], pending: [], ...over,
   };
 }
 
@@ -114,6 +114,35 @@ describe("the project page", () => {
     const link = await screen.findByRole("link", { name: /Ask the assistant/ });
 
     expect(link.getAttribute("href")).toContain("/chat?project=demo");
+  });
+
+  it("shows which model the Developer uses, and why", async () => {
+    open(project());
+
+    expect(await screen.findByText("claude-sonnet-5-5")).toBeInTheDocument();
+    expect(screen.getByText(/Claude, the default/)).toBeInTheDocument();
+  });
+
+  it("switches this project's Developer to the local model", async () => {
+    const api = open(project(), { "POST /api/projects/demo/developer-backend": { ok: true } });
+    await screen.findByText("claude-sonnet-5-5");
+
+    await userEvent.click(screen.getByLabelText("Local model"));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ backend: "local" }]));
+  });
+
+  it("can go back to following the default", async () => {
+    const api = open(
+      project({ developer: { backend: "local", source: "project", model: "qwen3-coder:27b" } }),
+      { "POST /api/projects/demo/developer-backend": { ok: true } },
+    );
+    expect(await screen.findByText("qwen3-coder:27b")).toBeInTheDocument();
+    expect(screen.getByLabelText("Local model")).toBeChecked();
+
+    await userEvent.click(screen.getByLabelText("Follow the default"));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ backend: "default" }]));
   });
 
   it("links to the team page", async () => {

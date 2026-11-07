@@ -47,6 +47,14 @@ def get_developer_backend(runs_dir: Path, project: str) -> BackendChoice:
     return BackendChoice("claude", "default")
 
 
+def get_default_backend() -> BackendChoice:
+    """The choice for a project that has none of its own: the global one, else Claude."""
+    everywhere = read_settings(_global_path()).get(_KEY)
+    if everywhere in BACKENDS:
+        return BackendChoice(everywhere, "global")
+    return BackendChoice("claude", "default")
+
+
 def _check(backend: str | None) -> None:
     if backend is not None and backend not in BACKENDS:
         raise ValueError(f"the backend must be one of {', '.join(BACKENDS)}")
