@@ -54,6 +54,7 @@ from orchestrator.gates import (
 )
 from orchestrator.halt import halt_requested
 from orchestrator.journey import LABELS, ORDER, can_move, direction
+from orchestrator.notes import add_note
 from orchestrator.publish import PublishError
 from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
 from orchestrator.stages import StageSpec
@@ -232,8 +233,8 @@ def _run_stage(
         return _move(state, ctx, Stage.PRODUCT_OWNER)
 
     if state.handoff is not None:
-        if state.stage == Stage.ARCHITECT and state.handoff.purpose == "qa_fix":
-            return _architect_fix_visit(state, ctx)
+        if state.stage == Stage.ARCHITECT and state.handoff.purpose in ("qa_fix", "design_review"):
+            return _architect_visit(state, ctx)
         if state.stage == Stage.QA and state.handoff.purpose == "qa_gate":
             return _show_failed_qa(state, ctx)
 
@@ -490,11 +491,13 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     if state.stage == Stage.DEVELOPER and ctx.publisher is not None:
         # One task approved: record it and stay on the Developer for the next one.
         assert state.current_task_id is not None
-        return state.evolve(
-            completed_tasks=[*state.completed_tasks, state.current_task_id],
+        task_id = state.current_task_id
+        state = state.evolve(
+            completed_tasks=[*state.completed_tasks, task_id],
             current_task_id=None,
             revisions={**state.revisions, Stage.DEVELOPER: 0},
         )
+        return _escalate_design_problems(state, ctx, task_id)
     if state.stage == Stage.ARCHITECT and ctx.publisher is not None and ctx.repo is not None:
         try:
             state = _publish_design_record(state, ctx)
@@ -655,6 +658,11 @@ def _publish_task(
     needs = (
         f"## Needs you\n{bullets(result.needs_from_human)}\n\n" if result.needs_from_human else ""
     )
+    if result.needs_architect:
+        needs += (
+            f"## Needs the Architect\n{bullets(result.needs_architect)}\n"
+            "Once you approve this task, the project goes back to the Architect about it.\n\n"
+        )
     summary = (
         f"Pull request: {result.pr_url}\n"
         f"Branch: {result.branch}\n\n"
@@ -771,22 +779,93 @@ def _fixable(report: QaReport) -> bool:
     )
 
 
-def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
-    """The Architect's visit after a failed QA report: plan fix tasks for the Developer.
+def _replan_rounds(state: ProjectState) -> int:
+    """How many times the Developer has sent the project back to the Architect so far."""
+    return sum(
+        1
+        for v in state.path
+        if v.stage == Stage.ARCHITECT and v.reason.startswith("design problem raised")
+    )
 
-    On success the project moves on to the Developer with the new tasks. If nothing can be fixed
-    (the planner fails, the plan is empty or invalid) it returns to QA to show you the report.
+
+def _escalate_design_problems(
+    state: ProjectState, ctx: PipelineContext, task_id: str
+) -> ProjectState:
+    """After a task is approved: if the Developer reported a problem with the design, go back to
+    the Architect about it (a limited number of times); otherwise hand it to the human."""
+    record = state.artifacts.get(f"dev/{task_id}.json")
+    if record is None:
+        return state
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    try:
+        problems = DevResult.model_validate_json(store.read(record)).needs_architect
+    except ValidationError:
+        return state
+    if not problems:
+        return state
+    if ctx.fixer is None or _replan_rounds(state) >= ctx.config.limits.max_replans:
+        _problems_to_human(state, ctx, task_id, problems, "")
+        return state
+    detail = (
+        f"The Developer reported this while building {task_id}. Finished tasks so far: "
+        f"{', '.join(state.completed_tasks) or 'none'}.\n\n" + "\n".join(f"- {p}" for p in problems)
+    )
+    return _goto(
+        state.evolve(handoff=Handoff(purpose="design_review", note=detail)),
+        ctx,
+        Stage.ARCHITECT,
+        f"design problem raised on {task_id}",
+    )
+
+
+def _problems_to_human(
+    state: ProjectState, ctx: PipelineContext, task_id: str, problems: list[str], why: str
+) -> None:
+    for problem in problems:
+        add_todo(
+            ctx.runs_dir,
+            state.project_slug,
+            key=f"design:{problem}",
+            title=problem,
+            detail=f"Raised by the Developer on {task_id}. {why}".strip(),
+            source="developer",
+        )
+
+
+def _architect_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """The Architect's visit: plan fix tasks after a failed QA report, or resolve a design problem
+    the Developer raised. Both return a plan of new tasks, validated and added to the task list.
+
+    On success the project moves on to the Developer with the new tasks. If nothing can be done
+    (the planner fails, the plan is empty or invalid) a QA visit returns to QA to show you the
+    report, and a design visit hands the problem to you and lets the Developer carry on.
     """
-    assert ctx.fixer is not None
+    handoff = state.handoff
+    assert ctx.fixer is not None and handoff is not None
+    qa = handoff.purpose == "qa_fix"
     state = _check_budget(state, ctx)  # the Architect's own budget: it is the current agent
     if state.status != Status.RUNNING:
         return state
     store = ArtifactStore(ctx.runs_dir, state.project_slug)
-    report = QaReport.model_validate_json(store.read(state.artifacts["test_report.json"]))
     existing = TaskList.model_validate_json(store.read(state.artifacts["tasks.json"]))
-    round_number = state.qa_loops + 1
+    round_number = state.qa_loops + 1 if qa else _replan_rounds(state)
     architecture = state.artifacts.get("architecture.md")
-    _trace(ctx, state, EventType.AGENT_START, agent="architect", details={"purpose": "qa_fix_plan"})
+    purpose = "qa_fix_plan" if qa else "design_review"
+    report_json = ""
+    if qa:
+        report = QaReport.model_validate_json(store.read(state.artifacts["test_report.json"]))
+        report_json = report.model_dump_json(indent=2)
+    problem = handoff.note
+
+    def nothing_done(current: ProjectState, why: str) -> ProjectState:
+        if qa:
+            return _back_to_qa(current, ctx, why)
+        _problems_to_human(current, ctx, "its task", [problem.splitlines()[-1].lstrip("- ")], why)
+        return _goto(
+            current.evolve(handoff=None), ctx, Stage.DEVELOPER, "no design change: carrying on"
+        )
+
+    _trace(ctx, state, EventType.AGENT_START, agent="architect", details={"purpose": purpose})
     started = time.monotonic()
     try:
         result = ctx.fixer.plan(
@@ -795,8 +874,10 @@ def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectSt
                 idea=state.idea,
                 architecture=store.read(architecture) if architecture else "",
                 tasks_json=existing.model_dump_json(indent=2),
-                report_json=report.model_dump_json(indent=2),
+                report_json=report_json,
                 round=round_number,
+                kind="qa_failure" if qa else "design_problem",
+                problem=problem,
             )
         )
     except AgentError as error:
@@ -807,10 +888,10 @@ def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectSt
             agent="architect",
             cost_usd=error.cost_usd,
             latency_ms=int((time.monotonic() - started) * 1000),
-            details={"error": str(error), "purpose": "qa_fix_plan"},
+            details={"error": str(error), "purpose": purpose},
         )
         state = record_cost(state, Stage.ARCHITECT, error.cost_usd)
-        return _back_to_qa(state, ctx, f"Automatic fix planning failed: {error}")
+        return nothing_done(state, f"The Architect could not plan: {error}")
     state = record_cost(state, Stage.ARCHITECT, result.cost_usd)
     _trace(
         ctx,
@@ -820,20 +901,36 @@ def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectSt
         model=result.model,
         cost_usd=result.cost_usd,
         latency_ms=int((time.monotonic() - started) * 1000),
-        details={"purpose": "qa_fix_plan", "tasks": [t.id for t in result.plan.tasks]},
+        details={"purpose": purpose, "tasks": [t.id for t in result.plan.tasks]},
     )
     for need in result.plan.needs_human:
         add_todo(
             ctx.runs_dir,
             state.project_slug,
-            key=f"qa-fix:{need}",
+            key=f"{'qa-fix' if qa else 'design'}:{need}",
             title=need,
-            detail="Raised by the Architect while planning the QA fixes.",
-            source="qa",
+            detail="Raised by the Architect while "
+            + ("planning the QA fixes." if qa else "resolving a design problem."),
+            source="qa" if qa else "developer",
         )
     if not result.plan.tasks:
-        return _back_to_qa(
-            state, ctx, f"The Architect found nothing the Developer can fix: {result.plan.analysis}"
+        if not qa and not result.plan.needs_human:
+            # The Architect reviewed the problem and decided the design stands. That is an answer
+            # for the Developer, not something to alert the person about.
+            add_note(
+                ctx.runs_dir,
+                state.project_slug,
+                "The Architect reviewed the design problem you raised and decided no design "
+                f"change is needed. Their reasoning: {result.plan.analysis}",
+            )
+            return _goto(
+                state.evolve(handoff=None),
+                ctx,
+                Stage.DEVELOPER,
+                "no design change: carrying on",
+            )
+        return nothing_done(
+            state, f"The Architect found nothing the Developer can change: {result.plan.analysis}"
         )
     try:
         merged = TaskList.model_validate(
@@ -845,20 +942,21 @@ def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectSt
             }
         )
     except ValidationError as error:
-        return _back_to_qa(
-            state, ctx, f"The Architect's fix plan was not valid, so nothing was changed: {error}"
+        return nothing_done(
+            state, f"The Architect's plan was not valid, so nothing was changed: {error}"
         )
 
+    name = "qa_fix_plan" if qa else "replan"
     previous = state.artifacts["tasks.json"]
     written = {
         "tasks.json": store.write(
             "tasks.json", merged.model_dump_json(indent=2), revision=previous.revision + 1
         ),
-        f"qa_fix_plan_{round_number}.json": store.write(
-            f"qa_fix_plan_{round_number}.json", result.plan.model_dump_json(indent=2), revision=1
+        f"{name}_{round_number}.json": store.write(
+            f"{name}_{round_number}.json", result.plan.model_dump_json(indent=2), revision=1
         ),
-        f"qa_fix_plan_{round_number}.md": store.write(
-            f"qa_fix_plan_{round_number}.md", render_plan(result.plan, round_number), revision=1
+        f"{name}_{round_number}.md": store.write(
+            f"{name}_{round_number}.md", render_plan(result.plan, round_number), revision=1
         ),
     }
     state = approve_artifacts(
@@ -868,10 +966,22 @@ def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectSt
         ctx,
         state,
         EventType.TRANSITION,
-        details={"qa_fix": {"round": round_number, "tasks": [t.id for t in result.plan.tasks]}},
+        details={
+            "qa_fix" if qa else "replan": {
+                "round": round_number,
+                "tasks": [t.id for t in result.plan.tasks],
+            }
+        },
     )
-    state = state.evolve(qa_loops=round_number, current_task_id=None, handoff=None)
-    return _goto(state, ctx, Stage.DEVELOPER, f"fix plan ready: round {round_number}")
+    state = state.evolve(
+        qa_loops=round_number if qa else state.qa_loops, current_task_id=None, handoff=None
+    )
+    return _goto(
+        state,
+        ctx,
+        Stage.DEVELOPER,
+        f"fix plan ready: round {round_number}" if qa else f"design updated: round {round_number}",
+    )
 
 
 def _back_to_qa(state: ProjectState, ctx: PipelineContext, why: str) -> ProjectState:

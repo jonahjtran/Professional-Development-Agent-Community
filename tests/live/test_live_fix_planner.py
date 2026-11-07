@@ -106,3 +106,30 @@ def test_the_architect_plans_a_small_valid_fix_for_a_failing_test() -> None:
     )
     assert plan.needs_human == []  # nothing here needs the person
     assert 0 < result.cost_usd < 0.5
+
+
+def test_the_architect_resolves_a_design_problem_the_developer_raised() -> None:
+    problem = (
+        "The Developer reported this while building T1. Finished tasks so far: none.\n\n"
+        "- The architecture says greet() and double() live in app.py, but T1's criteria need a "
+        "second module for configuration that no task creates."
+    )
+    request = FixRequest(
+        project="demo",
+        idea="A tiny library with greet and double.",
+        architecture="# Architecture\nA single module, app.py, tested with pytest.",
+        tasks_json=TaskList.model_validate(TASKS).model_dump_json(indent=2),
+        report_json="",
+        round=1,
+        kind="design_problem",
+        problem=problem,
+    )
+
+    result = ApiFixPlanner(load_config(CONFIG)).plan(request)
+
+    plan = result.plan
+    print(f"\nanalysis: {plan.analysis}\ntasks: {[(t.id, t.title) for t in plan.tasks]}")
+    assert 0 <= len(plan.tasks) <= 3
+    assert all(t.id.startswith("R1-") for t in plan.tasks)
+    TaskList.model_validate({"tasks": [*TASKS["tasks"], *[t.model_dump() for t in plan.tasks]]})
+    assert 0 < result.cost_usd < 0.5
