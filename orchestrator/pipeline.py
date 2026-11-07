@@ -59,6 +59,7 @@ from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
 from orchestrator.stages import StageSpec
 from orchestrator.state import (
     GateOutcome,
+    Handoff,
     Intervention,
     InterventionKind,
     ProjectState,
@@ -230,6 +231,12 @@ def _run_stage(
     if state.stage == Stage.INTAKE:
         return _move(state, ctx, Stage.PRODUCT_OWNER)
 
+    if state.handoff is not None:
+        if state.stage == Stage.ARCHITECT and state.handoff.purpose == "qa_fix":
+            return _architect_fix_visit(state, ctx)
+        if state.stage == Stage.QA and state.handoff.purpose == "qa_gate":
+            return _show_failed_qa(state, ctx)
+
     stage = state.stage
     loop = stage == Stage.DEVELOPER and ctx.publisher is not None
     task: Task | None = None
@@ -318,7 +325,6 @@ def _run_stage(
                 Stage.DEVELOPER,
                 f"QA failed: retry {state.qa_loops + 1}",
             )
-        why_not = ""
         if (
             ctx.qa is not None
             and ctx.fixer is not None
@@ -326,13 +332,19 @@ def _run_stage(
             and state.qa_loops < ctx.config.limits.max_qa_loops
             and _fixable(report)
         ):
-            state, fixing, why_not = _plan_fixes(state, ctx, report)
-            if fixing:
-                return state
+            # Go back to the Architect for a fix plan. The failed report is kept as the draft,
+            # so if nothing can be fixed we come straight back and show it to the human.
+            shown = summary if summary is not None else result.output
+            _write_draft(ctx, state, f"{shown}\n\n---\n{_qa_failed_note(state.qa_loops)}")
+            round_number = state.qa_loops + 1
+            return _goto(
+                state.evolve(handoff=Handoff(purpose="qa_fix")),
+                ctx,
+                Stage.ARCHITECT,
+                f"QA failed: planning fix round {round_number}",
+            )
         shown = summary if summary is not None else result.output
         output = f"{shown}\n\n---\n{_qa_failed_note(state.qa_loops)}"
-        if why_not:
-            output += f"\n\n{why_not}"
     else:
         output = summary if summary is not None else result.output
     _write_draft(ctx, state, output)
@@ -678,7 +690,7 @@ def _goto(state: ProjectState, ctx: PipelineContext, to: Stage, reason: str) -> 
     saved in the project's path and traced with its direction, so the UI can show where the
     project has been and why, and no agent is ever simply "done".
     """
-    if not can_move(state.stage, to):
+    if not (can_move(state.stage, to) or _is_return(state, to)):
         raise ValueError(f"cannot move from {state.stage.value} to {to.value}")
     way = direction(state.stage, to)
     _trace(
@@ -694,6 +706,12 @@ def _goto(state: ProjectState, ctx: PipelineContext, to: Stage, reason: str) -> 
     )
     visit = StageVisit(stage=to, reason=reason, ts=datetime.now(UTC), came_from=state.stage)
     return state.evolve(stage=to, path=[*state.path, visit])
+
+
+def _is_return(state: ProjectState, to: Stage) -> bool:
+    """True when `to` is the agent that sent us here: a detour may always return to its caller."""
+    last = state.path[-1] if state.path else None
+    return last is not None and last.stage == state.stage and last.came_from == to
 
 
 def _move(state: ProjectState, ctx: PipelineContext, to: Stage, reason: str = "") -> ProjectState:
@@ -753,27 +771,22 @@ def _fixable(report: QaReport) -> bool:
     )
 
 
-def _plan_fixes(
-    state: ProjectState, ctx: PipelineContext, report: QaReport
-) -> tuple[ProjectState, bool, str]:
-    """Ask the Architect for fix tasks, add them to the task list, and send the project back to
-    the Developer. Returns (state, whether it went back, why not when it did not)."""
-    assert ctx.fixer is not None
-    where = state.stage
-    architect = state.evolve(stage=Stage.ARCHITECT)  # the Architect's budget, name and trace
-    architect = _check_budget(architect, ctx, Stage.ARCHITECT)
-    if architect.status != Status.RUNNING:
-        return architect.evolve(stage=where), True, ""
-    state = architect.evolve(stage=where)
+def _architect_fix_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """The Architect's visit after a failed QA report: plan fix tasks for the Developer.
 
+    On success the project moves on to the Developer with the new tasks. If nothing can be fixed
+    (the planner fails, the plan is empty or invalid) it returns to QA to show you the report.
+    """
+    assert ctx.fixer is not None
+    state = _check_budget(state, ctx)  # the Architect's own budget: it is the current agent
+    if state.status != Status.RUNNING:
+        return state
     store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    report = QaReport.model_validate_json(store.read(state.artifacts["test_report.json"]))
     existing = TaskList.model_validate_json(store.read(state.artifacts["tasks.json"]))
     round_number = state.qa_loops + 1
     architecture = state.artifacts.get("architecture.md")
-    traced = state.evolve(stage=Stage.ARCHITECT)
-    _trace(
-        ctx, traced, EventType.AGENT_START, agent="architect", details={"purpose": "qa_fix_plan"}
-    )
+    _trace(ctx, state, EventType.AGENT_START, agent="architect", details={"purpose": "qa_fix_plan"})
     started = time.monotonic()
     try:
         result = ctx.fixer.plan(
@@ -789,7 +802,7 @@ def _plan_fixes(
     except AgentError as error:
         _trace(
             ctx,
-            traced,
+            state,
             EventType.AGENT_END,
             agent="architect",
             cost_usd=error.cost_usd,
@@ -797,11 +810,11 @@ def _plan_fixes(
             details={"error": str(error), "purpose": "qa_fix_plan"},
         )
         state = record_cost(state, Stage.ARCHITECT, error.cost_usd)
-        return state, False, f"Automatic fix planning failed: {error}"
+        return _back_to_qa(state, ctx, f"Automatic fix planning failed: {error}")
     state = record_cost(state, Stage.ARCHITECT, result.cost_usd)
     _trace(
         ctx,
-        traced,
+        state,
         EventType.AGENT_END,
         agent="architect",
         model=result.model,
@@ -819,10 +832,8 @@ def _plan_fixes(
             source="qa",
         )
     if not result.plan.tasks:
-        return (
-            state,
-            False,
-            f"The Architect found nothing the Developer can fix: {result.plan.analysis}",
+        return _back_to_qa(
+            state, ctx, f"The Architect found nothing the Developer can fix: {result.plan.analysis}"
         )
     try:
         merged = TaskList.model_validate(
@@ -834,10 +845,8 @@ def _plan_fixes(
             }
         )
     except ValidationError as error:
-        return (
-            state,
-            False,
-            f"The Architect's fix plan was not valid, so nothing was changed: {error}",
+        return _back_to_qa(
+            state, ctx, f"The Architect's fix plan was not valid, so nothing was changed: {error}"
         )
 
     previous = state.artifacts["tasks.json"]
@@ -861,14 +870,30 @@ def _plan_fixes(
         EventType.TRANSITION,
         details={"qa_fix": {"round": round_number, "tasks": [t.id for t in result.plan.tasks]}},
     )
-    state = state.evolve(
-        status=Status.RUNNING, intervention=None, qa_loops=round_number, current_task_id=None
+    state = state.evolve(qa_loops=round_number, current_task_id=None, handoff=None)
+    return _goto(state, ctx, Stage.DEVELOPER, f"fix plan ready: round {round_number}")
+
+
+def _back_to_qa(state: ProjectState, ctx: PipelineContext, why: str) -> ProjectState:
+    """Nothing could be fixed automatically: return to QA to show you the failed report."""
+    return _goto(
+        state.evolve(handoff=Handoff(purpose="qa_gate", note=why)),
+        ctx,
+        Stage.QA,
+        "no automatic fix: the report goes to you",
     )
-    return (
-        _goto(state, ctx, Stage.DEVELOPER, f"QA failed: fix round {round_number}"),
-        True,
-        "",
-    )
+
+
+def _show_failed_qa(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """The QA gate for a failed report, with why it could not be fixed automatically."""
+    assert state.handoff is not None
+    note = state.handoff.note
+    state = state.evolve(handoff=None)
+    draft = _read_draft(ctx, state, Stage.QA) or ""
+    _write_draft(ctx, state, f"{draft}\n\n{note}" if note else draft)
+    waiting = open_gate(state, title="Review the qa output")
+    _save(waiting, ctx)  # save before asking, so a crash resumes at this gate
+    return _ask_gate(waiting, ctx)
 
 
 def _prepare_qa(state: ProjectState, ctx: PipelineContext, qa: QaPreparer) -> ProjectState:

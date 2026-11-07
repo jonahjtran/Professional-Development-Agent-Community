@@ -291,6 +291,8 @@ def project_activity(
             "visits": counts.get(stage, 0),
         }
         running, finished = _WRITES[stage]
+        if stage == Stage.ARCHITECT and state.handoff and state.handoff.purpose == "qa_fix":
+            running = "Planning fixes for the failures in QA's report"
         if state.status == Status.DONE or (current is not None and order[stage] < current):
             # "finished" for now: the orchestrator may still go back to this agent. Only a
             # finished project has every agent "done".
