@@ -17,7 +17,13 @@ from pydantic import BaseModel, ValidationError
 
 from orchestrator.state import atomic_write
 
-ACTIONS = ("answer_question", "resume_project", "set_autonomy", "leave_note")
+ACTIONS = (
+    "answer_question",
+    "resume_project",
+    "set_autonomy",
+    "leave_note",
+    "set_developer_backend",
+)
 Status = Literal["pending", "confirmed", "dismissed", "failed"]
 _LOCK = threading.Lock()
 

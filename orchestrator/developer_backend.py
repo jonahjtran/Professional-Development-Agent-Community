@@ -21,6 +21,7 @@ from orchestrator.config import Config, LocalConfig
 from orchestrator.envsafe import hidden_env
 from orchestrator.project_settings import project_settings_path, read_settings, update_settings
 from orchestrator.rules import home_dir
+from orchestrator.state import atomic_write
 
 BACKENDS = ("claude", "local")
 _KEY = "developer_backend"
@@ -93,6 +94,31 @@ def developer_env(backend: str, local: LocalConfig) -> dict[str, str]:
         "CLAUDE_CODE_SUBAGENT_MODEL": local.model,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     }
+
+
+# --- the model a task is running on -----------------------------------------------------------
+
+
+def _running_path(runs_dir: Path, project: str) -> Path:
+    return runs_dir / project / "developer_model.json"
+
+
+def record_running_model(
+    runs_dir: Path, project: str, task_id: str, backend: str, model: str
+) -> None:
+    """Note which model a task starts on, so the UI can say what is being used right now."""
+    path = _running_path(runs_dir, project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps({"task_id": task_id, "backend": backend, "model": model}))
+
+
+def read_running_model(runs_dir: Path, project: str) -> tuple[str, str, str] | None:
+    """(task id, backend, model) of the latest task to start, or None."""
+    try:
+        raw = json.loads(_running_path(runs_dir, project).read_text())
+        return str(raw["task_id"]), str(raw["backend"]), str(raw["model"])
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
+        return None
 
 
 # --- is the local server ready ----------------------------------------------------------------

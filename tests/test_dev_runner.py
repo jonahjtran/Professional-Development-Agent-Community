@@ -845,3 +845,18 @@ def test_switching_between_tasks_takes_effect_on_the_next_one(repo: Path, tmp_pa
 
     assert harness.options[0].model == "claude-sonnet-5-5"
     assert harness.options[1].model == harness.config.local.model
+
+
+def test_the_runner_records_which_model_each_task_starts_on(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.developer_backend import read_running_model, set_project_backend
+
+    set_project_backend(tmp_path / "runs", "demo", "local")
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    assert read_running_model(tmp_path / "runs", "demo") == (
+        "T1",
+        "local",
+        harness.config.local.model,
+    )

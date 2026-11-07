@@ -21,6 +21,12 @@ const STATUS_WORD: Record<AgentActivity["status"], string> = {
   upcoming: "upcoming",
 };
 
+const SOURCE_WORD = {
+  running: "running now",
+  used: "used last",
+  configured: "will use",
+} as const;
+
 function Person({ agent, open, onOpen }: { agent: AgentActivity; open: boolean; onOpen: () => void }) {
   return (
     <button
@@ -35,6 +41,13 @@ function Person({ agent, open, onOpen }: { agent: AgentActivity; open: boolean; 
       <span className="desk">
         <strong>{agent.name}</strong>
         <span className="muted">{STATUS_WORD[agent.status]}</span>
+        {agent.model && (
+          <span className="model">
+            <code>{agent.model}</code>
+            {agent.backend === "local" && <span className="pill waiting">local</span>}
+            <span className="muted">{SOURCE_WORD[agent.model_source ?? "configured"]}</span>
+          </span>
+        )}
       </span>
     </button>
   );

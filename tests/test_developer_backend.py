@@ -232,3 +232,24 @@ def test_a_tag_without_latest_matches_the_installed_name() -> None:
     )
 
     assert status.installed
+
+
+# --- the model a task is running on -----------------------------------------------------------
+
+
+def test_the_model_a_task_started_on_is_recorded_and_can_be_read_back(tmp_path: Path) -> None:
+    from orchestrator.developer_backend import read_running_model, record_running_model
+
+    record_running_model(tmp_path, "demo", "T3", "local", "qwen3-coder:27b")
+
+    assert read_running_model(tmp_path, "demo") == ("T3", "local", "qwen3-coder:27b")
+    assert read_running_model(tmp_path, "other") is None
+
+
+def test_a_damaged_record_is_none(tmp_path: Path) -> None:
+    from orchestrator.developer_backend import read_running_model
+
+    (tmp_path / "demo").mkdir()
+    (tmp_path / "demo" / "developer_model.json").write_text("{nope")
+
+    assert read_running_model(tmp_path, "demo") is None

@@ -303,6 +303,36 @@ def test_resuming_changing_autonomy_and_leaving_a_note_are_proposals(
     assert get_autonomy(runs, "demo") == "standard" and pending_notes(runs, "demo") == []
 
 
+def test_switching_the_developer_model_is_a_proposal(tools: dict[str, Any], runs: Path) -> None:
+    from orchestrator.developer_backend import get_developer_backend
+
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    text, error = call(tools, "propose_developer_backend", project="demo", backend="local")
+
+    assert not error and "awaiting" in text.lower()
+    [proposal] = list_proposals(runs)
+    assert proposal.action == "set_developer_backend" and proposal.args == {"backend": "local"}
+    assert "local" in proposal.summary.lower() and "next task" in proposal.summary.lower()
+    assert get_developer_backend(runs, "demo").source == "default"  # nothing changed yet
+
+
+def test_an_unknown_developer_backend_is_refused(tools: dict[str, Any], runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    _text, error = call(tools, "propose_developer_backend", project="demo", backend="gpt")
+
+    assert error and list_proposals(runs) == []
+
+
+def test_the_activity_tool_names_each_agents_model(tools: dict[str, Any], runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    text, _ = call(tools, "project_activity", project="demo")
+
+    assert "claude-sonnet-5-5" in text
+
+
 def test_an_unknown_autonomy_level_is_refused(tools: dict[str, Any], runs: Path) -> None:
     make_project(runs)
 

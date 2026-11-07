@@ -228,6 +228,9 @@ export interface AgentActivity {
   agenda: AgendaItem[];
   notes: string[];
   recent: string[];
+  model: string | null;
+  backend: "claude" | "local" | null;
+  model_source: "running" | "used" | "configured" | null;
 }
 
 export interface ProposalView {

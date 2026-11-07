@@ -261,7 +261,15 @@ def create_app(
     def activity(slug: str) -> dict[str, Any]:
         """Who is doing what, derived from the saved state and the trace (no model call)."""
         view = view_or_404(slug)
-        people = project_activity(runs_dir, view.state, alive=view.summary.alive)
+        choice = get_developer_backend(runs_dir, slug)
+        configured = {a.id: (a.model, a.backend) for a in agent_models(config, choice.backend)}
+        people = project_activity(
+            runs_dir,
+            view.state,
+            alive=view.summary.alive,
+            configured=configured,
+            local_model=config.local.model,
+        )
         return {"agents": [asdict(p) for p in people]}
 
     @app.get("/api/projects/{slug}/artifacts/{name:path}")
@@ -684,6 +692,12 @@ def create_app(
                 return 400, "unknown autonomy level"
             set_autonomy(runs_dir, p.project, level)
             return 200, f"Autonomy set to {level}."
+        if p.action == "set_developer_backend":
+            try:
+                set_project_backend(runs_dir, p.project, str(p.args.get("backend", "")))
+            except ValueError as error:
+                return 400, str(error)
+            return 200, f"The Developer uses the {p.args.get('backend')} model from the next task."
         if p.action == "leave_note":
             try:
                 add_note(runs_dir, p.project, str(p.args.get("text", "")))

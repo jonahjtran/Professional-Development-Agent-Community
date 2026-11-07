@@ -22,6 +22,7 @@ from orchestrator.developer_backend import (
     developer_env,
     developer_model,
     get_developer_backend,
+    record_running_model,
 )
 from orchestrator.halt import halt_requested
 from orchestrator.notes import consume_notes, pending_notes
@@ -102,6 +103,14 @@ class DevRunner:
             status = self._local_check(self._config.local)
             if not status.ok:
                 raise AgentError(f"{status.detail} {status.fix}".strip())
+        if request.task_id:
+            record_running_model(
+                self._runs_dir,
+                request.project,
+                request.task_id,
+                backend,
+                developer_model(backend, self._config),
+            )
         # A rejected task starts again on a fresh branch, so the earlier pull request is untouched.
         branch_id = task.id if request.attempt == 0 else f"{task.id}-r{request.attempt}"
         try:
