@@ -42,6 +42,19 @@ direction. Because an agent can be called back, **no agent is "done" until the p
 
 A project saved before this existed has no path; it is read as having passed each earlier agent once.
 
+**Who decides to go back.** Never a model: the orchestrator follows rules and signals.
+
+- QA fails and the failure is in the code: back to the **Architect** for a fix plan (above).
+- The **Developer** reports a problem with the design or task list it cannot solve inside a task
+  (`needs_architect` in its report, from prompt `developer.v5`): when you approve that task, the
+  project goes **back to the Architect** (`agents/prompts/architect_replan.v1.md`), at most
+  `limits.max_replans` (2) times. The Architect returns new tasks (ids `R<round>-<n>`, appended to the
+  task list and built by the Developer), or answers that the design stands (the Developer gets that as
+  a note on its next task, and you are not alerted), or hands a choice only you can make to Action
+  needed. If it cannot plan, or the limit is used, the problem goes to you as an action item.
+- Every such visit is checked against the Architect's own budget, saved with a `handoff` so a pause
+  or crash resumes into it, and shown in the journey.
+
 ## Starting and running a project
 
 Every project gets its own private repository. Secrets live in `.env` (git-ignored; load it with

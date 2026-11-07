@@ -56,8 +56,8 @@ _TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
 _STUDIO_ROOT = Path(__file__).resolve().parent.parent
 _FOLLOW_UP = (
     "Your last message was not a valid report. Reply with only a JSON object with the fields "
-    "task_id, summary, deviations_from_plan, known_gaps and (optionally) needs_from_human. "
-    "Problem: {problem}"
+    "task_id, summary, deviations_from_plan, known_gaps and (optionally) needs_from_human and "
+    "needs_architect. Problem: {problem}"
 )
 
 ClientFactory = Callable[[ClaudeAgentOptions], Any]
@@ -242,6 +242,7 @@ class DevRunner:
             deviations_from_plan=report.deviations_from_plan,
             known_gaps=report.known_gaps,
             needs_from_human=report.needs_from_human,
+            needs_architect=report.needs_architect,
         )
         return AgentResult(
             output=result.model_dump_json(indent=2),

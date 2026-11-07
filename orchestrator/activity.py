@@ -223,21 +223,22 @@ def _agenda(runs_dir: Path, state: ProjectState, tasks: TaskList | None) -> list
 
 
 def _fix_notes(runs_dir: Path, state: ProjectState) -> list[str]:
+    """The Architect's plans after a failed QA report and after a design problem."""
     store = ArtifactStore(runs_dir, state.project_slug)
     notes: list[str] = []
-    for name in sorted(
-        n for n in state.artifacts if n.startswith("qa_fix_plan_") and n.endswith(".json")
-    ):
-        try:
-            plan = json.loads(store.read(state.artifacts[name]))
-            number = name.removeprefix("qa_fix_plan_").removesuffix(".json")
-            ids = ", ".join(str(t["id"]) for t in plan.get("tasks", []))
-            notes.append(
-                f"QA fix round {number}: {plan['analysis']}" + (f" Tasks: {ids}." if ids else "")
-            )
-            notes += [f"Needs you: {n}" for n in plan.get("needs_human", [])]
-        except (ValueError, KeyError, OSError, TypeError):
-            continue
+    for prefix, label in (("qa_fix_plan_", "QA fix round"), ("replan_", "Design review round")):
+        for name in sorted(
+            n for n in state.artifacts if n.startswith(prefix) and n.endswith(".json")
+        ):
+            try:
+                plan = json.loads(store.read(state.artifacts[name]))
+                number = name.removeprefix(prefix).removesuffix(".json")
+                ids = ", ".join(str(t["id"]) for t in plan.get("tasks", []))
+                tasks = f" Tasks: {ids}." if ids else ""
+                notes.append(f"{label} {number}: {plan['analysis']}{tasks}")
+                notes += [f"Needs you: {n}" for n in plan.get("needs_human", [])]
+            except (ValueError, KeyError, OSError, TypeError):
+                continue
     return notes
 
 
@@ -293,6 +294,8 @@ def project_activity(
         running, finished = _WRITES[stage]
         if stage == Stage.ARCHITECT and state.handoff and state.handoff.purpose == "qa_fix":
             running = "Planning fixes for the failures in QA's report"
+        if stage == Stage.ARCHITECT and state.handoff and state.handoff.purpose == "design_review":
+            running = "Resolving a design problem the Developer raised"
         if state.status == Status.DONE or (current is not None and order[stage] < current):
             # "finished" for now: the orchestrator may still go back to this agent. Only a
             # finished project has every agent "done".

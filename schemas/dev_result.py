@@ -12,6 +12,8 @@ class DevReport(Schema):
     known_gaps: list[Text]
     # Things only the human can do (a key to add, an account to set up); each becomes an item.
     needs_from_human: list[Text] = Field(default_factory=list)
+    # Problems with the design or task list that the Architect should resolve (see the pipeline).
+    needs_architect: list[Text] = Field(default_factory=list)
 
 
 class DevResult(Schema):
@@ -24,3 +26,4 @@ class DevResult(Schema):
     deviations_from_plan: list[Text]
     known_gaps: list[Text]
     needs_from_human: list[Text] = Field(default_factory=list)
+    needs_architect: list[Text] = Field(default_factory=list)
