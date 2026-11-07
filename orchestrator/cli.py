@@ -27,6 +27,7 @@ from orchestrator.default_specs import (
 )
 from orchestrator.dev_runner import DevRunner
 from orchestrator.echo_agent import EchoAgent
+from orchestrator.fix_planner import ApiFixPlanner
 from orchestrator.halt import clear_halt, request_halt
 from orchestrator.inbox import (
     FileCapBackend,
@@ -240,6 +241,7 @@ def _context(
         merges=(FileMergeBackend(inbox) if inbox else CliMergeBackend()) if publisher else None,
         career=career,
         career_publisher=career_publisher,
+        fixer=ApiFixPlanner(config) if (agent == AgentKind.FULL and publisher) else None,
     )
 
 

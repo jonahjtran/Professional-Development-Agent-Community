@@ -326,6 +326,24 @@ def test_notes_carry_what_the_developer_reported(tmp_path: Path) -> None:
     assert "Needs you: Add the Apollo key" in notes
 
 
+def test_the_architects_notes_carry_its_qa_fix_plans(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path, "demo")
+    plan = {
+        "analysis": "A column is missing.",
+        "tasks": [task_data(id="F1-1")],
+        "needs_human": ["Add the key"],
+    }
+    state = record_artifacts(
+        project(tmp_path, stage=Stage.QA),
+        {"qa_fix_plan_1.json": store.write("qa_fix_plan_1.json", json.dumps(plan), revision=1)},
+    )
+
+    notes = by_stage(tmp_path, state)["architect"].notes
+
+    assert "QA fix round 1: A column is missing. Tasks: F1-1." in notes
+    assert "Needs you: Add the key" in notes
+
+
 def test_a_damaged_artifact_is_skipped_not_fatal(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path, "demo")
     state = record_artifacts(

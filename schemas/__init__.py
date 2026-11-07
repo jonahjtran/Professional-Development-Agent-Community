@@ -17,6 +17,7 @@ from schemas.career import (
     WebsiteEntry,
 )
 from schemas.dev_result import DevReport, DevResult
+from schemas.fix_plan import FixPlan
 from schemas.prd import PRD, SuccessMetric, Track
 from schemas.profile import Goals, ResumeData, ResumeEntry, ResumeSection, TrackGoal
 from schemas.tasks import Size, Task, TaskList, unmapped_metrics
@@ -43,6 +44,7 @@ __all__ = [
     "CriterionVerdict",
     "DevReport",
     "DevResult",
+    "FixPlan",
     "Evidence",
     "EvidenceSet",
     "EvidenceType",

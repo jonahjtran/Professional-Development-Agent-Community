@@ -108,10 +108,23 @@ After the last Developer task is approved, merge its pull requests on GitHub. QA
 the merges, then runs the real tools (tests, lint, types, dependency audit, secret scan; set in
 `config.yaml` under `qa:`) in a throwaway checkout of `main`. The QA agent only judges whether each
 acceptance criterion has a test that proves it. `passed` is computed by rule: any failed or skipped
-tool, or any `fail` verdict, fails the report; `untested` is shown but does not fail it. A failing
-report goes to you at the gate, never back to the Developer automatically. Install `gitleaks`
-(`brew install gitleaks`) or the secret scan is skipped and the report fails. QA live test:
-`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
+tool, or any `fail` verdict, fails the report; `untested` is shown but does not fail it. Install
+`gitleaks` (`brew install gitleaks`) or the secret scan is skipped and the report fails. QA live
+test: `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
+
+**When QA fails, the project fixes itself, for up to `limits.max_qa_loops` rounds (2).** The
+orchestrator gives the failed report, the architecture and the task list to the **Architect**
+(`agents/prompts/qa_fix_planner.v1.md`, the Architect's model tier and budget). It returns a fix plan:
+a short analysis, new tasks for the Developer (ids `F<round>-<n>`, added to the end of
+`tasks.json`, acceptance criteria that a test proves) and anything only you can do (these become
+Action needed items). The **Developer** builds each fix task like any other: one pull request per
+task, and you still review and merge each. When they are merged, QA runs again. It stops looping
+and brings the report to you at the QA gate when QA passes, when the rounds are used up, or when the
+Architect finds nothing the Developer can fix (for example a tool that is not installed). A planner
+failure or an invalid plan changes nothing and also goes to you. `max_qa_loops: 0` restores
+"a failing report goes straight to you". The plan is kept as `qa_fix_plan_<n>.md` and shown in the
+Architect's notes on the Team page. Live check (a few cents):
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k fix_planner`.
 
 ## Web UI
 

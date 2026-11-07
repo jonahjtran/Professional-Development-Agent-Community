@@ -217,7 +217,28 @@ def _agenda(runs_dir: Path, state: ProjectState, tasks: TaskList | None) -> list
     return rows
 
 
+def _fix_notes(runs_dir: Path, state: ProjectState) -> list[str]:
+    store = ArtifactStore(runs_dir, state.project_slug)
+    notes: list[str] = []
+    for name in sorted(
+        n for n in state.artifacts if n.startswith("qa_fix_plan_") and n.endswith(".json")
+    ):
+        try:
+            plan = json.loads(store.read(state.artifacts[name]))
+            number = name.removeprefix("qa_fix_plan_").removesuffix(".json")
+            ids = ", ".join(str(t["id"]) for t in plan.get("tasks", []))
+            notes.append(
+                f"QA fix round {number}: {plan['analysis']}" + (f" Tasks: {ids}." if ids else "")
+            )
+            notes += [f"Needs you: {n}" for n in plan.get("needs_human", [])]
+        except (ValueError, KeyError, OSError, TypeError):
+            continue
+    return notes
+
+
 def _notes(runs_dir: Path, state: ProjectState, stage: Stage) -> list[str]:
+    if stage == Stage.ARCHITECT:
+        return _fix_notes(runs_dir, state)
     if stage != Stage.DEVELOPER:
         return []
     store = ArtifactStore(runs_dir, state.project_slug)
