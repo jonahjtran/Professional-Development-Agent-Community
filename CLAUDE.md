@@ -42,6 +42,19 @@ direction. Because an agent can be called back, **no agent is "done" until the p
 
 A project saved before this existed has no path; it is read as having passed each earlier agent once.
 
+**You can send the project back yourself, at any time it is paused or finished.**
+`uv run studio send-back <project> --to product_owner|architect|developer|qa|career_coach --comment "..."`
+reopens it at that agent with your instruction (a finished project becomes running again), then
+`studio resume <project>` continues it. What each agent does with it: the **Product Owner** and
+**Career coach** revise their own document with your comment and you review it at the gate (after
+a changed PRD the Architect plans only the tasks the change needs); the **Architect** turns your
+instruction into new tasks (`R<round>-<n>`, appended; finished tasks stay finished); the
+**Developer** builds your instruction directly as a new task (`H<n>-1`); **QA** runs again. A project
+cannot be sent forward past where it has got to, and one that is running must be paused first. The
+open questions of the old run are put aside (`runs/<project>/stale/`), not answered. The change is
+kept as `state.rework` until the project finishes again. Career material is published again when the
+Career coach is approved again.
+
 **Who decides to go back.** Never a model: the orchestrator follows rules and signals.
 
 - QA fails and the failure is in the code: back to the **Architect** for a fix plan (above).

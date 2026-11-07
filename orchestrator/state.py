@@ -84,11 +84,28 @@ class Handoff(BaseModel):
     """Why the orchestrator moved to the current agent, when the visit has a special purpose.
 
     qa_fix: the Architect is planning fixes for a failed QA report.
+    design_review: the Architect is resolving a design problem the Developer raised.
+    human_design: the Architect is turning a change you asked for into tasks.
     qa_gate: QA is being returned to, only to show you its failed report (nothing could be fixed).
     """
 
     purpose: str
     note: str = ""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class Rework(BaseModel):
+    """You sent the project back to an agent to change something, and it is still being worked in.
+
+    It lives from the moment you send the project back until the project is finished again, so
+    the agents that run after the one you chose know to make only the change you asked for.
+    """
+
+    origin: Stage
+    note: str
+    ts: datetime
+    origin_done: bool = False  # the agent you chose has finished and you approved its work
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -140,6 +157,7 @@ class ProjectState(BaseModel):
     # Every agent the orchestrator has moved to, in order, with why. Older projects have none.
     path: list[StageVisit] = Field(default_factory=list)
     handoff: Handoff | None = None  # set while an agent is visited for a special purpose
+    rework: Rework | None = None  # set while a change you asked for is being worked through
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)
