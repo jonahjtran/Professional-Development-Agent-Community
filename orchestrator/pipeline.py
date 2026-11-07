@@ -232,8 +232,16 @@ def _run_stage(
     if state.stage == Stage.INTAKE:
         return _move(state, ctx, Stage.PRODUCT_OWNER)
 
+    if state.handoff is not None and state.handoff.purpose == "human_design" and ctx.fixer is None:
+        # No fix planner in this run (an api-only project): the Architect simply revises its own
+        # document with your instruction, like the Product Owner does.
+        state = state.evolve(handoff=None)
     if state.handoff is not None:
-        if state.stage == Stage.ARCHITECT and state.handoff.purpose in ("qa_fix", "design_review"):
+        if state.stage == Stage.ARCHITECT and state.handoff.purpose in (
+            "qa_fix",
+            "design_review",
+            "human_design",
+        ):
             return _architect_visit(state, ctx)
         if state.stage == Stage.QA and state.handoff.purpose == "qa_gate":
             return _show_failed_qa(state, ctx)
@@ -372,7 +380,17 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
     last = state.gate_history[-1] if state.gate_history else None
     previous: str | None = None
     comments: str | None = None
-    if stage == Stage.DEVELOPER and state.qa_loops > 0 and ctx.qa is None:
+    rework = state.rework
+    if (
+        rework is not None
+        and not rework.origin_done
+        and stage == rework.origin
+        and stage in (Stage.PRODUCT_OWNER, Stage.ARCHITECT, Stage.CAREER_COACH)
+        and (last is None or last.stage != stage or last.ts < rework.ts)
+    ):
+        # You sent the project back here: revise the document with your instruction.
+        previous, comments = draft, rework.note
+    elif stage == Stage.DEVELOPER and state.qa_loops > 0 and ctx.qa is None:
         # (the dummy QA agent sends the same task back; real QA plans new fix tasks instead)
         previous, comments = draft, _read_draft(ctx, state, Stage.QA)
     elif last is not None and last.stage == stage:
@@ -507,8 +525,40 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     if state.stage == Stage.CAREER_COACH:
         state = _publish_career(state, ctx)
         _trace(ctx, state, EventType.TRANSITION, details={"to": "done"})
-        return state.evolve(status=Status.DONE)
+        return state.evolve(status=Status.DONE, rework=None)  # finished again: the rework is over
+    rework = state.rework
+    if rework is not None and state.stage == rework.origin and not rework.origin_done:
+        state = state.evolve(rework=rework.model_copy(update={"origin_done": True}))
+        if (
+            state.stage == Stage.PRODUCT_OWNER
+            and ctx.fixer is not None
+            and ctx.publisher is not None
+            and "tasks.json" in state.artifacts
+        ):
+            # The PRD changed: the Architect plans only the tasks the change needs, instead of
+            # starting the design again over work that is already built.
+            return _goto(
+                state.evolve(
+                    handoff=Handoff(
+                        purpose="human_design", note=_prd_change_note(state, ctx, rework.note)
+                    ),
+                    qa_loops=0,
+                ),
+                ctx,
+                Stage.ARCHITECT,
+                "requirements changed: planning the new tasks",
+            )
     return _move(state.evolve(qa_loops=0), ctx, _next_stage(state.stage))
+
+
+def _prd_change_note(state: ProjectState, ctx: PipelineContext, comment: str) -> str:
+    """What to tell the Architect when the person changed the requirements."""
+    note = f"The requirements changed. The person asked for this change:\n{comment}\n"
+    record = state.artifacts.get("prd.md")
+    if record is not None:
+        prd = ArtifactStore(ctx.runs_dir, state.project_slug).read(record)
+        note += f"\nThe revised, approved PRD:\n{prd[:6000]}\n"
+    return note + "\nFinished tasks stay finished: plan only the tasks this change needs."
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -779,6 +829,12 @@ def _fixable(report: QaReport) -> bool:
     )
 
 
+def _next_replan_round(state: ProjectState) -> int:
+    """The number for the next design plan (R<n>-...), unique across every visit so far."""
+    made = sum(1 for n in state.artifacts if n.startswith("replan_") and n.endswith(".json"))
+    return made + 1
+
+
 def _replan_rounds(state: ProjectState) -> int:
     """How many times the Developer has sent the project back to the Architect so far."""
     return sum(
@@ -843,14 +899,15 @@ def _architect_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     handoff = state.handoff
     assert ctx.fixer is not None and handoff is not None
     qa = handoff.purpose == "qa_fix"
+    human = handoff.purpose == "human_design"
     state = _check_budget(state, ctx)  # the Architect's own budget: it is the current agent
     if state.status != Status.RUNNING:
         return state
     store = ArtifactStore(ctx.runs_dir, state.project_slug)
     existing = TaskList.model_validate_json(store.read(state.artifacts["tasks.json"]))
-    round_number = state.qa_loops + 1 if qa else _replan_rounds(state)
+    round_number = state.qa_loops + 1 if qa else _next_replan_round(state)
     architecture = state.artifacts.get("architecture.md")
-    purpose = "qa_fix_plan" if qa else "design_review"
+    purpose = "qa_fix_plan" if qa else ("human_design" if human else "design_review")
     report_json = ""
     if qa:
         report = QaReport.model_validate_json(store.read(state.artifacts["test_report.json"]))
@@ -860,7 +917,19 @@ def _architect_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     def nothing_done(current: ProjectState, why: str) -> ProjectState:
         if qa:
             return _back_to_qa(current, ctx, why)
-        _problems_to_human(current, ctx, "its task", [problem.splitlines()[-1].lstrip("- ")], why)
+        if human:
+            add_todo(
+                ctx.runs_dir,
+                current.project_slug,
+                key=f"human-design:{round_number}:{why}",
+                title="The Architect could not turn your request into tasks",
+                detail=why,
+                source="developer",
+            )
+        else:
+            _problems_to_human(
+                current, ctx, "its task", [problem.splitlines()[-1].lstrip("- ")], why
+            )
         return _goto(
             current.evolve(handoff=None), ctx, Stage.DEVELOPER, "no design change: carrying on"
         )
@@ -914,7 +983,7 @@ def _architect_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
             source="qa" if qa else "developer",
         )
     if not result.plan.tasks:
-        if not qa and not result.plan.needs_human:
+        if not qa and not human and not result.plan.needs_human:
             # The Architect reviewed the problem and decided the design stands. That is an answer
             # for the Developer, not something to alert the person about.
             add_note(
@@ -976,6 +1045,8 @@ def _architect_visit(state: ProjectState, ctx: PipelineContext) -> ProjectState:
     state = state.evolve(
         qa_loops=round_number if qa else state.qa_loops, current_task_id=None, handoff=None
     )
+    if human and state.rework is not None:
+        state = state.evolve(rework=state.rework.model_copy(update={"origin_done": True}))
     return _goto(
         state,
         ctx,

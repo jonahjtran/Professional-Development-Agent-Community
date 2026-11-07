@@ -43,6 +43,7 @@ from orchestrator.profile import ProfileError, load_profile, profile_dir
 from orchestrator.prompts import load_prompt
 from orchestrator.publish import Publisher, PublishError, load_token, strip_credentials
 from orchestrator.qa_prepare import GitQaPreparer
+from orchestrator.rework import ReworkError, send_back
 from orchestrator.runner import SdkRunner
 from orchestrator.stages import StageSpec, career_stage
 from orchestrator.state import ProjectState, Stage, Status, load_state, save_state, state_path
@@ -435,6 +436,39 @@ def _pause(project: str, runs_dir: Path) -> None:
         return
     request_halt(runs_dir, project)
     typer.echo(f"Pause requested. Project {project} will stop before its next step.")
+
+
+class ReworkAgent(StrEnum):
+    PRODUCT_OWNER = "product_owner"
+    ARCHITECT = "architect"
+    DEVELOPER = "developer"
+    QA = "qa"
+    CAREER_COACH = "career_coach"
+
+
+@app.command(name="send-back")
+def send_back_command(
+    project: Annotated[str, typer.Argument(help="Project name.")],
+    to: Annotated[ReworkAgent, typer.Option("--to", help="Which agent to send it back to.")],
+    comment: Annotated[str, typer.Option("--comment", help="What to change.")],
+    runs_dir: RunsDirOption = Path("runs"),
+) -> None:
+    """Reopen a paused or finished project at an agent, with your instruction.
+
+    Then continue it with `studio resume`. A finished project can be changed this way.
+    """
+    try:
+        state = load_state(runs_dir, project)
+    except FileNotFoundError:
+        raise _fail(f"No project named {project} in {runs_dir}") from None
+    try:
+        reopened = send_back(runs_dir, state, Stage(to.value), comment)
+    except ReworkError as error:
+        raise _fail(str(error)) from None
+    save_state(runs_dir, reopened)
+    clear_halt(runs_dir, project)
+    typer.echo(f"{project} is back at the {to.value.replace('_', ' ')}.")
+    typer.echo(f"Continue it with: studio resume {project} --agent full --ui")
 
 
 @app.command()
