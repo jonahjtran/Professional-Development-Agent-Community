@@ -231,7 +231,13 @@ class DevRunner:
         if report is None:
             raise fail(f"the Developer's final report was not valid: {problem}")
         self._verify(
-            worktree, head_before, base_before, branches_before, fail, interrupted=interrupted
+            worktree,
+            head_before,
+            base_before,
+            branches_before,
+            fail,
+            interrupted=interrupted,
+            report=report,
         )
 
         usage = turn.result.usage or {}
@@ -262,6 +268,7 @@ class DevRunner:
         fail: Callable[[str], AgentError],
         *,
         interrupted: bool = False,
+        report: DevReport | None = None,
     ) -> None:
         """Check the repository itself; the agent's own claims are not evidence."""
         extra = local_branches(self._repo) - branches_before - {worktree.branch}
@@ -275,7 +282,7 @@ class DevRunner:
         # nothing left to do is fine as long as the branch has work on it.
         no_new_work = head_sha(worktree.path) == head_before and not interrupted
         if no_new_work or commits_ahead(worktree) == 0:
-            raise fail("the Developer made no commits")
+            raise fail("the Developer made no commits" + _what_it_said(report))
         left_over = uncommitted_paths(worktree)
         if left_over:
             shown = ", ".join(left_over[:5])
@@ -368,6 +375,20 @@ async def _collect(client: Any, *, priced: bool = True) -> _Turn:
     if priced and result.total_cost_usd is None:
         raise AgentError("the SDK reported no cost, so spend cannot be tracked")
     return _Turn(result, model)
+
+
+def _what_it_said(report: DevReport | None) -> str:
+    """The agent's own explanation, so a task that stopped without commits says why."""
+    if report is None:
+        return ""
+    parts = [f"it said: {report.summary}"]
+    if report.needs_architect:
+        parts.append("needs the Architect: " + "; ".join(report.needs_architect))
+    if report.needs_from_human:
+        parts.append("needs you: " + "; ".join(report.needs_from_human))
+    if report.known_gaps:
+        parts.append("gaps: " + "; ".join(report.known_gaps))
+    return " (" + " | ".join(parts) + ")"
 
 
 def _parse_report(text: str) -> tuple[DevReport | None, str]:

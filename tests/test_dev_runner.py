@@ -326,6 +326,33 @@ def test_no_commits_is_an_error_even_if_the_agent_says_it_is_done(
     assert not (tmp_path / "worktrees" / "project" / "T1").exists()
 
 
+def test_no_commits_says_what_the_developer_reported_instead_of_hiding_it(
+    repo: Path, tmp_path: Path
+) -> None:
+    said = json.dumps(
+        {
+            "task_id": "T1",
+            "summary": "This is too large for one task; it needs splitting.",
+            "deviations_from_plan": [],
+            "known_gaps": [],
+            "needs_architect": ["Split the PRD into tasks first"],
+            "needs_from_human": ["Add the Apollo key"],
+        }
+    )
+
+    def stops(cwd: Path) -> list[Any]:
+        return [result_message(result=said)]
+
+    with pytest.raises(AgentError) as error:
+        Harness(repo, tmp_path, stops).runner().run(request())
+
+    text = str(error.value)
+    assert text.startswith("the Developer made no commits")
+    assert "too large for one task" in text
+    assert "Split the PRD into tasks first" in text
+    assert "Add the Apollo key" in text
+
+
 def test_uncommitted_changes_are_an_error_because_they_would_be_lost(
     repo: Path, tmp_path: Path
 ) -> None:
