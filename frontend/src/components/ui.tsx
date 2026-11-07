@@ -101,13 +101,20 @@ export function Meter({
   );
 }
 
+/** The word under an agent's name. "finished" is for now; only a finished project is "done". */
+function stepWord(s: StageRow): string {
+  if (s.state === "upcoming" && s.visits > 0) return "will run again";
+  if (s.returned) return `${s.state} · ↻ round ${s.visits}`;
+  return s.state;
+}
+
 export function Steps({ stages }: { stages: StageRow[] }) {
   return (
     <div className="steps" role="list">
       {stages.map((s) => (
         <div key={s.stage} className={`step ${s.state}`} role="listitem">
           {s.label}
-          <small>{s.state}</small>
+          <small>{stepWord(s)}</small>
         </div>
       ))}
     </div>

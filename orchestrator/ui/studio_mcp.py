@@ -28,6 +28,7 @@ from orchestrator.developer_backend import BACKENDS, developer_model, get_develo
 from orchestrator.explain import ExplainInput, ExplainResult
 from orchestrator.halt import request_halt
 from orchestrator.inbox import Pending, PendingKind, pending_for
+from orchestrator.journey import path_summary
 from orchestrator.models_view import agent_models
 from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy
 from orchestrator.proposals import create_proposal
@@ -206,6 +207,7 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
             f"spend ${s.cost_usd:.2f} of ${s.cap_usd:.2f}; "
             f"run is {'live' if s.alive else 'not live'}",
             f"autonomy: {get_autonomy(ctx.runs_dir, s.slug)}",
+            "journey: " + (" → ".join(path_summary(view.state)) or "not started"),
             f"current task: {view.state.current_task_id or 'none'}; "
             f"done: {', '.join(view.state.completed_tasks) or 'none'}",
             "open questions: "

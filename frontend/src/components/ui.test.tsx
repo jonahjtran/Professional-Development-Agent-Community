@@ -47,12 +47,55 @@ describe("ui", () => {
   it("the stage strip marks each stage's state", () => {
     render(
       <Steps stages={[
-        { stage: "architect", label: "Architect", state: "done", spent: 0, cap: 1, fraction: 0 },
-        { stage: "qa", label: "QA", state: "waiting", spent: 0, cap: 1, fraction: 0 },
+        { stage: "architect", label: "Architect", state: "finished", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+        { stage: "qa", label: "QA", state: "waiting", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
       ]} />,
     );
 
-    expect(screen.getByText("Architect").closest(".step")).toHaveClass("done");
+    expect(screen.getByText("Architect").closest(".step")).toHaveClass("finished");
     expect(screen.getByText("QA").closest(".step")).toHaveClass("waiting");
+  });
+
+  it("an agent that has finished is not called done, because the project may go back to it", () => {
+    render(
+      <Steps stages={[
+        { stage: "architect", label: "Architect", state: "finished", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+      ]} />,
+    );
+
+    expect(screen.getByText("finished")).toBeInTheDocument();
+    expect(screen.queryByText("done")).not.toBeInTheDocument();
+  });
+
+  it("only a finished project shows its agents as done", () => {
+    render(
+      <Steps stages={[
+        { stage: "architect", label: "Architect", state: "done", spent: 0, cap: 1, fraction: 0, visits: 2, returned: true },
+      ]} />,
+    );
+
+    expect(screen.getByText(/^done/)).toBeInTheDocument();
+  });
+
+  it("marks an agent the project came back to, with its round", () => {
+    render(
+      <Steps stages={[
+        { stage: "architect", label: "Architect", state: "current", spent: 0, cap: 1, fraction: 0, visits: 2, returned: true },
+        { stage: "qa", label: "QA", state: "upcoming", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+      ]} />,
+    );
+
+    expect(screen.getByText(/round 2/)).toBeInTheDocument();
+    expect(screen.getByText("QA").closest(".step")).not.toHaveTextContent("round");
+  });
+
+  it("an upcoming agent that has run before says it will run again", () => {
+    render(
+      <Steps stages={[
+        { stage: "qa", label: "QA", state: "upcoming", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+      ]} />,
+    );
+
+    expect(screen.getByText(/again/)).toBeInTheDocument();
   });
 });

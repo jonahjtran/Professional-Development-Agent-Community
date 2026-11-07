@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.developer_backend import read_running_model
+from orchestrator.journey import going_back, visit_counts
 from orchestrator.state import ProjectState, Stage, Status
 from orchestrator.trace import EventType, TraceEvent, trace_path
 from schemas import TaskList
@@ -41,13 +42,17 @@ _RECENT = 8
 class AgentActivity:
     stage: str
     name: str
-    status: str  # done | working | waiting_for_you | paused | stopped | upcoming
+    # working | waiting_for_you | paused | stopped | upcoming | finished (for now: the project
+    # may go back to it) | done (the whole project is)
+    status: str
     doing: str
     waiting_on: str | None = None
     task: dict[str, str] | None = None
     agenda: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     recent: list[str] = field(default_factory=list)
+    visits: int = 0  # how many times this agent has been the current one
+    returned_because: str | None = None  # set while the project is back at this agent, and why
     model: str | None = None  # the exact model id
     backend: str | None = None  # claude | local
     model_source: str | None = None  # running | used | configured
@@ -266,6 +271,8 @@ def project_activity(
     tasks = _tasks(runs_dir, state)
     order = {s: n for n, s in enumerate(STAGES)}
     current = order.get(state.stage)
+    counts = visit_counts(state)
+    back = going_back(state)
     people: list[AgentActivity] = []
     for stage in STAGES:
         label = LABELS[stage]
@@ -281,18 +288,27 @@ def project_activity(
             "model_source": source,
             "agenda": _agenda(runs_dir, state, tasks) if is_developer else [],
             "notes": _notes(runs_dir, state, stage),
+            "visits": counts.get(stage, 0),
         }
         running, finished = _WRITES[stage]
         if state.status == Status.DONE or (current is not None and order[stage] < current):
+            # "finished" for now: the orchestrator may still go back to this agent. Only a
+            # finished project has every agent "done".
+            rounds = f" round {counts[stage]}" if counts.get(stage, 0) > 1 else ""
             people.append(
                 AgentActivity(
-                    status="done", doing=f"Finished: {finished.lower()}", recent=recent, **common
+                    status="done" if state.status == Status.DONE else "finished",
+                    doing=f"Finished{rounds}: {finished.lower()}",
+                    recent=recent,
+                    **common,
                 )
             )
             continue
         if current is None or order[stage] > current:
             before = LABELS[STAGES[order[stage] - 1]] if order[stage] > 0 else None
             doing = f"Waiting for the {before} to finish" if before else "Waiting to start"
+            if counts.get(stage, 0) > 0:
+                doing = f"Will run again after the {before} finishes"
             people.append(
                 AgentActivity(status="upcoming", doing=doing, waiting_on=before, **common)
             )
@@ -315,5 +331,14 @@ def project_activity(
             doing = f"{task['id']}: {task['title']}. {step}" if task else step
             if task is not None and not recent:
                 doing = f"{task['id']}: {task['title']}"
-        people.append(AgentActivity(status=status, doing=doing, task=task, recent=recent, **common))
+        people.append(
+            AgentActivity(
+                status=status,
+                doing=doing,
+                task=task,
+                recent=recent,
+                returned_because=back.reason if back else None,
+                **common,
+            )
+        )
     return people

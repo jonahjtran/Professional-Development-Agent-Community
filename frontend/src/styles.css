@@ -98,7 +98,8 @@ p { margin: 8px 0; }
 .steps { display: flex; gap: 2px; background: var(--fill); padding: 3px; border-radius: var(--radius-sm); margin: 16px 0; }
 .step { flex: 1; text-align: center; padding: 8px 4px; border-radius: 8px; font-size: 13px; color: var(--label-2); }
 .step small { display: block; font-size: 11px; opacity: 0.8; }
-.step.done { color: var(--green); }
+.step.done, .step.finished { color: var(--green); }
+.step.finished { opacity: .85; }
 .step.current { background: var(--surface); color: var(--blue); font-weight: 600;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 .step.waiting { background: var(--surface); color: var(--orange); font-weight: 600;
@@ -227,7 +228,7 @@ pre code { background: none; padding: 0; }
   background: var(--fill); box-shadow: 0 0 0 3px transparent; transition: box-shadow .2s;
 }
 .person .desk { display: flex; flex-direction: column; font-size: 14px; }
-.person.done .avatar { box-shadow: 0 0 0 3px var(--green); }
+.person.done .avatar, .person.finished .avatar { box-shadow: 0 0 0 3px var(--green); }
 .person.working .avatar { box-shadow: 0 0 0 3px var(--blue); animation: bob 1.6s ease-in-out infinite; }
 .person.working .bubble::before { content: "…"; position: absolute; right: 10px; top: 2px; color: var(--blue); animation: blink 1.2s infinite; }
 .person.waiting-for-you .avatar { box-shadow: 0 0 0 3px var(--orange); animation: pulse 1.4s ease-in-out infinite; }
@@ -272,3 +273,7 @@ table.models code { white-space: nowrap; }
 
 .person .model { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 4px; font-size: 12px; }
 .person .model code { font-size: 12px; word-break: break-all; }
+
+.journey { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.journey li { padding: 4px 10px; border-radius: 999px; background: var(--fill); font-size: 14px; }
+.journey li.back { background: var(--orange-bg); color: var(--orange); font-weight: 600; }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -6,15 +6,15 @@ import { mockApi } from "../test/mockApi";
 import { ProjectPage } from "./ProjectPage";
 
 const stages = [
-  { stage: "product_owner", label: "Product Owner", state: "done", spent: 0.5, cap: 1.5, fraction: 0.33 },
-  { stage: "developer", label: "Developer", state: "current", spent: 2.9, cap: 3, fraction: 0.97 },
+  { stage: "product_owner", label: "Product Owner", state: "finished", spent: 0.5, cap: 1.5, fraction: 0.33, visits: 1, returned: false },
+  { stage: "developer", label: "Developer", state: "current", spent: 2.9, cap: 3, fraction: 0.97, visits: 1, returned: false },
 ];
 
 function project(over: Record<string, unknown> = {}, summary: Record<string, unknown> = {}) {
   return {
     starting: false,
     summary: { slug: "demo", idea: "An idea", stage: "developer", status: "running", detail: "", cost_usd: 3.4, cap_usd: 20, pending: 0, alive: true, ...summary },
-    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5" }, gates: [], links: [], artifacts: [], pending: [], ...over,
+    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], journey: { path: [], going_back: null }, developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5" }, gates: [], links: [], artifacts: [], pending: [], ...over,
   };
 }
 
@@ -114,6 +114,45 @@ describe("the project page", () => {
     const link = await screen.findByRole("link", { name: /Ask the assistant/ });
 
     expect(link.getAttribute("href")).toContain("/chat?project=demo");
+  });
+
+  it("shows the journey, with each move back marked and explained", async () => {
+    const step = (stage: string, label: string, direction: string, reason: string) => ({ stage, label, direction, reason, ts: "2026-11-07T12:00:00Z" });
+    open(project({
+      journey: {
+        path: [
+          step("product_owner", "Product Owner", "forward", "start"),
+          step("architect", "Architect", "forward", "PRD approved"),
+          step("qa", "QA", "forward", "tasks done"),
+          step("architect", "Architect", "back", "QA failed"),
+        ],
+        going_back: { stage: "architect", label: "Architect", reason: "QA failed", came_from: "QA" },
+      },
+    }));
+
+    const journey = await screen.findByRole("list", { name: "Journey" });
+    expect(within(journey).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(journey).getByText(/↩ Architect/)).toBeInTheDocument();
+    expect(within(journey).getByTitle("QA failed")).toBeInTheDocument();
+  });
+
+  it("says when the project has gone back, to whom, and why", async () => {
+    open(project({
+      journey: {
+        path: [],
+        going_back: { stage: "architect", label: "Architect", reason: "QA failed: fix round 1", came_from: "QA" },
+      },
+    }));
+
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent("Back at the Architect: QA failed: fix round 1 (from QA)");
+  });
+
+  it("has no going-back notice for a project that only moved forward", async () => {
+    open(project());
+    await screen.findByText("An idea");
+
+    expect(screen.queryByText(/Back at the/)).not.toBeInTheDocument();
   });
 
   it("shows which model the Developer uses, and why", async () => {

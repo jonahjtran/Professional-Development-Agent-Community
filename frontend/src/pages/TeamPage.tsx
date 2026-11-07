@@ -13,6 +13,7 @@ const FACE: Record<string, string> = {
 };
 
 const STATUS_WORD: Record<AgentActivity["status"], string> = {
+  finished: "finished",
   done: "done",
   working: "working",
   waiting_for_you: "waiting for you",
@@ -40,7 +41,11 @@ function Person({ agent, open, onOpen }: { agent: AgentActivity; open: boolean; 
       <span className="avatar" aria-hidden="true">{FACE[agent.stage] ?? "🙂"}</span>
       <span className="desk">
         <strong>{agent.name}</strong>
-        <span className="muted">{STATUS_WORD[agent.status]}</span>
+        <span className="muted">
+          {STATUS_WORD[agent.status]}
+          {agent.visits > 1 && ` · ↻ round ${agent.visits}`}
+        </span>
+        {agent.returned_because && <span className="muted">↩ {agent.returned_because}</span>}
         {agent.model && (
           <span className="model">
             <code>{agent.model}</code>

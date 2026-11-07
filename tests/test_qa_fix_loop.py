@@ -323,6 +323,19 @@ def test_approving_the_passing_report_moves_on_and_resets_the_loop_count(tmp_pat
     assert state.stage == Stage.CAREER_COACH and state.qa_loops == 0
 
 
+def test_the_loop_is_a_recorded_move_back_to_the_developer_and_forward_to_qa_again(
+    tmp_path: Path,
+) -> None:
+    ctx, _q, _d = make_ctx(tmp_path, QaThenFixed(1), FakePlanner())
+
+    state = run_until_gate(tmp_path, ctx)
+
+    # (the test project starts at QA, so its path begins with the move back)
+    assert [v.stage for v in state.path] == [Stage.DEVELOPER, Stage.QA, Stage.CAREER_COACH]
+    back = state.path[0]
+    assert back.came_from == Stage.QA and back.reason == "QA failed: fix round 1"
+
+
 # --- when it does not loop --------------------------------------------------------------------
 
 

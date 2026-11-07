@@ -13,12 +13,12 @@ const agenda = [
 ];
 
 function person(stage: string, name: string, status: string, doing: string, extra: Record<string, unknown> = {}) {
-  return { stage, name, status, doing, waiting_on: null, task: null, agenda: [], notes: [], recent: [], model: null, backend: null, model_source: null, ...extra };
+  return { stage, name, status, doing, waiting_on: null, task: null, agenda: [], notes: [], recent: [], model: null, backend: null, model_source: null, visits: 1, returned_because: null, ...extra };
 }
 
 const agents = [
-  person("product_owner", "Product Owner", "done", "Finished: wrote the product requirements"),
-  person("architect", "Architect", "done", "Finished: designed the architecture"),
+  person("product_owner", "Product Owner", "finished", "Finished: wrote the product requirements"),
+  person("architect", "Architect", "finished", "Finished: designed the architecture"),
   person("developer", "Developer", "working", "T2: Add the API. Running tests", {
     task: { id: "T2", title: "Add the API" },
     model: "claude-sonnet-5-5", backend: "claude", model_source: "running",
@@ -95,6 +95,28 @@ describe("the team page", () => {
     for (const name of ["Product Owner", "Architect", "Developer", "QA", "Career coach"]) {
       expect(screen.getByRole("button", { name: new RegExp(name) })).toBeInTheDocument();
     }
+  });
+
+  it("calls an agent finished, not done, while the project may still come back to it", async () => {
+    open();
+    await screen.findByText("T2: Add the API. Running tests");
+
+    expect(screen.getByRole("button", { name: /Architect, finished/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /, done/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the round an agent is in, and why it was called back", async () => {
+    open({
+      agents: agents.map((a) =>
+        a.stage === "architect"
+          ? { ...a, status: "working", doing: "Planning QA fixes", visits: 2, returned_because: "QA failed" }
+          : a,
+      ),
+    });
+
+    const architect = await screen.findByRole("button", { name: /Architect/ });
+    expect(within(architect).getByText(/round 2/)).toBeInTheDocument();
+    expect(within(architect).getByText(/↩ QA failed/)).toBeInTheDocument();
   });
 
   it("marks each person with their state, for color and for screen readers", async () => {
