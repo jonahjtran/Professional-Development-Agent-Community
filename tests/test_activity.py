@@ -244,6 +244,30 @@ def test_an_agent_the_project_returned_to_is_working_again_and_says_why(tmp_path
     assert people["qa"].status == "upcoming" and "again" in people["qa"].doing
 
 
+def test_the_architect_called_back_for_qa_failures_says_what_it_is_planning(
+    tmp_path: Path,
+) -> None:
+    from orchestrator.state import Handoff
+
+    state = project(
+        tmp_path,
+        stage=Stage.ARCHITECT,
+        handoff=Handoff(purpose="qa_fix"),
+        path=[
+            stamped(Stage.PRODUCT_OWNER),
+            stamped(Stage.ARCHITECT),
+            stamped(Stage.DEVELOPER),
+            stamped(Stage.QA),
+            stamped(Stage.ARCHITECT, "QA failed: planning fix round 1", Stage.QA),
+        ],
+    )
+
+    architect = by_stage(tmp_path, state)["architect"]
+
+    assert architect.status == "working" and "fix" in architect.doing.lower()
+    assert "QA" in architect.doing
+
+
 def test_an_agent_that_finished_a_second_round_says_which_round(tmp_path: Path) -> None:
     state = project(
         tmp_path,

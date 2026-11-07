@@ -80,6 +80,19 @@ class StageVisit(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class Handoff(BaseModel):
+    """Why the orchestrator moved to the current agent, when the visit has a special purpose.
+
+    qa_fix: the Architect is planning fixes for a failed QA report.
+    qa_gate: QA is being returned to, only to show you its failed report (nothing could be fixed).
+    """
+
+    purpose: str
+    note: str = ""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class Allowances(BaseModel):
     """Extra room the human has granted, added on top of the limits in config.yaml.
 
@@ -126,6 +139,7 @@ class ProjectState(BaseModel):
     qa_loops: Annotated[int, Field(ge=0)] = 0  # times QA has sent the work back to the Developer
     # Every agent the orchestrator has moved to, in order, with why. Older projects have none.
     path: list[StageVisit] = Field(default_factory=list)
+    handoff: Handoff | None = None  # set while an agent is visited for a special purpose
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)
