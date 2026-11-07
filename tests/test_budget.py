@@ -287,3 +287,65 @@ def test_going_back_to_an_earlier_stage_warns_again() -> None:
 
     # ...and then loops back to the Developer, which must warn again.
     assert assess_budget(state, config, Stage.DEVELOPER).level == BudgetLevel.WARNING
+
+
+# --- an approved warning stays approved ------------------------------------------------------
+
+
+def _approved(state: ProjectState, stage: Stage) -> ProjectState:
+    """The state after the human chose "continue" at the warning assess_budget gave."""
+    from orchestrator.caps import CapAction, CapResolution, resolve_cap
+
+    config = make_config()
+    paused = pause_for_budget(state, assess_budget(state, config, stage))
+    return resolve_cap(paused, config, CapResolution(action=CapAction.APPROVE_ANYWAY), stage=stage)
+
+
+def test_a_warning_that_was_approved_is_not_raised_again_while_spend_grows() -> None:
+    config = make_config()
+    state = _approved(state_with_spend(developer=8.5), Stage.DEVELOPER)
+
+    state = record_cost(state, Stage.DEVELOPER, 0.5)  # more spend, cap not reached
+
+    assert assess_budget(state, config, Stage.DEVELOPER).level == BudgetLevel.OK
+
+
+def test_an_approved_warning_stays_approved_when_the_work_returns_to_the_stage() -> None:
+    config = make_config()
+    state = _approved(state_with_spend(developer=8.5), Stage.DEVELOPER)
+
+    assert assess_budget(state, config, Stage.QA).level == BudgetLevel.OK
+    assert assess_budget(state, config, Stage.DEVELOPER).level == BudgetLevel.OK
+
+
+def test_an_approved_warning_still_stops_at_the_cap() -> None:
+    config = make_config()
+    state = _approved(state_with_spend(developer=8.5), Stage.DEVELOPER)
+
+    state = record_cost(state, Stage.DEVELOPER, 5.0)
+
+    assert assess_budget(state, config, Stage.DEVELOPER).level == BudgetLevel.EXCEEDED
+
+
+def test_approving_a_stage_warning_does_not_silence_the_project_warning() -> None:
+    config = make_config()
+    state = _approved(state_with_spend(developer=8.5), Stage.DEVELOPER)
+
+    state = record_cost(state, Stage.ARCHITECT, 40.0)  # the project total reaches its warning
+
+    assert assess_budget(state, config, Stage.ARCHITECT).level != BudgetLevel.OK
+
+
+def test_raising_a_cap_warns_again_at_the_new_threshold() -> None:
+    config = make_config()
+    state = _approved(state_with_spend(developer=8.5), Stage.DEVELOPER)
+    raised = state.evolve(
+        allowances=Allowances(
+            **{**state.allowances.model_dump(), "extra_stage_usd": {Stage.DEVELOPER: 10.0}}
+        )
+    )
+
+    # 8.5 is far under 80% of the new $20 cap, then spend climbs to it.
+    assert assess_budget(raised, config, Stage.DEVELOPER).level == BudgetLevel.OK
+    later = record_cost(raised, Stage.DEVELOPER, 7.5)  # 16.0 = 80% of 20
+    assert assess_budget(later, config, Stage.DEVELOPER).level == BudgetLevel.WARNING

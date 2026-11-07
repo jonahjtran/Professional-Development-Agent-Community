@@ -179,6 +179,13 @@ failure or an invalid plan changes nothing: the project returns to QA and shows 
 Architect's notes on the Team page. Live check (a few cents):
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k fix_planner`.
 
+## Budget warnings
+
+At 80% of a cap the run stops and asks. Choosing to continue is remembered against the cap in force
+(`allowances.warned` in the project's state), so the same warning is not asked again as spend grows
+or when the work returns to that stage. The cap itself still stops the run, and raising a cap
+re-arms the warning at 80% of the new cap. The project and each stage warn separately.
+
 ## Web UI
 
 `uv run --env-file .env studio ui` opens a local control panel (it listens on 127.0.0.1 only; add

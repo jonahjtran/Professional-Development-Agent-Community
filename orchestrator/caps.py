@@ -114,13 +114,14 @@ def resolve_cap(
     resolution: CapResolution,
     *,
     now: datetime | None = None,
+    stage: Stage | None = None,
 ) -> ProjectState:
     """Apply the human's answer to a revision-cap or budget-cap pause; return the new state.
 
     Approve-anyway and raise return the project to running. Abandon halts it. Raising never
     re-checks the budget: the pipeline checks before every agent call and will pause again if
-    the raise was too small. Continuing at a budget *warning* sets no flag either, because
-    warnings are recomputed on every check.
+    the raise was too small. Continuing at a budget *warning* is remembered against the cap in force
+    (`allowances.warned`), so it is not asked again until the cap changes.
     """
     if state.intervention is None or state.intervention.kind not in _CAP_KINDS:
         raise ValueError("no open cap pause to resolve")
@@ -140,11 +141,14 @@ def resolve_cap(
             return state.evolve(**running, gate_history=[*state.gate_history, record])
         return _raise_revisions(state, resolution)
 
-    assessment = assess_budget(state, config, state.stage)
+    assessment = assess_budget(state, config, stage or state.stage)
     if resolution.action == CapAction.APPROVE_ANYWAY:
         if assessment.level == BudgetLevel.EXCEEDED:
             raise ValueError("a cap has been reached: raise it or abandon, approve is not allowed")
-        return state.evolve(**running)
+        # Remember it, so the same warning is not asked again before the cap is reached.
+        warned = {**state.allowances.warned, **assessment.warned}
+        allowances = Allowances(**{**state.allowances.model_dump(), "warned": warned})
+        return state.evolve(**running, allowances=allowances)
 
     assert resolution.amount is not None
     allowances = state.allowances
