@@ -26,32 +26,51 @@ class ApiFixPlanner:
         prompts_dir: Path = DEFAULT_PROMPTS_DIR,
         client: MessagesClient | None = None,
     ) -> None:
-        spec = ApiAgentSpec(
-            stage=Stage.ARCHITECT,
-            prompt=prompt or load_prompt("qa_fix_planner", prompts_dir),
-            tier="strong",
-            schema=FixPlan,
-            max_tokens=8000,
-        )
-        self._runner = ValidatingRunner(
-            ApiRunner(config, [spec], client=client), {Stage.ARCHITECT: FixPlan}
-        )
+        def runner_for(name: str, given: Prompt | None) -> ValidatingRunner:
+            spec = ApiAgentSpec(
+                stage=Stage.ARCHITECT,
+                prompt=given or load_prompt(name, prompts_dir),
+                tier="strong",
+                schema=FixPlan,
+                max_tokens=8000,
+            )
+            return ValidatingRunner(
+                ApiRunner(config, [spec], client=client), {Stage.ARCHITECT: FixPlan}
+            )
+
+        self._runners = {
+            "qa_failure": runner_for("qa_fix_planner", prompt),
+            "design_problem": runner_for("architect_replan", None),
+        }
 
     def plan(self, request: FixRequest) -> FixResult:
-        result = self._runner.run(
+        if request.kind == "design_problem":
+            inputs = {
+                "developer_problem.md": request.problem,
+                "architecture.md": request.architecture,
+                "tasks.json": request.tasks_json,
+            }
+            comments = (
+                f"This is replan round {request.round}. Number your tasks "
+                f"R{request.round}-1, R{request.round}-2 and so on."
+            )
+        else:
+            inputs = {
+                "qa_report.json": request.report_json,
+                "architecture.md": request.architecture,
+                "tasks.json": request.tasks_json,
+            }
+            comments = (
+                f"This is fix round {request.round}. Number your tasks "
+                f"F{request.round}-1, F{request.round}-2 and so on."
+            )
+        result = self._runners.get(request.kind, self._runners["qa_failure"]).run(
             AgentRequest(
                 stage=Stage.ARCHITECT,
                 project=request.project,
                 idea=request.idea,
-                inputs={
-                    "qa_report.json": request.report_json,
-                    "architecture.md": request.architecture,
-                    "tasks.json": request.tasks_json,
-                },
-                comments=(
-                    f"This is fix round {request.round}. Number your tasks "
-                    f"F{request.round}-1, F{request.round}-2 and so on."
-                ),
+                inputs=inputs,
+                comments=comments,
             )
         )
         try:

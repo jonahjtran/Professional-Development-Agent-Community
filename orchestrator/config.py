@@ -43,6 +43,8 @@ class Budget(_Strict):
 class Limits(_Strict):
     max_revisions: int = Field(ge=0)
     max_qa_loops: int = Field(ge=0)
+    # Times the Developer may send the project back to the Architect about a design problem.
+    max_replans: int = Field(default=2, ge=0)
     max_task_usd: float = Field(gt=0)  # spend limit for one Developer task (SDK-enforced)
     max_web_searches: int = Field(ge=0)  # per agent call, for agents allowed to search the web
     max_turns: StageValues[Annotated[int, Field(ge=1)]]
