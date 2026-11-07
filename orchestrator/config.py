@@ -86,6 +86,13 @@ class SandboxConfig(_Strict):
     allowed_domains: list[str] = Field(default_factory=list)
 
 
+class DeveloperConfig(_Strict):
+    """What the Developer is told to follow, whichever model runs it."""
+
+    # Names of skills in this project's `.claude/skills` folder, added to its instructions.
+    skills: list[str] = Field(default_factory=list)
+
+
 class LocalConfig(_Strict):
     """An open-source model served on this computer by Ollama, for the Developer agent.
 
@@ -114,6 +121,7 @@ class Config(_Strict):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     assistant: AssistantConfig = Field(default_factory=AssistantConfig)
     local: LocalConfig = Field(default_factory=LocalConfig)
+    developer: DeveloperConfig = Field(default_factory=DeveloperConfig)
 
 
 def load_config(path: Path) -> Config:
