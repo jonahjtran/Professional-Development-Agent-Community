@@ -14,7 +14,7 @@ function project(over: Record<string, unknown> = {}, summary: Record<string, unk
   return {
     starting: false,
     summary: { slug: "demo", idea: "An idea", stage: "developer", status: "running", detail: "", cost_usd: 3.4, cap_usd: 20, pending: 0, alive: true, ...summary },
-    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], journey: { path: [], going_back: null }, developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5" }, gates: [], links: [], artifacts: [], pending: [], ...over,
+    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], journey: { path: [], going_back: null }, can_send_back: false, developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5" }, gates: [], links: [], artifacts: [], pending: [], ...over,
   };
 }
 
@@ -153,6 +153,65 @@ describe("the project page", () => {
     await screen.findByText("An idea");
 
     expect(screen.queryByText(/Back at the/)).not.toBeInTheDocument();
+  });
+
+  it("lets you send a finished project back to an agent with an instruction", async () => {
+    const done = project(
+      {
+        can_send_back: true,
+        stages: ["product_owner", "architect", "developer", "qa", "career_coach"].map((id) => ({
+          stage: id, label: id, state: "done", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false,
+        })),
+      },
+      { status: "done", alive: false },
+    );
+    const api = open(done, { "POST /api/projects/demo/send-back": { ok: true } });
+
+    await userEvent.selectOptions(await screen.findByLabelText("Send it back to"), "architect");
+    await userEvent.type(screen.getByLabelText("What should change?"), "Store events in Postgres");
+    await userEvent.click(screen.getByRole("button", { name: "Send back and continue" }));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ to: "architect", comment: "Store events in Postgres" }]));
+  });
+
+  it("offers only the agents the project has reached", async () => {
+    open(project({ can_send_back: true, stages: [
+      { stage: "product_owner", label: "Product Owner", state: "finished", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+      { stage: "architect", label: "Architect", state: "finished", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+      { stage: "developer", label: "Developer", state: "current", spent: 0, cap: 1, fraction: 0, visits: 1, returned: false },
+      { stage: "qa", label: "QA", state: "upcoming", spent: 0, cap: 1, fraction: 0, visits: 0, returned: false },
+    ] }, { status: "halted", alive: false }));
+
+    const select = await screen.findByLabelText("Send it back to");
+
+    const options = within(select).getAllByRole("option").map((o) => o.textContent);
+    expect(options).toEqual(["Product Owner", "Architect", "Developer"]);
+  });
+
+  it("needs an instruction before it will send anything", async () => {
+    const api = open(project({ can_send_back: true }, { status: "halted", alive: false }));
+    await screen.findByLabelText("What should change?");
+
+    expect(screen.getByRole("button", { name: "Send back and continue" })).toBeDisabled();
+    expect(api.posts()).toHaveLength(0);
+  });
+
+  it("tells you to pause first while the project is running", async () => {
+    open(project({ can_send_back: false }));
+
+    expect(await screen.findByText(/Pause the project first/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("What should change?")).not.toBeInTheDocument();
+  });
+
+  it("shows why the server refused to send it back", async () => {
+    open(project({ can_send_back: true }, { status: "halted", alive: false }), {
+      "POST /api/projects/demo/send-back": { status: 409, body: { error: "demo is already running. Pause it first." } },
+    });
+    await userEvent.type(await screen.findByLabelText("What should change?"), "Change it");
+
+    await userEvent.click(screen.getByRole("button", { name: "Send back and continue" }));
+
+    expect(await screen.findByText("demo is already running. Pause it first.")).toBeInTheDocument();
   });
 
   it("shows which model the Developer uses, and why", async () => {

@@ -244,6 +244,53 @@ def test_an_agent_the_project_returned_to_is_working_again_and_says_why(tmp_path
     assert people["qa"].status == "upcoming" and "again" in people["qa"].doing
 
 
+def test_the_architect_called_back_for_qa_failures_says_what_it_is_planning(
+    tmp_path: Path,
+) -> None:
+    from orchestrator.state import Handoff
+
+    state = project(
+        tmp_path,
+        stage=Stage.ARCHITECT,
+        handoff=Handoff(purpose="qa_fix"),
+        path=[
+            stamped(Stage.PRODUCT_OWNER),
+            stamped(Stage.ARCHITECT),
+            stamped(Stage.DEVELOPER),
+            stamped(Stage.QA),
+            stamped(Stage.ARCHITECT, "QA failed: planning fix round 1", Stage.QA),
+        ],
+    )
+
+    architect = by_stage(tmp_path, state)["architect"]
+
+    assert architect.status == "working" and "fix" in architect.doing.lower()
+    assert "QA" in architect.doing
+
+
+def test_the_architect_called_back_by_the_developer_says_what_it_is_resolving(
+    tmp_path: Path,
+) -> None:
+    from orchestrator.state import Handoff
+
+    state = project(
+        tmp_path,
+        stage=Stage.ARCHITECT,
+        handoff=Handoff(purpose="design_review", note="SQLite cannot take two writers."),
+        path=[
+            stamped(Stage.PRODUCT_OWNER),
+            stamped(Stage.ARCHITECT),
+            stamped(Stage.DEVELOPER),
+            stamped(Stage.ARCHITECT, "design problem raised on T1", Stage.DEVELOPER),
+        ],
+    )
+
+    architect = by_stage(tmp_path, state)["architect"]
+
+    assert architect.status == "working" and "design problem" in architect.doing.lower()
+    assert architect.returned_because == "design problem raised on T1"
+
+
 def test_an_agent_that_finished_a_second_round_says_which_round(tmp_path: Path) -> None:
     state = project(
         tmp_path,
@@ -402,6 +449,23 @@ def test_the_architects_notes_carry_its_qa_fix_plans(tmp_path: Path) -> None:
 
     assert "QA fix round 1: A column is missing. Tasks: F1-1." in notes
     assert "Needs you: Add the key" in notes
+
+
+def test_the_architects_notes_carry_its_design_reviews_too(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path, "demo")
+    plan = {
+        "analysis": "SQLite cannot take two writers.",
+        "tasks": [task_data(id="R1-1")],
+        "needs_human": [],
+    }
+    state = record_artifacts(
+        project(tmp_path, stage=Stage.DEVELOPER),
+        {"replan_1.json": store.write("replan_1.json", json.dumps(plan), revision=1)},
+    )
+
+    notes = by_stage(tmp_path, state)["architect"].notes
+
+    assert "Design review round 1: SQLite cannot take two writers. Tasks: R1-1." in notes
 
 
 def test_a_damaged_artifact_is_skipped_not_fatal(tmp_path: Path) -> None:

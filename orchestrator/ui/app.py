@@ -35,7 +35,7 @@ from orchestrator.developer_backend import (
     set_project_backend,
 )
 from orchestrator.explain import Explainer, ExplainInput, ExplainResult
-from orchestrator.halt import request_halt
+from orchestrator.halt import clear_halt, request_halt
 from orchestrator.inbox import (
     AnswerRejected,
     PendingKind,
@@ -57,6 +57,8 @@ from orchestrator.notes import add_note
 from orchestrator.permissions import PolicyContext
 from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy, set_autonomy
 from orchestrator.proposals import Proposal, get_proposal, list_proposals, set_status
+from orchestrator.rework import ReworkError
+from orchestrator.rework import send_back as rework_send_back
 from orchestrator.rule_options import RuleOptions, rule_options
 from orchestrator.rules import (
     Rule,
@@ -64,7 +66,7 @@ from orchestrator.rules import (
     global_store,
     project_store,
 )
-from orchestrator.state import ProjectState, Status, state_path
+from orchestrator.state import ProjectState, Stage, Status, save_state, state_path
 from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
 from orchestrator.trace import EventType
 from orchestrator.ui import data, serialize
@@ -245,7 +247,9 @@ def create_app(
         if _SLUG.match(slug) and not state_path(runs_dir, slug).exists() and log.exists():
             tail = "\n".join(log.read_text(errors="replace").splitlines()[-20:])
             return {"starting": True, "slug": slug, "log": tail}
-        shown = serialize.project(view_or_404(slug), pending_for(runs_dir, slug))
+        view = view_or_404(slug)
+        shown = serialize.project(view, pending_for(runs_dir, slug))
+        shown["can_send_back"] = view.state.status in (Status.HALTED, Status.DONE)
         shown["helper"] = assistant_totals(runs_dir, slug)  # kept apart from the project's spend
         shown["autonomy"] = get_autonomy(runs_dir, slug)
         choice = get_developer_backend(runs_dir, slug)
@@ -610,6 +614,38 @@ def create_app(
         launcher(command, config_path.resolve().parent, runs_dir / slug / "run.log")
         return 200, None
 
+    def do_send_back(slug: str, to: str, comment: str) -> tuple[int, str | None]:
+        """Reopen a paused or finished project at an agent and start it. (status, error)."""
+        view = view_or_404(slug)
+        try:
+            target = Stage(to)
+        except ValueError:
+            return 400, "choose an agent to send it back to"
+        if run_is_alive(runs_dir, slug):
+            return 409, f"{slug} is already running. Pause it first."
+        if resume_command(view.state, config_path, runs_dir) is None:
+            return (
+                409,
+                "This project did not record how it was started, so send it back from the "
+                "terminal: studio send-back.",
+            )
+        try:
+            reopened = rework_send_back(runs_dir, view.state, target, comment)
+        except ReworkError as refusal:
+            text = str(refusal)
+            return (409 if "Pause" in text else 400), text
+        save_state(runs_dir, reopened)
+        clear_halt(runs_dir, slug)
+        return start_resume(slug, reopened)
+
+    @app.post("/api/projects/{slug}/send-back")
+    async def send_back_endpoint(request: Request, slug: str) -> JSONResponse:
+        body = await checked_body(request)
+        status, error = do_send_back(slug, str(body.get("to", "")), str(body.get("comment", "")))
+        if error is not None:
+            return fail(status, error)
+        return JSONResponse({"ok": True})
+
     @app.post("/api/projects/{slug}/resume")
     async def resume(request: Request, slug: str) -> JSONResponse:
         await checked_body(request)
@@ -698,6 +734,11 @@ def create_app(
             except ValueError as error:
                 return 400, str(error)
             return 200, f"The Developer uses the {p.args.get('backend')} model from the next task."
+        if p.action == "send_back":
+            code, problem = do_send_back(
+                p.project, str(p.args.get("to", "")), str(p.args.get("comment", ""))
+            )
+            return code, problem or "Sent back, and running again."
         if p.action == "leave_note":
             try:
                 add_note(runs_dir, p.project, str(p.args.get("text", "")))

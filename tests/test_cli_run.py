@@ -247,3 +247,75 @@ def test_resume_accepts_the_agent_option(tmp_path: Path) -> None:
     result = invoke(tmp_path, "resume", "demo", "--agent", "echo", input="approve\n\n" * 3)
 
     assert result.exit_code == 0, result.output
+
+
+# --- studio send-back ------------------------------------------------------------------------
+
+
+def send_back_cli(tmp_path: Path, *args: str):  # type: ignore[no-untyped-def]
+    return runner.invoke(app, ["send-back", *args, "--runs-dir", str(tmp_path)])
+
+
+def finished_project(tmp_path: Path) -> None:
+    result = invoke(tmp_path, "run", "Track events", "--slug", "demo", input=FOUR_APPROVALS)
+    assert result.exit_code == 0, result.output
+    assert load_state(tmp_path, "demo").status == Status.DONE
+
+
+def test_a_finished_project_can_be_sent_back_and_then_resumed_to_finish_again(
+    tmp_path: Path,
+) -> None:
+    finished_project(tmp_path)
+
+    sent = send_back_cli(
+        tmp_path,
+        "demo",
+        "--to",
+        "product_owner",
+        "--comment",
+        "The PRD missed offline mode",
+    )
+
+    assert sent.exit_code == 0, sent.output
+    assert "studio resume demo" in sent.output
+    state = load_state(tmp_path, "demo")
+    assert state.status == Status.RUNNING and state.stage.value == "product_owner"
+    assert state.rework is not None and state.rework.note == "The PRD missed offline mode"
+
+    result = invoke(tmp_path, "resume", "demo", input=FOUR_APPROVALS)
+
+    assert result.exit_code == 0, result.output
+    assert load_state(tmp_path, "demo").status == Status.DONE
+    assert load_state(tmp_path, "demo").rework is None
+
+
+def test_sending_back_an_unknown_project_is_an_error(tmp_path: Path) -> None:
+    result = send_back_cli(tmp_path, "ghost", "--to", "qa", "--comment", "x")
+
+    assert result.exit_code == 1 and "ghost" in result.output
+
+
+def test_a_running_project_must_be_paused_before_it_is_sent_back(tmp_path: Path) -> None:
+    invoke(
+        tmp_path, "run", "Track events", "--slug", "demo", input="approve\n\n"
+    )  # stops at a gate
+
+    result = send_back_cli(tmp_path, "demo", "--to", "product_owner", "--comment", "x")
+
+    assert result.exit_code == 1 and "Pause" in result.output
+
+
+def test_an_unknown_agent_is_refused(tmp_path: Path) -> None:
+    finished_project(tmp_path)
+
+    result = send_back_cli(tmp_path, "demo", "--to", "intake", "--comment", "x")
+
+    assert result.exit_code != 0
+
+
+def test_the_instruction_is_required(tmp_path: Path) -> None:
+    finished_project(tmp_path)
+
+    result = send_back_cli(tmp_path, "demo", "--to", "qa", "--comment", "  ")
+
+    assert result.exit_code == 1 and "1 to 2000" in result.output

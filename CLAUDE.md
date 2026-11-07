@@ -42,6 +42,38 @@ direction. Because an agent can be called back, **no agent is "done" until the p
 
 A project saved before this existed has no path; it is read as having passed each earlier agent once.
 
+**You can send the project back yourself, at any time it is paused or finished.**
+`uv run studio send-back <project> --to product_owner|architect|developer|qa|career_coach --comment "..."`
+reopens it at that agent with your instruction (a finished project becomes running again), then
+`studio resume <project>` continues it. What each agent does with it: the **Product Owner** and
+**Career coach** revise their own document with your comment and you review it at the gate (after
+a changed PRD the Architect plans only the tasks the change needs); the **Architect** turns your
+instruction into new tasks (`R<round>-<n>`, appended; finished tasks stay finished); the
+**Developer** builds your instruction directly as a new task (`H<n>-1`); **QA** runs again. A project
+cannot be sent forward past where it has got to, and one that is running must be paused first. The
+open questions of the old run are put aside (`runs/<project>/stale/`), not answered. The change is
+kept as `state.rework` until the project finishes again. Career material is published again when the
+Career coach is approved again.
+
+In the web UI it is the **Change something** card on the project page: choose an agent (only those
+the project has reached), write what should change, and **Send back and continue**. It is shown for
+a paused or finished project (a running one says to pause first); it reopens the project and starts
+the run again, so it spends credits. The chat can propose the same (`propose_send_back`), and it
+happens when you confirm.
+
+**Who decides to go back.** Never a model: the orchestrator follows rules and signals.
+
+- QA fails and the failure is in the code: back to the **Architect** for a fix plan (above).
+- The **Developer** reports a problem with the design or task list it cannot solve inside a task
+  (`needs_architect` in its report, from prompt `developer.v5`): when you approve that task, the
+  project goes **back to the Architect** (`agents/prompts/architect_replan.v1.md`), at most
+  `limits.max_replans` (2) times. The Architect returns new tasks (ids `R<round>-<n>`, appended to the
+  task list and built by the Developer), or answers that the design stands (the Developer gets that as
+  a note on its next task, and you are not alerted), or hands a choice only you can make to Action
+  needed. If it cannot plan, or the limit is used, the problem goes to you as an action item.
+- Every such visit is checked against the Architect's own budget, saved with a `handoff` so a pause
+  or crash resumes into it, and shown in the journey.
+
 ## Starting and running a project
 
 Every project gets its own private repository. Secrets live in `.env` (git-ignored; load it with
@@ -132,7 +164,9 @@ tool, or any `fail` verdict, fails the report; `untested` is shown but does not 
 test: `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k qa`.
 
 **When QA fails, the project fixes itself, for up to `limits.max_qa_loops` rounds (2).** The
-orchestrator gives the failed report, the architecture and the task list to the **Architect**
+orchestrator moves **back to the Architect** (a real visit: the project's stage becomes the Architect,
+and the journey shows QA → ↩ Architect → Developer → QA) and gives it the failed report, the
+architecture and the task list
 (`agents/prompts/qa_fix_planner.v1.md`, the Architect's model tier and budget). It returns a fix plan:
 a short analysis, new tasks for the Developer (ids `F<round>-<n>`, added to the end of
 `tasks.json`, acceptance criteria that a test proves) and anything only you can do (these become
@@ -140,7 +174,7 @@ Action needed items). The **Developer** builds each fix task like any other: one
 task, and you still review and merge each. When they are merged, QA runs again. It stops looping
 and brings the report to you at the QA gate when QA passes, when the rounds are used up, or when the
 Architect finds nothing the Developer can fix (for example a tool that is not installed). A planner
-failure or an invalid plan changes nothing and also goes to you. `max_qa_loops: 0` restores
+failure or an invalid plan changes nothing: the project returns to QA and shows you the report. `max_qa_loops: 0` restores
 "a failing report goes straight to you". The plan is kept as `qa_fix_plan_<n>.md` and shown in the
 Architect's notes on the Team page. Live check (a few cents):
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k fix_planner`.

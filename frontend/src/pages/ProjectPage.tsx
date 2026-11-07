@@ -23,6 +23,8 @@ export function ProjectPage() {
   const { slug = "" } = useParams();
   const { data, error, reload } = useLoad<Project | StartingProject>(`/api/projects/${slug}`, 3000);
   const [problem, setProblem] = useState<string | null>(null);
+  const [sendTo, setSendTo] = useState("");
+  const [sendNote, setSendNote] = useState("");
 
   if (error) {
     return (
@@ -58,6 +60,19 @@ export function ProjectPage() {
     setProblem(null);
     try {
       await post(`/api/projects/${slug}/${action}`);
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  const reached = stages.filter((s) => s.state !== "upcoming" || s.visits > 0);
+
+  async function sendBack() {
+    setProblem(null);
+    try {
+      await post(`/api/projects/${slug}/send-back`, { to: sendTo || reached[0]?.stage, comment: sendNote.trim() });
+      setSendNote("");
       reload();
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : String(e));
@@ -147,6 +162,34 @@ export function ProjectPage() {
       {active && (
         <Button onClick={() => void act("pause")}>Pause</Button>
       )}
+
+      <Section title="Change something">
+        {data.can_send_back ? (
+          <Card>
+            <label className="field">
+              Send it back to
+              <select value={sendTo} onChange={(e) => setSendTo(e.target.value)}>
+                {reached.map((s) => (
+                  <option key={s.stage} value={s.stage}>{s.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              What should change?
+              <textarea value={sendNote} rows={3} onChange={(e) => setSendNote(e.target.value)} />
+            </label>
+            <Button disabled={sendNote.trim() === ""} onClick={() => void sendBack()}>Send back and continue</Button>
+            <p className="hint">
+              Works on a paused or finished project. The agent you choose does it, you review it, and
+              the agents after it run again. This spends credits.
+            </p>
+          </Card>
+        ) : (
+          <Card>
+            <p className="muted">Pause the project first (or wait until it is done) to send it back to an agent.</p>
+          </Card>
+        )}
+      </Section>
 
       <Section title="Developer model">
         <Card>

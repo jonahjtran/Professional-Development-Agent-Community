@@ -28,13 +28,15 @@ from orchestrator.developer_backend import BACKENDS, developer_model, get_develo
 from orchestrator.explain import ExplainInput, ExplainResult
 from orchestrator.halt import request_halt
 from orchestrator.inbox import Pending, PendingKind, pending_for
-from orchestrator.journey import path_summary
+from orchestrator.journey import LABELS, path_summary
 from orchestrator.models_view import agent_models
 from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy
 from orchestrator.proposals import create_proposal
+from orchestrator.rework import REWORKABLE, ReworkError
+from orchestrator.rework import send_back as rework_send_back
 from orchestrator.rules import describe as describe_rule
 from orchestrator.rules import global_store, project_store
-from orchestrator.state import Status
+from orchestrator.state import Stage, Status
 from orchestrator.todos import mark_done, open_todos
 from orchestrator.trace import EventType
 from orchestrator.ui import data
@@ -63,6 +65,7 @@ PROPOSE_TOOLS = (
     "propose_resume",
     "propose_autonomy",
     "propose_developer_backend",
+    "propose_send_back",
     "propose_note",
 )
 
@@ -517,6 +520,36 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
             {"backend": args["backend"]},
             f"Run {args['project']}'s Developer on the {args['backend']} model ({what}), "
             "from the next task",
+        )
+
+    @register(
+        "propose_send_back",
+        "Propose sending a PAUSED or FINISHED project back to an agent with the person's "
+        "instruction (agent is one of product_owner, architect, developer, qa, career_coach). "
+        "A finished project becomes active again and the run starts when they confirm. Use it when "
+        "they want to change something after the fact; use propose_note for a small hint to the "
+        "Developer instead.",
+        _schema({"project": "string", "agent": "string", "comment": "string"}),
+    )
+    def _send_back(args: dict[str, Any]) -> str:
+        view = _state(ctx, args["project"])
+        try:
+            target = Stage(args["agent"])
+        except ValueError:
+            raise ToolFailure(
+                "agent must be one of " + ", ".join(s.value for s in REWORKABLE)
+            ) from None
+        # Check it the way the orchestrator will, so a refusal comes now, not at the click.
+        try:
+            rework_send_back(ctx.runs_dir, view.state, target, str(args["comment"]), dry_run=True)
+        except ReworkError as error:
+            raise ToolFailure(str(error)) from None
+        comment = str(args["comment"]).strip()
+        return propose(
+            args["project"],
+            "send_back",
+            {"to": target.value, "comment": comment},
+            f"Send {args['project']} back to the {LABELS[target]} and run it again: “{comment}”",
         )
 
     @register(

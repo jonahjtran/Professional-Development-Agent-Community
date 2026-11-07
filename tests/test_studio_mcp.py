@@ -351,6 +351,48 @@ def test_an_unknown_developer_backend_is_refused(tools: dict[str, Any], runs: Pa
     assert error and list_proposals(runs) == []
 
 
+def test_sending_a_project_back_is_a_proposal_and_changes_nothing(
+    tools: dict[str, Any], runs: Path
+) -> None:
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE)
+
+    text, error = call(
+        tools, "propose_send_back", project="demo", agent="architect", comment="Use Postgres"
+    )
+
+    assert not error and "awaiting" in text.lower()
+    [proposal] = list_proposals(runs)
+    assert proposal.action == "send_back"
+    assert proposal.args == {"to": "architect", "comment": "Use Postgres"}
+    assert "Architect" in proposal.summary and "Use Postgres" in proposal.summary
+    from orchestrator.state import load_state
+
+    assert load_state(runs, "demo").status == Status.DONE  # nothing happened yet
+
+
+@pytest.mark.parametrize(
+    ("agent", "comment"), [("intake", "x"), ("nowhere", "x"), ("qa", "  "), ("qa", "x" * 2001)]
+)
+def test_a_send_back_the_orchestrator_would_refuse_is_refused_at_once(
+    tools: dict[str, Any], runs: Path, agent: str, comment: str
+) -> None:
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE)
+
+    _text, error = call(tools, "propose_send_back", project="demo", agent=agent, comment=comment)
+
+    assert error and list_proposals(runs) == []
+
+
+def test_it_cannot_be_proposed_while_the_project_is_running(
+    tools: dict[str, Any], runs: Path
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    text, error = call(tools, "propose_send_back", project="demo", agent="architect", comment="x")
+
+    assert error and "Pause" in text
+
+
 def test_the_activity_tool_names_each_agents_model(tools: dict[str, Any], runs: Path) -> None:
     make_project(runs, stage=Stage.DEVELOPER)
 

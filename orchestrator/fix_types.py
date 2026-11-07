@@ -14,6 +14,10 @@ class FixRequest:
     tasks_json: str
     report_json: str
     round: int  # 1 for the first fix attempt
+    # "qa_failure": fix a failed QA report. "design_problem": the Developer cannot build a task as
+    # designed, and `problem` says why.
+    kind: str = "qa_failure"
+    problem: str = ""
 
 
 @dataclass(frozen=True)
