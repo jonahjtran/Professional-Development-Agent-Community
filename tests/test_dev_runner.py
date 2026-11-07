@@ -712,3 +712,30 @@ def test_a_failed_task_keeps_the_notes_for_the_next_attempt(repo: Path, tmp_path
         Harness(repo, tmp_path, lazy).runner().run(request())
 
     assert [n.text for n in pending_notes(tmp_path / "runs", "demo")] == ["Use server actions"]
+
+
+def test_a_resumed_task_whose_work_was_already_committed_does_not_need_new_commits(
+    repo: Path, tmp_path: Path
+) -> None:
+    from orchestrator.worktree import create_worktree
+
+    killed = create_worktree(repo, "T1")
+    commit_a_file(killed.path)  # the earlier attempt finished its work and committed it
+
+    def only_checks(cwd: Path) -> list[Any]:
+        return [result_message()]  # the new session finds nothing left to do
+
+    harness = Harness(repo, tmp_path, only_checks)
+
+    result = harness.runner().run(request())
+
+    assert "interrupted" in harness.prompts[0]
+    assert "agent/T1" in result.output
+
+
+def test_a_fresh_task_that_makes_no_commits_is_still_an_error(repo: Path, tmp_path: Path) -> None:
+    def lazy(cwd: Path) -> list[Any]:
+        return [result_message()]
+
+    with pytest.raises(AgentError, match="no commits"):
+        Harness(repo, tmp_path, lazy).runner().run(request())

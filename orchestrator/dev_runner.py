@@ -190,7 +190,9 @@ class DevRunner:
 
         if report is None:
             raise fail(f"the Developer's final report was not valid: {problem}")
-        self._verify(worktree, head_before, base_before, branches_before, fail)
+        self._verify(
+            worktree, head_before, base_before, branches_before, fail, interrupted=interrupted
+        )
 
         usage = turn.result.usage or {}
         result = DevResult(
@@ -217,6 +219,8 @@ class DevRunner:
         base_before: str | None,
         branches_before: set[str],
         fail: Callable[[str], AgentError],
+        *,
+        interrupted: bool = False,
     ) -> None:
         """Check the repository itself; the agent's own claims are not evidence."""
         extra = local_branches(self._repo) - branches_before - {worktree.branch}
@@ -226,7 +230,10 @@ class DevRunner:
             raise fail(f"the Developer changed {self._base}")
         if git_current_branch(worktree.path) != worktree.branch:
             raise fail(f"the Developer left its branch {worktree.branch}")
-        if head_sha(worktree.path) == head_before or commits_ahead(worktree) == 0:
+        # A task picked up after a kill may already have all its commits: a session that finds
+        # nothing left to do is fine as long as the branch has work on it.
+        no_new_work = head_sha(worktree.path) == head_before and not interrupted
+        if no_new_work or commits_ahead(worktree) == 0:
             raise fail("the Developer made no commits")
         left_over = uncommitted_paths(worktree)
         if left_over:
