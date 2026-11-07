@@ -81,6 +81,12 @@ happens when you confirm; the coordinator chooses then. Live check (cents):
   task list and built by the Developer), or answers that the design stands (the Developer gets that as
   a note on its next task, and you are not alerted), or hands a choice only you can make to Action
   needed. If it cannot plan, or the limit is used, the problem goes to you as an action item.
+- The **Developer** cannot start a task and makes no commits, but says why in its report
+  (`needs_architect`): the project goes **back to the Architect** at once, with the task's own
+  text, instead of pausing (same `max_replans` limit; past it, or with no Architect available, it
+  pauses and shows what the Developer said). A task you added by sending the project back (`H…`)
+  that got stuck this way is taken out of the task list, so the Architect's new tasks replace it and
+  it cannot sit first and block them. Tasks the Architect planned are never removed.
 - Every such visit is checked against the Architect's own budget, saved with a `handoff` so a pause
   or crash resumes into it, and shown in the journey.
 
