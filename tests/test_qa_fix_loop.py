@@ -17,7 +17,7 @@ from orchestrator.pipeline import (
 )
 from orchestrator.qa_prepare import QaMaterials
 from orchestrator.stages import qa_stage
-from orchestrator.state import ProjectState, Stage, Status
+from orchestrator.state import ProjectState, Stage, Status, load_state
 from orchestrator.todos import open_todos
 from schemas import (
     CheckResult,
@@ -323,7 +323,7 @@ def test_approving_the_passing_report_moves_on_and_resets_the_loop_count(tmp_pat
     assert state.stage == Stage.CAREER_COACH and state.qa_loops == 0
 
 
-def test_the_loop_is_a_recorded_move_back_to_the_developer_and_forward_to_qa_again(
+def test_the_loop_goes_back_to_the_architect_then_on_to_the_developer_and_to_qa_again(
     tmp_path: Path,
 ) -> None:
     ctx, _q, _d = make_ctx(tmp_path, QaThenFixed(1), FakePlanner())
@@ -331,9 +331,44 @@ def test_the_loop_is_a_recorded_move_back_to_the_developer_and_forward_to_qa_aga
     state = run_until_gate(tmp_path, ctx)
 
     # (the test project starts at QA, so its path begins with the move back)
-    assert [v.stage for v in state.path] == [Stage.DEVELOPER, Stage.QA, Stage.CAREER_COACH]
+    assert [v.stage for v in state.path] == [
+        Stage.ARCHITECT,
+        Stage.DEVELOPER,
+        Stage.QA,
+        Stage.CAREER_COACH,
+    ]
     back = state.path[0]
-    assert back.came_from == Stage.QA and back.reason == "QA failed: fix round 1"
+    assert back.came_from == Stage.QA and back.reason == "QA failed: planning fix round 1"
+    assert state.path[1].came_from == Stage.ARCHITECT and "fix plan" in state.path[1].reason
+
+
+def test_while_the_architect_plans_the_project_really_is_at_the_architect(tmp_path: Path) -> None:
+    seen: list[tuple[Stage, Status]] = []
+
+    class Watching(FakePlanner):
+        def plan(self, request: FixRequest) -> FixResult:
+            saved = load_state(tmp_path, "demo")
+            seen.append((saved.stage, saved.status))
+            return super().plan(request)
+
+    ctx, _q, _d = make_ctx(tmp_path, QaThenFixed(1), Watching())
+
+    run_until_gate(tmp_path, ctx)
+
+    assert seen == [(Stage.ARCHITECT, Status.RUNNING)]
+
+
+def test_the_architects_visit_is_traced_as_the_architects_own_work(tmp_path: Path) -> None:
+    ctx, _q, _d = make_ctx(tmp_path, QaThenFixed(1), FakePlanner())
+
+    run_until_gate(tmp_path, ctx)
+
+    starts = [
+        e
+        for e in trace_events(tmp_path)
+        if e["event"] == "agent_start" and e["stage"] == "architect"
+    ]
+    assert starts
 
 
 # --- when it does not loop --------------------------------------------------------------------
@@ -401,6 +436,7 @@ def test_a_planner_failure_falls_back_to_the_human_and_still_bills_nothing_twice
     state = run_until_gate(tmp_path, ctx)
 
     assert state.status == Status.RUNNING and state.stage == Stage.CAREER_COACH  # not halted
+    assert [v.stage for v in state.path][:2] == [Stage.ARCHITECT, Stage.QA]  # it came straight back
     assert state.cost_usd[Stage.ARCHITECT] == pytest.approx(0.05)
     summary = [g for g in gates.requests if g.stage == Stage.QA][0].summary
     assert "QA FAILED" in summary and "unreachable" in summary
