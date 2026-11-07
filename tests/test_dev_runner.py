@@ -10,6 +10,7 @@ from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage
 
 from orchestrator.config import SandboxConfig
 from orchestrator.dev_runner import DevRunner
+from orchestrator.developer_backend import LocalStatus
 from orchestrator.pipeline import AgentError, AgentRequest, AgentRunner
 from orchestrator.prompts import Prompt
 from orchestrator.tool_hooks import ToolAnswer, ToolRequest
@@ -107,6 +108,7 @@ class Harness:
         self.repo = repo
         self.tmp_path = tmp_path
         self.config = make_config()
+        self.local_status = LocalStatus(True, True, True, None, "ready")
 
     @staticmethod
     def good_turn_two(cwd: Path) -> list[Any]:
@@ -139,6 +141,7 @@ class Harness:
             Prompt(name="developer", version="v3", text="You are the Developer."),
             studio_root=studio_root or self.tmp_path / "not-the-repo",
             client_factory=self.factory,
+            local_check=lambda _local: self.local_status,
         )
 
 
@@ -174,7 +177,7 @@ def test_the_agent_is_confined_to_its_worktree_with_a_strict_setup(
 
     options = harness.options[0]
     assert Path(str(options.cwd)) == tmp_path / "worktrees" / "project" / "T1"
-    assert options.model == "strong-model-id"
+    assert options.model == "claude-sonnet-5-5"  # the Developer's own model, not the strong tier
     assert options.max_turns == 40
     assert options.max_budget_usd == 2.0
     assert options.setting_sources == []
@@ -739,3 +742,106 @@ def test_a_fresh_task_that_makes_no_commits_is_still_an_error(repo: Path, tmp_pa
 
     with pytest.raises(AgentError, match="no commits"):
         Harness(repo, tmp_path, lazy).runner().run(request())
+
+
+# --- Claude or a local model -----------------------------------------------------------------
+
+
+def test_claude_is_used_unless_the_project_chose_the_local_model(
+    repo: Path, tmp_path: Path
+) -> None:
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    env = harness.options[0].env
+    assert "ANTHROPIC_BASE_URL" not in env and "ANTHROPIC_AUTH_TOKEN" not in env
+
+
+def test_a_project_on_the_local_model_runs_claude_code_against_the_local_server(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.developer_backend import set_project_backend
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-real-key")
+    set_project_backend(tmp_path / "runs", "demo", "local")
+    harness = Harness(repo, tmp_path)
+
+    harness.runner().run(request())
+
+    options = harness.options[0]
+    local = harness.config.local
+    assert options.model == local.model
+    assert options.env["ANTHROPIC_BASE_URL"] == local.endpoint
+    assert options.env["ANTHROPIC_API_KEY"] == ""  # the real key never reaches a local server
+    assert options.env["ANTHROPIC_AUTH_TOKEN"] == "ollama"
+    assert options.env["CLAUDE_CODE_SUBAGENT_MODEL"] == local.model
+
+
+def test_a_local_task_costs_nothing_even_if_the_sdk_prices_it_or_reports_no_cost(
+    repo: Path, tmp_path: Path
+) -> None:
+    from orchestrator.developer_backend import set_project_backend
+
+    set_project_backend(tmp_path / "runs", "demo", "local")
+
+    def unpriced(cwd: Path) -> list[Any]:
+        commit_a_file(cwd)
+        return [result_message(total_cost_usd=None)]
+
+    result = Harness(repo, tmp_path, unpriced).runner().run(request())
+
+    assert result.cost_usd == 0.0
+    assert result.model == make_config().local.model  # no model name came back: use the setting
+
+
+def test_a_local_task_that_was_priced_by_the_sdk_is_still_free(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.developer_backend import set_project_backend
+
+    set_project_backend(tmp_path / "runs", "demo", "local")
+
+    result = Harness(repo, tmp_path).runner().run(request())  # the fake reports $0.50
+
+    assert result.cost_usd == 0.0
+
+
+def test_a_missing_local_server_pauses_with_what_to_do_and_creates_nothing(
+    repo: Path, tmp_path: Path
+) -> None:
+    from orchestrator.developer_backend import set_project_backend
+
+    set_project_backend(tmp_path / "runs", "demo", "local")
+    harness = Harness(repo, tmp_path)
+    harness.local_status = LocalStatus(
+        False, False, False, None, "Ollama is not answering at http://localhost:11434.", "Start it."
+    )
+
+    with pytest.raises(AgentError) as error:
+        harness.runner().run(request())
+
+    assert "Ollama is not answering" in str(error.value) and "Start it." in str(error.value)
+    assert harness.options == []  # the agent never started
+    assert not (tmp_path / "worktrees" / "project" / "T1").exists()
+
+
+def test_claude_does_not_wait_on_the_local_server(repo: Path, tmp_path: Path) -> None:
+    harness = Harness(repo, tmp_path)
+    harness.local_status = LocalStatus(False, False, False, None, "down", "")
+
+    harness.runner().run(request())  # a down Ollama is irrelevant to a Claude task
+
+    assert len(harness.options) == 1
+
+
+def test_switching_between_tasks_takes_effect_on_the_next_one(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.developer_backend import set_project_backend
+
+    harness = Harness(repo, tmp_path, Harness.good_turn, Harness.good_turn)
+    runner = harness.runner()
+
+    runner.run(request(task_id="T1"))
+    set_project_backend(tmp_path / "runs", "demo", "local")
+    runner.run(request(task_id="T2"))
+
+    assert harness.options[0].model == "claude-sonnet-5-5"
+    assert harness.options[1].model == harness.config.local.model
