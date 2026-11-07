@@ -124,8 +124,21 @@ def test_the_timeline_marks_done_current_waiting_and_upcoming_stages(runs: Path)
     waiting = data.project_view(runs, make_config(), "demo")
 
     assert running is not None and waiting is not None
-    assert [r.state for r in running.stages] == ["done", "done", "current", "upcoming", "upcoming"]
-    assert [r.state for r in waiting.stages] == ["done", "done", "done", "waiting", "upcoming"]
+    # an agent that has finished is "finished", not "done": the project may still go back to it
+    assert [r.state for r in running.stages] == [
+        "finished",
+        "finished",
+        "current",
+        "upcoming",
+        "upcoming",
+    ]
+    assert [r.state for r in waiting.stages] == [
+        "finished",
+        "finished",
+        "finished",
+        "waiting",
+        "upcoming",
+    ]
 
 
 def test_a_finished_project_shows_every_stage_done(runs: Path) -> None:
@@ -134,6 +147,74 @@ def test_a_finished_project_shows_every_stage_done(runs: Path) -> None:
     view = data.project_view(runs, make_config(), "demo")
 
     assert view is not None and {r.state for r in view.stages} == {"done"}
+
+
+def visit(stage: Stage, reason: str = "next", came_from: Stage | None = None) -> Any:
+    from orchestrator.state import StageVisit
+
+    return StageVisit(stage=stage, reason=reason, ts=NOW, came_from=came_from)
+
+
+def test_an_agent_the_project_went_back_to_shows_how_many_times_it_has_been_visited(
+    runs: Path,
+) -> None:
+    make_project(
+        runs,
+        stage=Stage.DEVELOPER,
+        path=[
+            visit(Stage.PRODUCT_OWNER),
+            visit(Stage.ARCHITECT),
+            visit(Stage.DEVELOPER),
+            visit(Stage.QA),
+            visit(Stage.ARCHITECT, "QA failed", Stage.QA),
+            visit(Stage.DEVELOPER, "QA failed: fix round 1", Stage.ARCHITECT),
+        ],
+    )
+
+    view = data.project_view(runs, make_config(), "demo")
+
+    assert view is not None
+    rows = {r.stage: r for r in view.stages}
+    assert rows[Stage.ARCHITECT].visits == 2 and rows[Stage.ARCHITECT].returned
+    assert rows[Stage.PRODUCT_OWNER].visits == 1 and not rows[Stage.PRODUCT_OWNER].returned
+    # QA finished once and will be needed again: it is upcoming, and it remembers its visit
+    assert rows[Stage.QA].state == "upcoming" and rows[Stage.QA].visits == 1
+
+
+def test_the_journey_lists_every_move_with_its_direction_and_why(runs: Path) -> None:
+    make_project(
+        runs,
+        stage=Stage.ARCHITECT,
+        path=[
+            visit(Stage.PRODUCT_OWNER),
+            visit(Stage.ARCHITECT),
+            visit(Stage.DEVELOPER),
+            visit(Stage.QA),
+            visit(Stage.ARCHITECT, "QA failed", Stage.QA),
+        ],
+    )
+
+    view = data.project_view(runs, make_config(), "demo")
+
+    assert view is not None
+    steps = view.journey.path
+    assert [(s.label, s.direction) for s in steps][-2:] == [
+        ("QA", "forward"),
+        ("Architect", "back"),
+    ]
+    assert view.journey.going_back is not None
+    assert view.journey.going_back.reason == "QA failed"
+    assert view.journey.going_back.came_from == "QA"
+
+
+def test_a_project_that_never_went_back_has_no_going_back_notice(runs: Path) -> None:
+    make_project(
+        runs, stage=Stage.ARCHITECT, path=[visit(Stage.PRODUCT_OWNER), visit(Stage.ARCHITECT)]
+    )
+
+    view = data.project_view(runs, make_config(), "demo")
+
+    assert view is not None and view.journey.going_back is None
 
 
 def test_stage_spend_is_shown_against_its_cap_including_extra_the_human_granted(runs: Path) -> None:

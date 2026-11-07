@@ -166,9 +166,9 @@ def test_a_project_has_its_timeline_spend_decisions_documents_and_open_questions
 
     assert project["summary"]["detail"] == "Review the qa output"
     assert [s["state"] for s in project["stages"]] == [
-        "done",
-        "done",
-        "done",
+        "finished",
+        "finished",
+        "finished",
         "waiting",
         "upcoming",
     ]
@@ -989,6 +989,45 @@ def test_deciding_a_proposal_needs_the_session_token(client: TestClient, runs: P
     assert response.status_code == 403
 
 
+def test_the_project_carries_its_journey_and_how_often_each_agent_was_visited(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.state import StageVisit
+
+    def v(stage: Stage, why: str, came: Stage | None) -> StageVisit:
+        return StageVisit(stage=stage, reason=why, ts=NOW, came_from=came)
+
+    make_project(
+        runs,
+        stage=Stage.ARCHITECT,
+        path=[
+            v(Stage.PRODUCT_OWNER, "start", Stage.INTAKE),
+            v(Stage.ARCHITECT, "PRD approved", Stage.PRODUCT_OWNER),
+            v(Stage.DEVELOPER, "design approved", Stage.ARCHITECT),
+            v(Stage.QA, "tasks done", Stage.DEVELOPER),
+            v(Stage.ARCHITECT, "QA failed", Stage.QA),
+        ],
+    )
+
+    body = client.get("/api/projects/demo").json()
+
+    assert [s["direction"] for s in body["journey"]["path"]] == [
+        "forward",
+        "forward",
+        "forward",
+        "forward",
+        "back",
+    ]
+    assert body["journey"]["going_back"] == {
+        "stage": "architect",
+        "label": "Architect",
+        "reason": "QA failed",
+        "came_from": "QA",
+    }
+    architect = next(s for s in body["stages"] if s["stage"] == "architect")
+    assert architect["visits"] == 2 and architect["returned"] is True
+
+
 # --- what each agent is doing ----------------------------------------------------------------
 
 
@@ -1005,7 +1044,7 @@ def test_the_activity_of_each_agent_is_served(client: TestClient, runs: Path) ->
         "career_coach",
     ]
     by = {p["stage"]: p for p in people}
-    assert by["product_owner"]["status"] == "done"
+    assert by["product_owner"]["status"] == "finished"
     assert by["qa"]["status"] == "upcoming" and by["qa"]["waiting_on"] == "Developer"
     assert by["developer"]["status"] == "stopped"  # no live run was started in this test
 

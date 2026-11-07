@@ -23,6 +23,25 @@ uv run studio --help          # the CLI
 Live tests call the real Claude API and cost money, so they are skipped by default and never run
 in CI. Run them on purpose with `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s`.
 
+## The journey is not a straight line
+
+The orchestrator is a deterministic state machine, but it can move back as well as forward
+(`orchestrator/journey.py`): forward only to the next agent, and back to **any earlier agent**
+(QA to the Architect, the Developer to the Architect, and so on; never back to intake). Every move
+goes through one function (`_goto` in `pipeline.py`), which refuses an illegal move, saves the move
+in `state.path` (each entry: the agent, why, when, and where it came from) and traces it with its
+direction. Because an agent can be called back, **no agent is "done" until the project is**:
+
+- an agent that has finished shows as **finished**; the project's agents show **done** only when the
+  whole project is complete;
+- an agent that has been visited more than once shows **↻ round N**; one the project went back to
+  shows **↩ and the reason** ("QA failed: fix round 1"); an agent after the current one that has run
+  before shows **will run again**;
+- the project page shows the **journey** (every agent visited, moves back marked) and a notice while
+  the project is back at an earlier agent; the chat's `project_status` includes the same line.
+
+A project saved before this existed has no path; it is read as having passed each earlier agent once.
+
 ## Starting and running a project
 
 Every project gets its own private repository. Secrets live in `.env` (git-ignored; load it with

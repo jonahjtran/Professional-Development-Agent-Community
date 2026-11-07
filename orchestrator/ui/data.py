@@ -10,8 +10,18 @@ from pydantic import ValidationError
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.config import Config
 from orchestrator.inbox import all_pending, run_is_alive
+from orchestrator.journey import LABELS as JOURNEY_LABELS
+from orchestrator.journey import direction, going_back, visit_counts
 from orchestrator.latex import render_snippets
-from orchestrator.state import GateRecord, ProjectState, Stage, Status, load_state, state_path
+from orchestrator.state import (
+    GateRecord,
+    ProjectState,
+    Stage,
+    StageVisit,
+    Status,
+    load_state,
+    state_path,
+)
 from orchestrator.trace import EventType, TraceEvent, trace_path
 from schemas import CareerPlan, EvidenceSet, ResumeChange
 
@@ -42,13 +52,36 @@ class ProjectSummary:
 class StageRow:
     stage: Stage
     label: str
-    state: str  # done, current, waiting, upcoming
+    # current, waiting (for you), finished (for now: the project may go back), upcoming, and
+    # done only when the whole project is
+    state: str
     spent: float
     cap: float
+    visits: int = 0  # how many times this agent has been the current one
+
+    @property
+    def returned(self) -> bool:
+        return self.visits > 1
 
     @property
     def fraction(self) -> float:
         return min(self.spent / self.cap, 1.0) if self.cap else 0.0
+
+
+@dataclass(frozen=True)
+class JourneyStep:
+    stage: str
+    label: str
+    reason: str
+    ts: datetime
+    direction: str  # forward | back
+    came_from: str | None = None
+
+
+@dataclass(frozen=True)
+class Journey:
+    path: list[JourneyStep]
+    going_back: JourneyStep | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +99,7 @@ class ProjectView:
     gates: list[GateRecord]
     links: list[Link] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
+    journey: Journey = field(default_factory=lambda: Journey(path=[]))
 
 
 def project_cap(state: ProjectState, config: Config) -> float:
@@ -115,14 +149,14 @@ def list_projects(runs_dir: Path, config: Config) -> list[ProjectSummary]:
 
 def _stage_state(state: ProjectState, stage: Stage) -> str:
     if state.status == Status.DONE:
-        return "done"
+        return "done"  # only now is every agent truly done
     if state.stage == Stage.INTAKE:
         return "upcoming"
     order = {s: n for n, s in enumerate(STAGES)}
     if state.stage not in order:
         return "upcoming"
     if order[stage] < order[state.stage]:
-        return "done"
+        return "finished"  # for now: the orchestrator may still go back to it
     if stage == state.stage:
         return "waiting" if state.status == Status.AWAITING_HUMAN else "current"
     return "upcoming"
@@ -154,10 +188,28 @@ def _links(state: ProjectState, runs_dir: Path) -> list[Link]:
     return links
 
 
+def _step(visit: StageVisit) -> JourneyStep:
+    way = direction(visit.came_from, visit.stage) if visit.came_from is not None else "forward"
+    return JourneyStep(
+        stage=visit.stage.value,
+        label=JOURNEY_LABELS[visit.stage],
+        reason=visit.reason,
+        ts=visit.ts,
+        direction=way,
+        came_from=JOURNEY_LABELS[visit.came_from] if visit.came_from else None,
+    )
+
+
+def _journey(state: ProjectState) -> Journey:
+    back = going_back(state)
+    return Journey(path=[_step(v) for v in state.path], going_back=_step(back) if back else None)
+
+
 def project_view(runs_dir: Path, config: Config, slug: str) -> ProjectView | None:
     state = load_project(runs_dir, slug)
     if state is None:
         return None
+    counts = visit_counts(state)
     rows = [
         StageRow(
             stage=s,
@@ -165,6 +217,7 @@ def project_view(runs_dir: Path, config: Config, slug: str) -> ProjectView | Non
             state=_stage_state(state, s),
             spent=state.cost_usd.get(s, 0.0),
             cap=stage_cap(state, config, s),
+            visits=counts.get(s, 0),
         )
         for s in STAGES
     ]
@@ -176,6 +229,7 @@ def project_view(runs_dir: Path, config: Config, slug: str) -> ProjectView | Non
         gates=list(reversed(state.gate_history)),
         links=_links(state, runs_dir),
         artifacts=sorted(state.artifacts),
+        journey=_journey(state),
     )
 
 
