@@ -55,6 +55,12 @@ open questions of the old run are put aside (`runs/<project>/stale/`), not answe
 kept as `state.rework` until the project finishes again. Career material is published again when the
 Career coach is approved again.
 
+In the web UI it is the **Change something** card on the project page: choose an agent (only those
+the project has reached), write what should change, and **Send back and continue**. It is shown for
+a paused or finished project (a running one says to pause first); it reopens the project and starts
+the run again, so it spends credits. The chat can propose the same (`propose_send_back`), and it
+happens when you confirm.
+
 **Who decides to go back.** Never a model: the orchestrator follows rules and signals.
 
 - QA fails and the failure is in the code: back to the **Architect** for a fix plan (above).

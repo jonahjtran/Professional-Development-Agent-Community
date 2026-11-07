@@ -59,6 +59,7 @@ export interface Project {
   todos: TodoItem[];
   developer: { backend: "claude" | "local"; source: "project" | "global" | "default"; model: string };
   journey: Journey;
+  can_send_back: boolean;
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
   links: { label: string; url: string }[];
   artifacts: string[];

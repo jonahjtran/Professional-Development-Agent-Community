@@ -23,6 +23,7 @@ ACTIONS = (
     "set_autonomy",
     "leave_note",
     "set_developer_backend",
+    "send_back",
 )
 Status = Literal["pending", "confirmed", "dismissed", "failed"]
 _LOCK = threading.Lock()
