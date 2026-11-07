@@ -42,10 +42,18 @@ direction. Because an agent can be called back, **no agent is "done" until the p
 
 A project saved before this existed has no path; it is read as having passed each earlier agent once.
 
-**You can send the project back yourself, at any time it is paused or finished.**
-`uv run studio send-back <project> --to product_owner|architect|developer|qa|career_coach --comment "..."`
-reopens it at that agent with your instruction (a finished project becomes running again), then
-`studio resume <project>` continues it. What each agent does with it: the **Product Owner** and
+**You talk to the coordinator, not to an agent, at any time the project is paused or finished.**
+`uv run --env-file .env studio send-back <project> --comment "..."` reopens it with your
+instruction (a finished project becomes running again), then `studio resume <project>` continues
+it. The **coordinator** (`orchestrator/coordinator.py`, prompt `agents/prompts/coordinator.v1.md`,
+one call on the strong tier, cost in the helper ledger as `coordinator_usd`) reads your request and
+the project's documents and picks the agent, with a reason in plain words and your request restated
+for that agent (your own words are kept). It may only choose an agent the project has reached; a
+big or vague request ("make it pass the PRD") goes to the **Architect**, one concrete small edit to
+the **Developer**, changed requirements to the **Product Owner**. If the call fails or answers
+badly the request goes to the Architect (who turns any request into tasks) and says so. Naming an
+agent yourself (`--to product_owner|architect|developer|qa|career_coach`) skips the coordinator.
+What each agent does with it: the **Product Owner** and
 **Career coach** revise their own document with your comment and you review it at the gate (after
 a changed PRD the Architect plans only the tasks the change needs); the **Architect** turns your
 instruction into new tasks (`R<round>-<n>`, appended; finished tasks stay finished); the
@@ -55,11 +63,13 @@ open questions of the old run are put aside (`runs/<project>/stale/`), not answe
 kept as `state.rework` until the project finishes again. Career material is published again when the
 Career coach is approved again.
 
-In the web UI it is the **Change something** card on the project page: choose an agent (only those
-the project has reached), write what should change, and **Send back and continue**. It is shown for
+In the web UI it is the **Change something** card on the project page: write what should change and
+**Send back and continue**; the coordinator decides (the default), and the page says where it went
+and why. You can pick an agent instead (only those the project has reached). It is shown for
 a paused or finished project (a running one says to pause first); it reopens the project and starts
-the run again, so it spends credits. The chat can propose the same (`propose_send_back`), and it
-happens when you confirm.
+the run again, so it spends credits. The chat can propose the same (`propose_send_back`, the agent is optional), and it
+happens when you confirm; the coordinator chooses then. Live check (cents):
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k coordinator`.
 
 **Who decides to go back.** Never a model: the orchestrator follows rules and signals.
 

@@ -175,7 +175,7 @@ def test_a_project_has_its_timeline_spend_decisions_documents_and_open_questions
     qa = project["stages"][3]
     assert (qa["label"], qa["spent"], qa["cap"]) == ("QA", 1.0, 2.5)
     assert project["warn_fraction"] == 0.8
-    assert project["helper"] == {"explain_usd": 0.0, "chat_usd": 0.0}
+    assert project["helper"] == {"explain_usd": 0.0, "chat_usd": 0.0, "coordinator_usd": 0.0}
     assert [g["comments"] for g in project["gates"]] == ["second", "first"]
     assert project["artifacts"] == ["prd.md"]
     [waiting] = project["pending"]
@@ -1110,7 +1110,8 @@ def test_a_project_that_did_not_record_how_it_started_is_not_changed(
         {"to": "nowhere", "comment": "x"},
         {"to": "qa", "comment": "   "},
         {"to": "qa"},
-        {"comment": "x"},
+        {"to": "auto", "comment": "  "},
+        {"comment": "  "},
     ],
 )
 def test_a_bad_send_back_is_refused(
@@ -1159,6 +1160,91 @@ def test_confirming_a_send_back_proposal_does_it(
 
     assert response.status_code == 200
     assert load_state(runs, "demo").stage == Stage.ARCHITECT and len(launched.calls) == 1
+
+
+class FakeCoordinator:
+    def __init__(self, agent: str = "architect", reason: str = "It is a big change.") -> None:
+        from schemas import Route
+
+        self.route_to = Route(agent=agent, reason=reason, instruction="Plan it as tasks.")  # type: ignore[arg-type]
+        self.calls: list[str] = []
+
+    def route(self, state: Any, request: str, allowed: Any) -> Any:
+        self.calls.append(request)
+        return self.route_to
+
+
+def coordinated(
+    runs: Path,
+    launched: Launched,
+    tmp_path: Path,
+    coordinator: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    for key, value in env_for(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        launcher=launched,
+        projects_dir=tmp_path / "clones",
+        health=lambda: run_all(tmp_path),
+        coordinator=coordinator,
+    )
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("to", ["", "auto"])
+def test_without_a_named_agent_the_coordinator_chooses_and_says_why(
+    runs: Path,
+    launched: Launched,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    to: str,
+) -> None:
+    from orchestrator.state import load_state
+
+    coordinator = FakeCoordinator("architect", "It is a big change.")
+    web = coordinated(runs, launched, tmp_path, coordinator, monkeypatch)
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+
+    response = post(web, "/api/projects/demo/send-back", {"to": to, "comment": "Make it work"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agent"] == "architect" and body["reason"] == "It is a big change."
+    assert body["routed"] is True
+    state = load_state(runs, "demo")
+    assert state.stage == Stage.ARCHITECT and len(launched.calls) == 1
+    assert state.handoff is not None and "Make it work" in state.handoff.note
+
+
+def test_naming_an_agent_skips_the_coordinator(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = FakeCoordinator()
+    web = coordinated(runs, launched, tmp_path, coordinator, monkeypatch)
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+
+    response = post(
+        web, "/api/projects/demo/send-back", {"to": "product_owner", "comment": "Add offline"}
+    )
+
+    assert response.status_code == 200 and coordinator.calls == []
+    assert response.json()["agent"] == "product_owner"
+
+
+def test_a_running_project_is_refused_before_the_coordinator_is_called(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = FakeCoordinator()
+    web = coordinated(runs, launched, tmp_path, coordinator, monkeypatch)
+    make_project(runs, stage=Stage.DEVELOPER, status=Status.RUNNING, agent="full")
+
+    response = post(web, "/api/projects/demo/send-back", {"comment": "Change it"})
+
+    assert response.status_code == 409 and coordinator.calls == []
 
 
 # --- what each agent is doing ----------------------------------------------------------------

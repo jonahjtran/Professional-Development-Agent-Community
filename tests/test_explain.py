@@ -147,4 +147,8 @@ def test_ledger_totals_add_up_by_kind(tmp_path: Path) -> None:
 
     assert totals["explain_usd"] == pytest.approx(0.03)
     assert totals["chat_usd"] == pytest.approx(0.5)
-    assert assistant_totals(tmp_path, "nobody") == {"explain_usd": 0.0, "chat_usd": 0.0}
+    assert assistant_totals(tmp_path, "nobody") == {
+        "explain_usd": 0.0,
+        "chat_usd": 0.0,
+        "coordinator_usd": 0.0,
+    }

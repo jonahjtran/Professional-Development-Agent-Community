@@ -18,6 +18,7 @@ from orchestrator.cli_gate import CliGateBackend
 from orchestrator.cli_merge import CliMergeBackend
 from orchestrator.cli_tool import CliToolBackend
 from orchestrator.config import Config, load_config
+from orchestrator.coordinator import Coordinator, Routing, choose
 from orchestrator.default_specs import (
     default_api_checks,
     default_api_schemas,
@@ -37,6 +38,7 @@ from orchestrator.inbox import (
     Inbox,
     run_marker,
 )
+from orchestrator.journey import LABELS
 from orchestrator.newproject import NewProjectError, create_project, default_projects_dir
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
 from orchestrator.profile import ProfileError, load_profile, profile_dir
@@ -193,6 +195,15 @@ def _repo_for_resume(state: ProjectState, agent: AgentKind, repo: Path | None) -
     if repo is not None and repo.resolve() != recorded.resolve():
         raise _fail(f"Project {state.project_slug} belongs to {recorded}, not {repo}")
     return recorded
+
+
+def _load(config_path: Path) -> Config:
+    try:
+        return load_config(config_path)
+    except FileNotFoundError:
+        raise _fail(f"Config file not found: {config_path}") from None
+    except ValidationError as error:
+        raise _fail(f"Invalid config {config_path}:\n{error}") from None
 
 
 def _context(
@@ -446,15 +457,27 @@ class ReworkAgent(StrEnum):
     CAREER_COACH = "career_coach"
 
 
+def _coordinator(runs_dir: Path, config_path: Path) -> Routing:
+    return Coordinator(_load(config_path), runs_dir)
+
+
 @app.command(name="send-back")
 def send_back_command(
     project: Annotated[str, typer.Argument(help="Project name.")],
-    to: Annotated[ReworkAgent, typer.Option("--to", help="Which agent to send it back to.")],
     comment: Annotated[str, typer.Option("--comment", help="What to change.")],
+    to: Annotated[
+        ReworkAgent | None,
+        typer.Option(
+            "--to",
+            help="Which agent to send it to. Leave it out and the coordinator chooses.",
+        ),
+    ] = None,
     runs_dir: RunsDirOption = Path("runs"),
+    config: ConfigOption = Path("config.yaml"),
 ) -> None:
-    """Reopen a paused or finished project at an agent, with your instruction.
+    """Reopen a paused or finished project with your instruction.
 
+    The coordinator reads your request and sends it to the right agent (or name one with --to).
     Then continue it with `studio resume`. A finished project can be changed this way.
     """
     try:
@@ -462,12 +485,20 @@ def send_back_command(
     except FileNotFoundError:
         raise _fail(f"No project named {project} in {runs_dir}") from None
     try:
-        reopened = send_back(runs_dir, state, Stage(to.value), comment)
-    except ReworkError as error:
+        if to is None:
+            send_back(runs_dir, state, Stage.PRODUCT_OWNER, comment, dry_run=True)  # cheap checks
+            decision = choose(_coordinator(runs_dir, config), runs_dir, state, comment)
+            target, note, reason = decision.agent, decision.instruction, decision.reason
+        else:
+            target, note, reason = Stage(to.value), comment, ""
+        reopened = send_back(runs_dir, state, target, note)
+    except (ReworkError, ValueError) as error:
         raise _fail(str(error)) from None
     save_state(runs_dir, reopened)
     clear_halt(runs_dir, project)
-    typer.echo(f"{project} is back at the {to.value.replace('_', ' ')}.")
+    typer.echo(f"{project} is back at the {LABELS[target]}.")
+    if reason:
+        typer.echo(reason)
     typer.echo(f"Continue it with: studio resume {project} --agent full --ui")
 
 

@@ -185,7 +185,22 @@ describe("the project page", () => {
     const select = await screen.findByLabelText("Send it back to");
 
     const options = within(select).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["Product Owner", "Architect", "Developer"]);
+    expect(options).toEqual(["Let the coordinator decide (recommended)", "Product Owner", "Architect", "Developer"]);
+  });
+
+  it("lets the coordinator choose the agent by default and tells you where it went and why", async () => {
+    const api = open(project({ can_send_back: true }, { status: "done", alive: false }), {
+      "POST /api/projects/demo/send-back": {
+        ok: true, agent: "architect", label: "Architect", reason: "It is a big change.", routed: true,
+      },
+    });
+
+    await userEvent.type(await screen.findByLabelText("What should change?"), "Make it pass the PRD");
+    await userEvent.click(screen.getByRole("button", { name: "Send back and continue" }));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ to: "auto", comment: "Make it pass the PRD" }]));
+    expect(await screen.findByText(/Sent to the Architect/)).toBeInTheDocument();
+    expect(screen.getByText(/It is a big change\./)).toBeInTheDocument();
   });
 
   it("needs an instruction before it will send anything", async () => {

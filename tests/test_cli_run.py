@@ -289,6 +289,28 @@ def test_a_finished_project_can_be_sent_back_and_then_resumed_to_finish_again(
     assert load_state(tmp_path, "demo").rework is None
 
 
+def test_without_an_agent_the_coordinator_chooses_and_the_cli_says_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator import cli
+    from schemas import Route
+
+    class Chooser:
+        def route(self, state: object, request: str, allowed: object) -> Route:
+            return Route(agent="architect", reason="It spans several parts.", instruction="Plan.")
+
+    monkeypatch.setattr(cli, "_coordinator", lambda runs_dir, config: Chooser())
+    finished_project(tmp_path)
+
+    sent = send_back_cli(tmp_path, "demo", "--comment", "Make it pass the PRD")
+
+    assert sent.exit_code == 0, sent.output
+    assert "Architect" in sent.output and "It spans several parts." in sent.output
+    state = load_state(tmp_path, "demo")
+    assert state.stage.value == "architect" and state.handoff is not None
+    assert "Make it pass the PRD" in state.handoff.note
+
+
 def test_sending_back_an_unknown_project_is_an_error(tmp_path: Path) -> None:
     result = send_back_cli(tmp_path, "ghost", "--to", "qa", "--comment", "x")
 

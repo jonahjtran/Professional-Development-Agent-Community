@@ -25,6 +25,7 @@ from orchestrator.activity import project_activity
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.assistant_cost import assistant_totals
 from orchestrator.config import Config, LocalConfig
+from orchestrator.coordinator import Coordinator, Decision, Routing, choose
 from orchestrator.developer_backend import (
     LocalStatus,
     check_local,
@@ -46,6 +47,7 @@ from orchestrator.inbox import (
     rejection_reason,
     run_is_alive,
 )
+from orchestrator.journey import LABELS
 from orchestrator.models_view import agent_models
 from orchestrator.newproject import (
     NewProject,
@@ -174,6 +176,7 @@ def create_app(
     frontend_dir: Path = FRONTEND,
     explainer: Explaining | None = None,
     chat: Chatting | None = None,
+    coordinator: Routing | None = None,
     local_check: Callable[[LocalConfig], LocalStatus] = check_local,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
@@ -183,6 +186,7 @@ def create_app(
         lambda: health_checks.run_checks(repo_root=config_path.resolve().parent)
     )
     explain_with = explainer or Explainer(config, runs_dir)
+    coordinating: Routing = coordinator or Coordinator(config, runs_dir)
     chatting: Chatting = chat or ChatService(
         runs_dir,
         config,
@@ -614,37 +618,67 @@ def create_app(
         launcher(command, config_path.resolve().parent, runs_dir / slug / "run.log")
         return 200, None
 
-    def do_send_back(slug: str, to: str, comment: str) -> tuple[int, str | None]:
-        """Reopen a paused or finished project at an agent and start it. (status, error)."""
+    def do_send_back(slug: str, to: str, comment: str) -> tuple[int, str | None, Decision | None]:
+        """Reopen a paused or finished project and start it. (status, error, where it went).
+
+        With no agent named (or "auto") the coordinator chooses one and says why.
+        """
         view = view_or_404(slug)
-        try:
-            target = Stage(to)
-        except ValueError:
-            return 400, "choose an agent to send it back to"
+        named = to.strip() not in ("", "auto")
+        target: Stage | None = None
+        if named:
+            try:
+                target = Stage(to)
+            except ValueError:
+                return (
+                    400,
+                    "choose an agent to send it back to, or let the coordinator decide",
+                    None,
+                )
         if run_is_alive(runs_dir, slug):
-            return 409, f"{slug} is already running. Pause it first."
+            return 409, f"{slug} is already running. Pause it first.", None
         if resume_command(view.state, config_path, runs_dir) is None:
             return (
                 409,
                 "This project did not record how it was started, so send it back from the "
                 "terminal: studio send-back.",
+                None,
             )
+        try:  # the cheap checks first, so the coordinator is only paid for a valid request
+            rework_send_back(runs_dir, view.state, Stage.PRODUCT_OWNER, comment, dry_run=True)
+        except ReworkError as refusal:
+            return (409 if "Pause" in str(refusal) else 400), str(refusal), None
+        if target is None:
+            decision = choose(coordinating, runs_dir, view.state, comment)
+        else:
+            decision = Decision(target, "You chose this agent.", comment, routed=True)
         try:
-            reopened = rework_send_back(runs_dir, view.state, target, comment)
+            reopened = rework_send_back(runs_dir, view.state, decision.agent, decision.instruction)
         except ReworkError as refusal:
             text = str(refusal)
-            return (409 if "Pause" in text else 400), text
+            return (409 if "Pause" in text else 400), text, None
         save_state(runs_dir, reopened)
         clear_halt(runs_dir, slug)
-        return start_resume(slug, reopened)
+        code, problem = start_resume(slug, reopened)
+        return code, problem, decision
 
     @app.post("/api/projects/{slug}/send-back")
     async def send_back_endpoint(request: Request, slug: str) -> JSONResponse:
         body = await checked_body(request)
-        status, error = do_send_back(slug, str(body.get("to", "")), str(body.get("comment", "")))
-        if error is not None:
-            return fail(status, error)
-        return JSONResponse({"ok": True})
+        status, error, decision = do_send_back(
+            slug, str(body.get("to", "")), str(body.get("comment", ""))
+        )
+        if error is not None or decision is None:
+            return fail(status, error or "could not send it back")
+        return JSONResponse(
+            {
+                "ok": True,
+                "agent": decision.agent.value,
+                "label": LABELS[decision.agent],
+                "reason": decision.reason,
+                "routed": decision.routed,
+            }
+        )
 
     @app.post("/api/projects/{slug}/resume")
     async def resume(request: Request, slug: str) -> JSONResponse:
@@ -735,9 +769,11 @@ def create_app(
                 return 400, str(error)
             return 200, f"The Developer uses the {p.args.get('backend')} model from the next task."
         if p.action == "send_back":
-            code, problem = do_send_back(
+            code, problem, decision = do_send_back(
                 p.project, str(p.args.get("to", "")), str(p.args.get("comment", ""))
             )
+            if problem is None and decision is not None:
+                return code, f"Sent to the {LABELS[decision.agent]}: {decision.reason}"
             return code, problem or "Sent back, and running again."
         if p.action == "leave_note":
             try:
