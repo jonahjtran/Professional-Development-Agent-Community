@@ -548,6 +548,189 @@ def test_a_failed_explanation_is_reported_not_raised(
     }
 
 
+# --- which model runs each agent --------------------------------------------------------------
+
+
+def ready() -> Any:
+    from orchestrator.developer_backend import LocalStatus
+
+    return LocalStatus(True, True, True, 131072, "qwen3 is installed and loaded.")
+
+
+class LocalCheck:
+    def __init__(self, status: Any = None) -> None:
+        self.status = status or ready()
+        self.calls = 0
+
+    def __call__(self, _local: Any) -> Any:
+        self.calls += 1
+        return self.status
+
+
+@pytest.fixture
+def local_check() -> LocalCheck:
+    return LocalCheck()
+
+
+@pytest.fixture
+def models_client(runs: Path, tmp_path: Path, local_check: LocalCheck) -> TestClient:
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        projects_dir=tmp_path / "clones",
+        local_check=local_check,
+        health=lambda: run_all(tmp_path),
+    )
+    return TestClient(app)
+
+
+def test_every_agent_is_listed_with_its_model(models_client: TestClient) -> None:
+    body = models_client.get("/api/models").json()
+
+    by = {a["id"]: a for a in body["agents"]}
+    assert by["product_owner"]["model"] == "strong-model-id"
+    assert by["architect"]["model"] == "strong-model-id"
+    assert by["qa"]["model"] == "fast-model-id"
+    assert by["career_coach"]["model"] == "strong-model-id"
+    assert (
+        by["developer"]["model"] == "claude-sonnet-5-5" and by["developer"]["backend"] == "claude"
+    )
+    assert by["chat"]["model"] == "strong-model-id"  # the default tier; the page can switch to fast
+    assert by["explanations"]["model"] == "fast-model-id"
+
+
+def test_the_developers_choice_and_the_local_server_state_are_shown(
+    models_client: TestClient, local_check: LocalCheck
+) -> None:
+    body = models_client.get("/api/models").json()
+
+    assert body["developer"]["default"] == "claude"
+    assert body["developer"]["claude_model"] == "claude-sonnet-5-5"
+    assert body["developer"]["local_model"].startswith("qwen3-coder")
+    assert body["local"]["ok"] is True and body["local"]["context"] == 131072
+    assert local_check.calls == 1
+
+
+def test_a_down_local_server_is_reported_with_the_fix(runs: Path, tmp_path: Path) -> None:
+    from orchestrator.developer_backend import LocalStatus
+
+    down = LocalStatus(False, False, False, None, "Ollama is not answering.", "Start it.")
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        projects_dir=tmp_path / "clones",
+        local_check=LocalCheck(down),
+        health=lambda: run_all(tmp_path),
+    )
+
+    body = TestClient(app).get("/api/models").json()
+
+    assert body["local"]["ok"] is False and body["local"]["fix"] == "Start it."
+
+
+def test_the_default_backend_can_be_switched_and_shows_up_for_the_developer(
+    models_client: TestClient,
+) -> None:
+    assert post(models_client, "/api/models/developer", {"backend": "local"}).status_code == 200
+
+    body = models_client.get("/api/models").json()
+    developer = {a["id"]: a for a in body["agents"]}["developer"]
+    assert body["developer"]["default"] == "local"
+    assert developer["backend"] == "local" and developer["model"].startswith("qwen3-coder")
+
+
+def test_an_unknown_backend_is_refused(models_client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    assert post(models_client, "/api/models/developer", {"backend": "gpt"}).status_code == 400
+    assert (
+        post(models_client, "/api/projects/demo/developer-backend", {"backend": "gpt"}).status_code
+        == 400
+    )
+
+
+def test_a_project_shows_which_model_its_developer_uses_and_why(
+    models_client: TestClient, runs: Path
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    shown = models_client.get("/api/projects/demo").json()["developer"]
+
+    assert shown == {"backend": "claude", "source": "default", "model": "claude-sonnet-5-5"}
+
+
+def test_a_project_can_use_the_local_model_and_go_back_to_the_default(
+    models_client: TestClient, runs: Path
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    assert (
+        post(
+            models_client, "/api/projects/demo/developer-backend", {"backend": "local"}
+        ).status_code
+        == 200
+    )
+    shown = models_client.get("/api/projects/demo").json()["developer"]
+    assert shown["backend"] == "local" and shown["source"] == "project"
+    assert shown["model"].startswith("qwen3-coder")
+
+    post(models_client, "/api/projects/demo/developer-backend", {"backend": "default"})
+    assert models_client.get("/api/projects/demo").json()["developer"]["source"] == "default"
+
+
+def test_the_project_choice_beats_the_global_one(models_client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    post(models_client, "/api/models/developer", {"backend": "local"})
+    post(models_client, "/api/projects/demo/developer-backend", {"backend": "claude"})
+
+    shown = models_client.get("/api/projects/demo").json()["developer"]
+
+    assert (shown["backend"], shown["source"]) == ("claude", "project")
+
+
+def test_switching_needs_the_session_token(models_client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    assert models_client.post("/api/models/developer", json={"backend": "local"}).status_code == 403
+    assert (
+        models_client.post(
+            "/api/projects/demo/developer-backend", json={"backend": "local"}
+        ).status_code
+        == 403
+    )
+
+
+def test_a_down_local_server_shows_up_in_health_only_when_it_is_in_use(
+    runs: Path, tmp_path: Path
+) -> None:
+    from orchestrator.developer_backend import LocalStatus
+
+    down = LocalStatus(False, False, False, None, "Ollama is not answering.", "Start it.")
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        projects_dir=tmp_path / "clones",
+        local_check=LocalCheck(down),
+        health=lambda: run_all(tmp_path),
+    )
+    client = TestClient(app)
+
+    names = [c["name"] for c in client.get("/api/health").json()["checks"]]
+    assert "Local model (Ollama)" not in names  # Claude is in use, so Ollama is irrelevant
+
+    post(client, "/api/models/developer", {"backend": "local"})
+
+    checks = {c["name"]: c for c in client.get("/api/health").json()["checks"]}
+    assert checks["Local model (Ollama)"]["status"] == "fail"
+    assert "Start it." in checks["Local model (Ollama)"]["fix"]
+    assert any(
+        t["title"] == "Local model (Ollama)" for t in client.get("/api/todos").json()["todos"]
+    )
+
+
 # --- the chat ---------------------------------------------------------------------------------
 
 

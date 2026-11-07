@@ -263,3 +263,9 @@ ul.plain li { padding: 4px 0; }
 .chat-input { display: flex; gap: 12px; align-items: end; position: sticky; bottom: 0; padding: 12px 0; background: var(--bg); }
 .chat-input .field { flex: 1; margin: 0; }
 .chat-input textarea { width: 100%; resize: vertical; font: inherit; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--separator); background: var(--surface); color: inherit; }
+
+table.models { width: 100%; border-collapse: collapse; }
+table.models th { text-align: left; font-weight: 600; padding: 8px 12px 8px 0; white-space: nowrap; }
+table.models td { padding: 8px 12px 8px 0; }
+table.models tr + tr { border-top: 1px solid var(--separator); }
+table.models code { white-space: nowrap; }

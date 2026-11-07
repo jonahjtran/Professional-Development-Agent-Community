@@ -40,6 +40,7 @@ export interface Project {
   helper: { explain_usd: number; chat_usd: number };
   autonomy: "cautious" | "standard" | "autonomous";
   todos: TodoItem[];
+  developer: { backend: "claude" | "local"; source: "project" | "global" | "default"; model: string };
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
   links: { label: string; url: string }[];
   artifacts: string[];
@@ -248,4 +249,27 @@ export type ChatEvent =
 export interface ChatRepos {
   repos: { id: string; label: string }[];
   cap_usd: number;
+}
+
+export interface AgentModelRow {
+  id: string;
+  name: string;
+  backend: "claude" | "local";
+  model: string;
+  note: string;
+}
+
+export interface LocalState {
+  ok: boolean;
+  reachable: boolean;
+  installed: boolean;
+  context: number | null;
+  detail: string;
+  fix: string;
+}
+
+export interface ModelsReply {
+  developer: { default: "claude" | "local"; claude_model: string; local_model: string; endpoint: string };
+  agents: AgentModelRow[];
+  local: LocalState;
 }

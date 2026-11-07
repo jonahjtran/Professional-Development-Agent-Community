@@ -84,6 +84,11 @@ and read at the start of every task, so a switch applies from the next task on:
   `min_context`; if not, the project pauses with the exact command to fix it. Start Ollama with
   `OLLAMA_CONTEXT_LENGTH=65536 ollama serve` and `ollama pull <the tag>`.
 
+The **Models** page (`/models`) shows every agent's exact model id, switches the default Developer
+backend, and shows whether Ollama is ready (with the fix when it is not). Each project page shows
+which model its Developer uses and why, with a switch (follow the default, Claude, or the local
+model). Health lists the local model only when something is set to use it.
+
 ## QA
 
 After the last Developer task is approved, merge its pull requests on GitHub. QA asks you to confirm
