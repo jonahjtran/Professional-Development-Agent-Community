@@ -6,7 +6,9 @@ the state, so a crash at any point resumes from the last saved step.
 Stage order:  intake -> product_owner -> architect -> developer -> qa -> career_coach -> done.
 Gates (human decisions) follow product_owner, architect, qa and career_coach. With the dummy QA
 agent, a failing QA sends the work back to the developer up to `limits.max_qa_loops` times. With the
-real QA tools (`ctx.qa`), QA runs once on the merged project and a failing report goes to the human.
+real QA tools (`ctx.qa`) and a fix planner (`ctx.fixer`), a failing report goes to the Architect,
+who plans fix tasks that the Developer builds before QA runs again, up to `limits.max_qa_loops`
+rounds; after that, or when nothing can be fixed in code, the report goes to the human.
 """
 
 import difflib
@@ -40,6 +42,7 @@ from orchestrator.career_stage import CareerError, CareerPreparer, gate_items, h
 from orchestrator.config import Config
 from orchestrator.designrecord import DesignRecordError, publish_design_record
 from orchestrator.evidence import build_evidence
+from orchestrator.fix_types import FixPlanner, FixRequest, render_plan
 from orchestrator.gates import (
     GateBackend,
     GateDecision,
@@ -64,7 +67,15 @@ from orchestrator.state import (
 from orchestrator.todos import add_todo
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 from orchestrator.worktree import WorktreeError
-from schemas import CareerPlan, CheckStatus, DevResult, EvidenceSet, QaReport, TaskList
+from schemas import (
+    CareerPlan,
+    CheckStatus,
+    DevResult,
+    EvidenceSet,
+    QaReport,
+    TaskList,
+    Verdict,
+)
 from schemas.tasks import Task
 
 __all__ = [
@@ -178,6 +189,8 @@ class PipelineContext:
     merges: MergeBackend | None = None
     # When set, the career stage first prepares the coach's inputs (profile, website, README).
     career: CareerPreparer | None = None
+    # When set, a failed QA report goes to the Architect for a fix plan instead of the human.
+    fixer: FixPlanner | None = None
     # When set, approved career items are published as pull requests (see career_publish).
     career_publisher: CareerPublisher | None = None
 
@@ -282,6 +295,7 @@ def _run_stage(
         return state.evolve(status=Status.HALTED)
     _trace_agent_end(ctx, state, result, started, details=details)
 
+    report: QaReport | None = None
     if stage == Stage.QA and "test_report.json" in state.artifacts:
         # The orchestrator's own pass/fail rule, not the model's word.
         store = ArtifactStore(ctx.runs_dir, state.project_slug)
@@ -303,8 +317,21 @@ def _run_stage(
         if ctx.qa is None and state.qa_loops < ctx.config.limits.max_qa_loops:
             _write_draft(ctx, state, result.output)
             return _move(state.evolve(qa_loops=state.qa_loops + 1), ctx, Stage.DEVELOPER)
+        why_not = ""
+        if (
+            ctx.qa is not None
+            and ctx.fixer is not None
+            and report is not None
+            and state.qa_loops < ctx.config.limits.max_qa_loops
+            and _fixable(report)
+        ):
+            state, fixing, why_not = _plan_fixes(state, ctx, report)
+            if fixing:
+                return state
         shown = summary if summary is not None else result.output
         output = f"{shown}\n\n---\n{_qa_failed_note(state.qa_loops)}"
+        if why_not:
+            output += f"\n\n{why_not}"
     else:
         output = summary if summary is not None else result.output
     _write_draft(ctx, state, output)
@@ -331,7 +358,8 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
     last = state.gate_history[-1] if state.gate_history else None
     previous: str | None = None
     comments: str | None = None
-    if stage == Stage.DEVELOPER and state.qa_loops > 0:
+    if stage == Stage.DEVELOPER and state.qa_loops > 0 and ctx.qa is None:
+        # (the dummy QA agent sends the same task back; real QA plans new fix tasks instead)
         previous, comments = draft, _read_draft(ctx, state, Stage.QA)
     elif last is not None and last.stage == stage:
         if last.outcome == GateOutcome.REQUEST_CHANGES:
@@ -357,14 +385,16 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
 # --- budget ----------------------------------------------------------------------------------
 
 
-def _check_budget(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+def _check_budget(
+    state: ProjectState, ctx: PipelineContext, stage: Stage | None = None
+) -> ProjectState:
     """Pause for the human while the next call would be over budget or past the warning line.
 
     Returns a RUNNING state when the call may go ahead, or a HALTED one if the human abandons.
     Continuing at a warning lets this one call through; the next call is checked again.
     """
     while True:
-        assessment = assess_budget(state, ctx.config, state.stage)
+        assessment = assess_budget(state, ctx.config, stage or state.stage)
         if assessment.level == BudgetLevel.OK:
             return state
         paused = pause_for_budget(state, assessment)
@@ -675,8 +705,145 @@ def _read_draft(ctx: PipelineContext, state: ProjectState, stage: Stage) -> str 
 
 def _qa_failed_note(retries: int) -> str:
     if retries:
-        return f"QA FAILED: the Developer's {retries} retries did not fix it."
+        return (
+            f"QA FAILED after {retries} round(s) of automatic fixes by the Architect and the "
+            "Developer. Approve to accept the work as it is, or ask for QA to run again."
+        )
     return "QA FAILED. Approve to accept the work as it is, or ask for QA to run again."
+
+
+def _fixable(report: QaReport) -> bool:
+    """True if the failure is in the code: a tool failed or a criterion was judged failed.
+
+    A tool that did not run (not installed) cannot be fixed by the Developer.
+    """
+    return any(c.status == CheckStatus.FAILED for c in report.checks) or any(
+        v.verdict == Verdict.FAIL for v in report.criteria
+    )
+
+
+def _plan_fixes(
+    state: ProjectState, ctx: PipelineContext, report: QaReport
+) -> tuple[ProjectState, bool, str]:
+    """Ask the Architect for fix tasks, add them to the task list, and send the project back to
+    the Developer. Returns (state, whether it went back, why not when it did not)."""
+    assert ctx.fixer is not None
+    where = state.stage
+    architect = state.evolve(stage=Stage.ARCHITECT)  # the Architect's budget, name and trace
+    architect = _check_budget(architect, ctx, Stage.ARCHITECT)
+    if architect.status != Status.RUNNING:
+        return architect.evolve(stage=where), True, ""
+    state = architect.evolve(stage=where)
+
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    existing = TaskList.model_validate_json(store.read(state.artifacts["tasks.json"]))
+    round_number = state.qa_loops + 1
+    architecture = state.artifacts.get("architecture.md")
+    traced = state.evolve(stage=Stage.ARCHITECT)
+    _trace(
+        ctx, traced, EventType.AGENT_START, agent="architect", details={"purpose": "qa_fix_plan"}
+    )
+    started = time.monotonic()
+    try:
+        result = ctx.fixer.plan(
+            FixRequest(
+                project=state.project_slug,
+                idea=state.idea,
+                architecture=store.read(architecture) if architecture else "",
+                tasks_json=existing.model_dump_json(indent=2),
+                report_json=report.model_dump_json(indent=2),
+                round=round_number,
+            )
+        )
+    except AgentError as error:
+        _trace(
+            ctx,
+            traced,
+            EventType.AGENT_END,
+            agent="architect",
+            cost_usd=error.cost_usd,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            details={"error": str(error), "purpose": "qa_fix_plan"},
+        )
+        state = record_cost(state, Stage.ARCHITECT, error.cost_usd)
+        return state, False, f"Automatic fix planning failed: {error}"
+    state = record_cost(state, Stage.ARCHITECT, result.cost_usd)
+    _trace(
+        ctx,
+        traced,
+        EventType.AGENT_END,
+        agent="architect",
+        model=result.model,
+        cost_usd=result.cost_usd,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        details={"purpose": "qa_fix_plan", "tasks": [t.id for t in result.plan.tasks]},
+    )
+    for need in result.plan.needs_human:
+        add_todo(
+            ctx.runs_dir,
+            state.project_slug,
+            key=f"qa-fix:{need}",
+            title=need,
+            detail="Raised by the Architect while planning the QA fixes.",
+            source="qa",
+        )
+    if not result.plan.tasks:
+        return (
+            state,
+            False,
+            f"The Architect found nothing the Developer can fix: {result.plan.analysis}",
+        )
+    try:
+        merged = TaskList.model_validate(
+            {
+                "tasks": [
+                    *[t.model_dump() for t in existing.tasks],
+                    *[t.model_dump() for t in result.plan.tasks],
+                ]
+            }
+        )
+    except ValidationError as error:
+        return (
+            state,
+            False,
+            f"The Architect's fix plan was not valid, so nothing was changed: {error}",
+        )
+
+    previous = state.artifacts["tasks.json"]
+    written = {
+        "tasks.json": store.write(
+            "tasks.json", merged.model_dump_json(indent=2), revision=previous.revision + 1
+        ),
+        f"qa_fix_plan_{round_number}.json": store.write(
+            f"qa_fix_plan_{round_number}.json", result.plan.model_dump_json(indent=2), revision=1
+        ),
+        f"qa_fix_plan_{round_number}.md": store.write(
+            f"qa_fix_plan_{round_number}.md", render_plan(result.plan, round_number), revision=1
+        ),
+    }
+    state = approve_artifacts(
+        record_artifacts(state, written), list(written), now=datetime.now(UTC)
+    )
+    _trace(
+        ctx,
+        state,
+        EventType.TRANSITION,
+        details={
+            "qa_fix": {"round": round_number, "tasks": [t.id for t in result.plan.tasks]},
+            "to": "developer",
+        },
+    )
+    return (
+        state.evolve(
+            stage=Stage.DEVELOPER,
+            status=Status.RUNNING,
+            intervention=None,
+            qa_loops=round_number,
+            current_task_id=None,
+        ),
+        True,
+        "",
+    )
 
 
 def _prepare_qa(state: ProjectState, ctx: PipelineContext, qa: QaPreparer) -> ProjectState:
