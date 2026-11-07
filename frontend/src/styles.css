@@ -277,3 +277,22 @@ table.models code { white-space: nowrap; }
 .journey { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
 .journey li { padding: 4px 10px; border-radius: 999px; background: var(--fill); font-size: 14px; }
 .journey li.back { background: var(--orange-bg); color: var(--orange); font-weight: 600; }
+
+/* A section heading that folds its body away (see CollapsibleSection). */
+h2 .fold {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+h2 .fold:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+h2 .chevron {
+  font-size: 0.8em;
+  opacity: 0.6;
+  width: 0.9em;
+}
