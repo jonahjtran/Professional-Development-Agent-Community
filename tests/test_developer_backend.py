@@ -34,7 +34,7 @@ def test_the_local_model_is_set_in_config_yaml() -> None:
     config = load_config(REPO_CONFIG)
 
     assert config.local.endpoint == "http://localhost:11434"
-    assert "qwen3-coder" in config.local.model.lower()
+    assert config.local.model == "qwen3-coder:30b"  # the only size that fits a laptop (30B-A3B)
     assert config.local.min_context >= 64_000  # Claude Code needs a large context
 
 

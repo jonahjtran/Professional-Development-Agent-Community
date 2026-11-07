@@ -80,5 +80,5 @@ local:
   # project (or as the default) on the Models page. The tag must match `ollama list`; Claude Code
   # needs a context of at least min_context, so start Ollama with OLLAMA_CONTEXT_LENGTH=65536.
   endpoint: http://localhost:11434
-  model: qwen3-coder:27b-instruct-q4_K_M
+  model: qwen3-coder:30b
   min_context: 65536
