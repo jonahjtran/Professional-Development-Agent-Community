@@ -66,6 +66,20 @@ class GateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class StageVisit(BaseModel):
+    """One time an agent became the current one: where from, and why.
+
+    The orchestrator may move back as well as forward, so a stage can be visited more than once.
+    """
+
+    stage: Stage
+    reason: str
+    ts: datetime
+    came_from: Stage | None = None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 class Allowances(BaseModel):
     """Extra room the human has granted, added on top of the limits in config.yaml.
 
@@ -110,6 +124,8 @@ class ProjectState(BaseModel):
     artifacts: dict[str, Artifact] = Field(default_factory=dict)
     completed_tasks: list[str] = Field(default_factory=list)  # Developer tasks approved so far
     qa_loops: Annotated[int, Field(ge=0)] = 0  # times QA has sent the work back to the Developer
+    # Every agent the orchestrator has moved to, in order, with why. Older projects have none.
+    path: list[StageVisit] = Field(default_factory=list)
 
     # Frozen so status and intervention can never be half-updated; change state with evolve().
     model_config = ConfigDict(extra="forbid", frozen=True)

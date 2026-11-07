@@ -55,8 +55,9 @@ def test_finished_agents_are_done_and_later_ones_wait_for_the_one_before(tmp_pat
 
     people = by_stage(tmp_path, state)
 
-    assert people["product_owner"].status == "done"
-    assert people["architect"].status == "done"
+    # finished, not done: the project may still go back to them
+    assert people["product_owner"].status == "finished"
+    assert people["architect"].status == "finished"
     assert people["developer"].status == "working"
     assert people["qa"].status == "upcoming" and people["qa"].waiting_on == "Developer"
     assert "Waiting for the Developer" in people["qa"].doing
@@ -208,6 +209,65 @@ def test_a_model_name_that_is_the_local_model_counts_as_local(tmp_path: Path) ->
     }
 
     assert people["developer"].backend == "local"
+
+
+# --- going back ------------------------------------------------------------------------------
+
+
+def stamped(stage: Stage, why: str = "next", came_from: Stage | None = None) -> Any:
+    from orchestrator.state import StageVisit
+
+    return StageVisit(
+        stage=stage, reason=why, ts=datetime(2026, 11, 7, tzinfo=UTC), came_from=came_from
+    )
+
+
+def test_an_agent_the_project_returned_to_is_working_again_and_says_why(tmp_path: Path) -> None:
+    state = project(
+        tmp_path,
+        stage=Stage.ARCHITECT,
+        path=[
+            stamped(Stage.PRODUCT_OWNER),
+            stamped(Stage.ARCHITECT),
+            stamped(Stage.DEVELOPER),
+            stamped(Stage.QA),
+            stamped(Stage.ARCHITECT, "QA failed", Stage.QA),
+        ],
+    )
+
+    people = by_stage(tmp_path, state)
+
+    assert people["architect"].status == "working"
+    assert people["architect"].visits == 2 and people["architect"].returned_because == "QA failed"
+    # the agents after it will be needed again, so they are upcoming, not done
+    assert people["developer"].status == "upcoming" and people["developer"].visits == 1
+    assert people["qa"].status == "upcoming" and "again" in people["qa"].doing
+
+
+def test_an_agent_that_finished_a_second_round_says_which_round(tmp_path: Path) -> None:
+    state = project(
+        tmp_path,
+        stage=Stage.QA,
+        path=[
+            stamped(Stage.PRODUCT_OWNER),
+            stamped(Stage.ARCHITECT),
+            stamped(Stage.DEVELOPER),
+            stamped(Stage.QA),
+            stamped(Stage.DEVELOPER, "fix round 1", Stage.QA),
+            stamped(Stage.QA),
+        ],
+    )
+
+    people = by_stage(tmp_path, state)
+
+    assert people["developer"].status == "finished"
+    assert "round 2" in people["developer"].doing and people["developer"].returned_because is None
+
+
+def test_only_a_finished_project_has_every_agent_done(tmp_path: Path) -> None:
+    state = project(tmp_path, stage=Stage.CAREER_COACH, status=Status.DONE)
+
+    assert {a.status for a in project_activity(tmp_path, state, alive=False)} == {"done"}
 
 
 # --- the Developer's agenda -------------------------------------------------------------------

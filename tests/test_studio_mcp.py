@@ -98,6 +98,32 @@ def test_projects_and_their_status_can_be_read(tools: dict[str, Any], runs: Path
     assert "autonomy" in status and "developer" in status
 
 
+def test_the_status_includes_the_journey_with_moves_back(tools: dict[str, Any], runs: Path) -> None:
+    from datetime import UTC, datetime
+
+    from orchestrator.state import StageVisit
+
+    def v(stage: Stage, came: Stage | None = None) -> StageVisit:
+        return StageVisit(
+            stage=stage, reason="r", ts=datetime(2026, 11, 7, tzinfo=UTC), came_from=came
+        )
+
+    make_project(
+        runs,
+        stage=Stage.ARCHITECT,
+        path=[
+            v(Stage.PRODUCT_OWNER),
+            v(Stage.ARCHITECT),
+            v(Stage.QA),
+            v(Stage.ARCHITECT, Stage.QA),
+        ],
+    )
+
+    text, _ = call(tools, "project_status", project="demo")
+
+    assert "journey: Product Owner → Architect → QA → ↩ Architect" in text
+
+
 def test_an_unknown_project_is_a_tool_error_not_a_crash(tools: dict[str, Any]) -> None:
     text, error = call(tools, "project_status", project="ghost")
 

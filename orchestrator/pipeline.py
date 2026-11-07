@@ -4,6 +4,7 @@ It never asks an LLM what to do next. Each call to `advance` does one unit of pr
 the state, so a crash at any point resumes from the last saved step.
 
 Stage order:  intake -> product_owner -> architect -> developer -> qa -> career_coach -> done.
+It can also go back to any earlier agent (see `journey.py`); every move is recorded by `_goto`.
 Gates (human decisions) follow product_owner, architect, qa and career_coach. With the dummy QA
 agent, a failing QA sends the work back to the developer up to `limits.max_qa_loops` times. With the
 real QA tools (`ctx.qa`) and a fix planner (`ctx.fixer`), a failing report goes to the Architect,
@@ -52,6 +53,7 @@ from orchestrator.gates import (
     open_gate,
 )
 from orchestrator.halt import halt_requested
+from orchestrator.journey import LABELS, ORDER, can_move, direction
 from orchestrator.publish import PublishError
 from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
 from orchestrator.stages import StageSpec
@@ -61,6 +63,7 @@ from orchestrator.state import (
     InterventionKind,
     ProjectState,
     Stage,
+    StageVisit,
     Status,
     save_state,
 )
@@ -88,14 +91,7 @@ __all__ = [
     "run_pipeline",
 ]
 
-_ORDER = [
-    Stage.INTAKE,
-    Stage.PRODUCT_OWNER,
-    Stage.ARCHITECT,
-    Stage.DEVELOPER,
-    Stage.QA,
-    Stage.CAREER_COACH,
-]
+_ORDER = list(ORDER)
 _GATED = {Stage.PRODUCT_OWNER, Stage.ARCHITECT, Stage.QA, Stage.CAREER_COACH}
 
 
@@ -316,7 +312,12 @@ def _run_stage(
         # With real QA tools there is no task to send back, so a failure always goes to the human.
         if ctx.qa is None and state.qa_loops < ctx.config.limits.max_qa_loops:
             _write_draft(ctx, state, result.output)
-            return _move(state.evolve(qa_loops=state.qa_loops + 1), ctx, Stage.DEVELOPER)
+            return _move(
+                state.evolve(qa_loops=state.qa_loops + 1),
+                ctx,
+                Stage.DEVELOPER,
+                f"QA failed: retry {state.qa_loops + 1}",
+            )
         why_not = ""
         if (
             ctx.qa is not None
@@ -670,9 +671,39 @@ def _next_stage(stage: Stage) -> Stage:
     return _ORDER[_ORDER.index(stage) + 1]
 
 
-def _move(state: ProjectState, ctx: PipelineContext, to: Stage) -> ProjectState:
-    _trace(ctx, state, EventType.TRANSITION, details={"from": state.stage.value, "to": to.value})
-    return state.evolve(stage=to)
+def _goto(state: ProjectState, ctx: PipelineContext, to: Stage, reason: str) -> ProjectState:
+    """Move to another agent, forward or back, and record the move and why.
+
+    The orchestrator is not a straight line: it may go back to any earlier agent. Every move is
+    saved in the project's path and traced with its direction, so the UI can show where the
+    project has been and why, and no agent is ever simply "done".
+    """
+    if not can_move(state.stage, to):
+        raise ValueError(f"cannot move from {state.stage.value} to {to.value}")
+    way = direction(state.stage, to)
+    _trace(
+        ctx,
+        state,
+        EventType.TRANSITION,
+        details={
+            "from": state.stage.value,
+            "to": to.value,
+            "direction": way,
+            "reason": reason,
+        },
+    )
+    visit = StageVisit(stage=to, reason=reason, ts=datetime.now(UTC), came_from=state.stage)
+    return state.evolve(stage=to, path=[*state.path, visit])
+
+
+def _move(state: ProjectState, ctx: PipelineContext, to: Stage, reason: str = "") -> ProjectState:
+    return _goto(state, ctx, to, reason or _default_reason(state.stage, to))
+
+
+def _default_reason(src: Stage, dst: Stage) -> str:
+    if direction(src, dst) == "forward":
+        return f"{LABELS[src]} finished"
+    return f"back to the {LABELS[dst]}"
 
 
 def _save(state: ProjectState, ctx: PipelineContext) -> None:
@@ -828,19 +859,13 @@ def _plan_fixes(
         ctx,
         state,
         EventType.TRANSITION,
-        details={
-            "qa_fix": {"round": round_number, "tasks": [t.id for t in result.plan.tasks]},
-            "to": "developer",
-        },
+        details={"qa_fix": {"round": round_number, "tasks": [t.id for t in result.plan.tasks]}},
+    )
+    state = state.evolve(
+        status=Status.RUNNING, intervention=None, qa_loops=round_number, current_task_id=None
     )
     return (
-        state.evolve(
-            stage=Stage.DEVELOPER,
-            status=Status.RUNNING,
-            intervention=None,
-            qa_loops=round_number,
-            current_task_id=None,
-        ),
+        _goto(state, ctx, Stage.DEVELOPER, f"QA failed: fix round {round_number}"),
         True,
         "",
     )

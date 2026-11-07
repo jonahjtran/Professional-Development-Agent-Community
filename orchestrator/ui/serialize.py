@@ -47,9 +47,33 @@ def project(view: data.ProjectView, pending: list[Pending]) -> dict[str, Any]:
                 "spent": r.spent,
                 "cap": r.cap,
                 "fraction": r.fraction,
+                "visits": r.visits,
+                "returned": r.returned,
             }
             for r in view.stages
         ],
+        "journey": {
+            "path": [
+                {
+                    "stage": j.stage,
+                    "label": j.label,
+                    "reason": j.reason,
+                    "ts": j.ts.isoformat(),
+                    "direction": j.direction,
+                }
+                for j in view.journey.path
+            ],
+            "going_back": (
+                {
+                    "stage": view.journey.going_back.stage,
+                    "label": view.journey.going_back.label,
+                    "reason": view.journey.going_back.reason,
+                    "came_from": view.journey.going_back.came_from,
+                }
+                if view.journey.going_back
+                else None
+            ),
+        },
         "warn_fraction": view.warn_fraction,
         "gates": [
             {

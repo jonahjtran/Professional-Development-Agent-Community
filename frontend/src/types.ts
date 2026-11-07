@@ -17,10 +17,27 @@ export interface Summary {
 export interface StageRow {
   stage: string;
   label: string;
-  state: "done" | "current" | "waiting" | "upcoming";
+  // "finished" is for now: the project may still go back to that agent. "done" is only for a
+  // project that is complete.
+  state: "finished" | "done" | "current" | "waiting" | "upcoming";
   spent: number;
   cap: number;
   fraction: number;
+  visits: number;
+  returned: boolean;
+}
+
+export interface JourneyStep {
+  stage: string;
+  label: string;
+  direction: "forward" | "back";
+  reason: string;
+  ts: string;
+}
+
+export interface Journey {
+  path: JourneyStep[];
+  going_back: { stage: string; label: string; reason: string; came_from: string | null } | null;
 }
 
 export interface InboxItem {
@@ -41,6 +58,7 @@ export interface Project {
   autonomy: "cautious" | "standard" | "autonomous";
   todos: TodoItem[];
   developer: { backend: "claude" | "local"; source: "project" | "global" | "default"; model: string };
+  journey: Journey;
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
   links: { label: string; url: string }[];
   artifacts: string[];
@@ -221,7 +239,9 @@ export interface AgendaItem {
 export interface AgentActivity {
   stage: string;
   name: string;
-  status: "done" | "working" | "waiting_for_you" | "paused" | "stopped" | "upcoming";
+  status: "finished" | "done" | "working" | "waiting_for_you" | "paused" | "stopped" | "upcoming";
+  visits: number;
+  returned_because: string | null;
   doing: string;
   waiting_on: string | null;
   task: { id: string; title: string } | null;
