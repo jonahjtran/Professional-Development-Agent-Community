@@ -4,6 +4,8 @@ models:
   # Tiers map to concrete model IDs. Verify against current docs before Phase 2.
   strong: claude-opus-5-5
   fast: claude-haiku-5-5
+  # The Claude model for the Developer (when its backend is Claude, not the local model below).
+  developer: claude-sonnet-5-5
 
 budget:
   project_cap_usd: 20.0
@@ -72,3 +74,11 @@ assistant:
   # The chat assistant (read-only on the code; everything consequential is a proposal you confirm).
   max_chat_usd: 1.0 # one chat ends here; its cost is shown apart from the project's spend
   max_turns: 15 # tool steps the assistant may take to answer one message
+
+local:
+  # An open-source model for the Developer, served by Ollama on this computer. Choose it per
+  # project (or as the default) on the Models page. The tag must match `ollama list`; Claude Code
+  # needs a context of at least min_context, so start Ollama with OLLAMA_CONTEXT_LENGTH=65536.
+  endpoint: http://localhost:11434
+  model: qwen3-coder:27b-instruct-q4_K_M
+  min_context: 65536

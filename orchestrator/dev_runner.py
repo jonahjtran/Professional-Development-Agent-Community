@@ -15,8 +15,14 @@ from typing import Any
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
 from pydantic import ValidationError
 
-from orchestrator.config import Config
-from orchestrator.envsafe import hidden_env
+from orchestrator.config import Config, LocalConfig
+from orchestrator.developer_backend import (
+    LocalStatus,
+    check_local,
+    developer_env,
+    developer_model,
+    get_developer_backend,
+)
 from orchestrator.halt import halt_requested
 from orchestrator.notes import consume_notes, pending_notes
 from orchestrator.permissions import PolicyContext
@@ -75,6 +81,7 @@ class DevRunner:
         studio_root: Path = _STUDIO_ROOT,
         base: str = "main",
         client_factory: ClientFactory = ClaudeSDKClient,
+        local_check: Callable[[LocalConfig], LocalStatus] = check_local,
     ) -> None:
         self._config = config
         self._runs_dir = runs_dir
@@ -84,10 +91,17 @@ class DevRunner:
         self._studio_root = studio_root
         self._base = base
         self._client_factory = client_factory
+        self._local_check = local_check
 
     def run(self, request: AgentRequest) -> AgentResult:
         task = _find_task(request)
         revising = request.previous_draft is not None
+        # Read at the start of every task, so a switch applies from the next task on.
+        backend = get_developer_backend(self._runs_dir, request.project).backend
+        if backend == "local":
+            status = self._local_check(self._config.local)
+            if not status.ok:
+                raise AgentError(f"{status.detail} {status.fix}".strip())
         # A rejected task starts again on a fresh branch, so the earlier pull request is untouched.
         branch_id = task.id if request.attempt == 0 else f"{task.id}-r{request.attempt}"
         try:
@@ -112,6 +126,7 @@ class DevRunner:
                     branches_before,
                     interrupted=interrupted,
                     notes=[n.text for n in notes],
+                    backend=backend,
                 )
             )
             consume_notes(self._runs_dir, request.project, [n.id for n in notes])
@@ -123,7 +138,9 @@ class DevRunner:
 
     # --- the SDK session -------------------------------------------------------------------
 
-    def _options(self, request: AgentRequest, task: Task, worktree: Worktree) -> ClaudeAgentOptions:
+    def _options(
+        self, request: AgentRequest, task: Task, worktree: Worktree, backend: str = "claude"
+    ) -> ClaudeAgentOptions:
         hooks = ToolPermissionHooks(
             policy=PolicyContext(
                 worktree=worktree.path,
@@ -138,7 +155,7 @@ class DevRunner:
             halt_check=lambda: halt_requested(self._runs_dir, request.project),
         )
         return ClaudeAgentOptions(
-            model=self._config.models.for_tier("strong"),
+            model=developer_model(backend, self._config),
             cwd=worktree.path,
             tools=list(_TOOLS),
             allowed_tools=list(_TOOLS),
@@ -156,7 +173,7 @@ class DevRunner:
                 "excludedCommands": ["git"],
                 "network": {"allowedDomains": list(self._config.sandbox.allowed_domains)},
             },
-            env=hidden_env(),
+            env=developer_env(backend, self._config.local),
             **hooks.sdk_options(),
         )
 
@@ -169,21 +186,23 @@ class DevRunner:
         *,
         interrupted: bool = False,
         notes: list[str] | None = None,
+        backend: str = "claude",
     ) -> AgentResult:
         head_before = head_sha(worktree.path)
         base_before = branch_sha(self._repo, self._base)
-        options = self._options(request, task, worktree)
+        options = self._options(request, task, worktree, backend)
 
         async with self._client_factory(options) as client:
             await client.query(self._task_prompt(request, task, worktree, interrupted, notes or []))
-            turn = await _collect(client)
+            turn = await _collect(client, priced=backend != "local")
             report, problem = _parse_report(turn.result.result or "")
             if report is None:
                 await client.query(_FOLLOW_UP.format(problem=problem))
-                turn = await _collect(client)  # the SDK reports a running total for the session
+                turn = await _collect(client, priced=backend != "local")  # a running total
                 report, problem = _parse_report(turn.result.result or "")
 
-        cost = turn.result.total_cost_usd or 0.0
+        # A local model costs nothing, whatever price the SDK guesses for an unknown model name.
+        cost = 0.0 if backend == "local" else turn.result.total_cost_usd or 0.0
 
         def fail(message: str) -> AgentError:
             return AgentError(message, cost_usd=cost)
@@ -206,7 +225,7 @@ class DevRunner:
         return AgentResult(
             output=result.model_dump_json(indent=2),
             cost_usd=cost,
-            model=turn.model or self._config.models.for_tier("strong"),
+            model=turn.model or developer_model(backend, self._config),
             prompt_version=self._prompt.version,
             tokens_in=usage.get("input_tokens"),
             tokens_out=usage.get("output_tokens"),
@@ -309,7 +328,7 @@ def _find_task(request: AgentRequest) -> Task:
     raise AgentError(f"task {request.task_id} is not in tasks.json")
 
 
-async def _collect(client: Any) -> _Turn:
+async def _collect(client: Any, *, priced: bool = True) -> _Turn:
     model: str | None = None
     result: ResultMessage | None = None
     async for message in client.receive_response():
@@ -324,7 +343,7 @@ async def _collect(client: Any) -> _Turn:
             f"the Developer failed: {result.subtype} {result.errors or ''}".strip(),
             cost_usd=result.total_cost_usd or 0.0,
         )
-    if result.total_cost_usd is None:
+    if priced and result.total_cost_usd is None:
         raise AgentError("the SDK reported no cost, so spend cannot be tracked")
     return _Turn(result, model)
 

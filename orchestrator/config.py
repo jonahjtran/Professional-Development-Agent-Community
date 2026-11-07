@@ -26,6 +26,9 @@ class StageValues[T](_Strict):
 class Models(_Strict):
     strong: str
     fast: str
+    # The Claude model the Developer uses when its backend is Claude (the local model is under
+    # `local`). Sonnet is the default: it is much cheaper than Opus for long coding sessions.
+    developer: str = "claude-sonnet-5-5"
 
     def for_tier(self, tier: Tier) -> str:
         return self.strong if tier == "strong" else self.fast
@@ -83,6 +86,18 @@ class SandboxConfig(_Strict):
     allowed_domains: list[str] = Field(default_factory=list)
 
 
+class LocalConfig(_Strict):
+    """An open-source model served on this computer by Ollama, for the Developer agent.
+
+    Claude Code talks to it through Ollama's Anthropic-compatible endpoint, so the Developer keeps
+    the same tools, permission policy and sandbox as with Claude.
+    """
+
+    endpoint: str = "http://localhost:11434"
+    model: str = "qwen3-coder:27b-instruct-q4_K_M"  # the Ollama tag, see `ollama list`
+    min_context: int = Field(default=65536, ge=1)  # Claude Code needs a large context window
+
+
 class AssistantConfig(_Strict):
     """The chat assistant: its dollar cap per chat and the turns one question may take."""
 
@@ -98,6 +113,7 @@ class Config(_Strict):
     qa: QaConfig
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     assistant: AssistantConfig = Field(default_factory=AssistantConfig)
+    local: LocalConfig = Field(default_factory=LocalConfig)
 
 
 def load_config(path: Path) -> Config:

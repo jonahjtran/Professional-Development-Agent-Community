@@ -68,6 +68,22 @@ Three details that decide how many approvals you see:
   PyPI registries). Any other host is shown to you. This computer and private networks (localhost,
   `169.254.x.x`, `10.x`, `192.168.x`, ...) are never reachable, so the agent cannot call the web UI.
 
+## The Developer's model
+
+The Developer runs inside Claude Code's harness whichever model drives it, so its tools, permission
+policy and sandbox are identical. Two backends, chosen **per project** (overrides) or **globally**,
+and read at the start of every task, so a switch applies from the next task on:
+
+- **Claude** (default): `models.developer` in `config.yaml`, currently `claude-sonnet-5-5` (the
+  planning agents, QA, the career coach and the chat stay on `models.strong`, Opus 5.5).
+- **Local**: an open-source model served by Ollama (`local:` in `config.yaml`: endpoint, model tag,
+  `min_context`). Claude Code is pointed at Ollama's Anthropic-compatible endpoint with a placeholder
+  token, the real Anthropic key is blanked, and every model name Claude Code might ask for is set to
+  the local model. A local task costs $0 and never counts against the caps. Before a local task starts,
+  Studio checks that Ollama answers, the model is installed and (if loaded) its context is at least
+  `min_context`; if not, the project pauses with the exact command to fix it. Start Ollama with
+  `OLLAMA_CONTEXT_LENGTH=65536 ollama serve` and `ollama pull <the tag>`.
+
 ## QA
 
 After the last Developer task is approved, merge its pull requests on GitHub. QA asks you to confirm
