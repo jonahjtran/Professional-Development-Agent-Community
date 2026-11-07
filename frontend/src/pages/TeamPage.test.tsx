@@ -13,7 +13,7 @@ const agenda = [
 ];
 
 function person(stage: string, name: string, status: string, doing: string, extra: Record<string, unknown> = {}) {
-  return { stage, name, status, doing, waiting_on: null, task: null, agenda: [], notes: [], recent: [], ...extra };
+  return { stage, name, status, doing, waiting_on: null, task: null, agenda: [], notes: [], recent: [], model: null, backend: null, model_source: null, ...extra };
 }
 
 const agents = [
@@ -21,6 +21,7 @@ const agents = [
   person("architect", "Architect", "done", "Finished: designed the architecture"),
   person("developer", "Developer", "working", "T2: Add the API. Running tests", {
     task: { id: "T2", title: "Add the API" },
+    model: "claude-sonnet-5-5", backend: "claude", model_source: "running",
     agenda,
     notes: ["T1: Built the table", "Gap: No index", "Needs you: Add the Apollo key"],
     recent: ["Running tests", "Editing page.tsx"],
@@ -38,6 +39,51 @@ function open(reply: unknown = { agents }) {
   );
   return api;
 }
+
+describe("the team page, with models", () => {
+  it("shows the exact model each agent is using and where it runs", async () => {
+    open({
+      agents: agents.map((a) =>
+        a.stage === "qa" ? { ...a, model: "claude-haiku-5-5", backend: "claude", model_source: "configured" } : a,
+      ),
+    });
+
+    const dev = await screen.findByRole("button", { name: /Developer/ });
+    expect(within(dev).getByText("claude-sonnet-5-5")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: /QA/ })).getByText("claude-haiku-5-5")).toBeInTheDocument();
+  });
+
+  it("marks a local model as local, and says whether it is running now", async () => {
+    open({
+      agents: agents.map((a) =>
+        a.stage === "developer" ? { ...a, model: "qwen3-coder:27b", backend: "local", model_source: "running" } : a,
+      ),
+    });
+
+    const dev = await screen.findByRole("button", { name: /Developer/ });
+    expect(within(dev).getByText("qwen3-coder:27b")).toBeInTheDocument();
+    expect(within(dev).getByText("local")).toBeInTheDocument();
+    expect(within(dev).getByText(/running now/)).toBeInTheDocument();
+  });
+
+  it("says when the model shown is only configured, not yet used", async () => {
+    open({
+      agents: agents.map((a) =>
+        a.stage === "qa" ? { ...a, model: "claude-haiku-5-5", backend: "claude", model_source: "configured" } : a,
+      ),
+    });
+
+    const qa = await screen.findByRole("button", { name: /QA/ });
+    expect(within(qa).getByText(/will use/)).toBeInTheDocument();
+  });
+
+  it("shows no model line for an agent whose model is unknown", async () => {
+    open();
+
+    const owner = await screen.findByRole("button", { name: /Product Owner/ });
+    expect(within(owner).queryByText(/claude/)).not.toBeInTheDocument();
+  });
+});
 
 describe("the team page", () => {
   it("shows every agent as a person with a bubble saying what they are doing", async () => {

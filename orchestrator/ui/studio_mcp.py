@@ -24,9 +24,11 @@ from claude_agent_sdk.types import McpSdkServerConfig
 from orchestrator.activity import humanize, project_activity
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.config import Config
+from orchestrator.developer_backend import BACKENDS, developer_model, get_developer_backend
 from orchestrator.explain import ExplainInput, ExplainResult
 from orchestrator.halt import request_halt
 from orchestrator.inbox import Pending, PendingKind, pending_for
+from orchestrator.models_view import agent_models
 from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy
 from orchestrator.proposals import create_proposal
 from orchestrator.rules import describe as describe_rule
@@ -59,6 +61,7 @@ PROPOSE_TOOLS = (
     "propose_merge_answer",
     "propose_resume",
     "propose_autonomy",
+    "propose_developer_backend",
     "propose_note",
 )
 
@@ -218,11 +221,20 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
     )
     def _activity(args: dict[str, Any]) -> str:
         view = _state(ctx, args["project"])
-        people = project_activity(ctx.runs_dir, view.state, alive=view.summary.alive)
+        choice = get_developer_backend(ctx.runs_dir, args["project"])
+        configured = {a.id: (a.model, a.backend) for a in agent_models(ctx.config, choice.backend)}
+        people = project_activity(
+            ctx.runs_dir,
+            view.state,
+            alive=view.summary.alive,
+            configured=configured,
+            local_model=ctx.config.local.model,
+        )
         out = []
         for p in people:
             row = asdict(p)
-            line = f"- {row['name']}: {row['status']}. {row['doing']}"
+            model = row["model"] or "model unknown"
+            line = f"- {row['name']} ({model}): {row['status']}. {row['doing']}"
             if row["agenda"]:
                 line += " Agenda: " + "; ".join(
                     f"{t['id']} {t['title']} ({t['state']})" for t in row["agenda"]
@@ -484,6 +496,25 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
             "set_autonomy",
             {"level": args["level"]},
             f"Set {args['project']} to {args['level']} autonomy",
+        )
+
+    @register(
+        "propose_developer_backend",
+        "Propose which model runs the Developer for one project: claude (Sonnet 5.5) or local "
+        "(the open-source model on this computer). It applies from the next task.",
+        _schema({"project": "string", "backend": "string"}),
+    )
+    def _developer_backend(args: dict[str, Any]) -> str:
+        _state(ctx, args["project"])
+        if args["backend"] not in BACKENDS:
+            raise ToolFailure(f"backend must be one of {', '.join(BACKENDS)}")
+        what = developer_model(args["backend"], ctx.config)
+        return propose(
+            args["project"],
+            "set_developer_backend",
+            {"backend": args["backend"]},
+            f"Run {args['project']}'s Developer on the {args['backend']} model ({what}), "
+            "from the next task",
         )
 
     @register(

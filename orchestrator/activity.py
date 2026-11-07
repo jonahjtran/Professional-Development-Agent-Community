@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from orchestrator.artifacts import ArtifactStore
+from orchestrator.developer_backend import read_running_model
 from orchestrator.state import ProjectState, Stage, Status
 from orchestrator.trace import EventType, TraceEvent, trace_path
 from schemas import TaskList
@@ -47,6 +48,9 @@ class AgentActivity:
     agenda: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     recent: list[str] = field(default_factory=list)
+    model: str | None = None  # the exact model id
+    backend: str | None = None  # claude | local
+    model_source: str | None = None  # running | used | configured
 
 
 def humanize(tool: str, summary: str) -> str:
@@ -121,6 +125,43 @@ def _recent(events: list[TraceEvent]) -> list[str]:
     return out
 
 
+def _last_model(runs_dir: Path, slug: str, stage: Stage) -> str | None:
+    """The model that answered the stage's most recent agent call (as the API reported it)."""
+    try:
+        lines = trace_path(runs_dir, slug).read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            event = TraceEvent.model_validate_json(line)
+        except ValidationError:
+            continue
+        if event.stage == stage and event.event == EventType.AGENT_END and event.model:
+            return event.model
+    return None
+
+
+def _model_info(
+    runs_dir: Path,
+    state: ProjectState,
+    stage: Stage,
+    configured: dict[str, tuple[str, str]] | None,
+    local_model: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """(model id, backend, where it came from) for one agent."""
+    if stage == Stage.DEVELOPER:
+        running = read_running_model(runs_dir, state.project_slug)
+        if running and running[0] == state.current_task_id:
+            return running[2], running[1], "running"
+    used = _last_model(runs_dir, state.project_slug, stage)
+    if used is not None:
+        return used, "local" if local_model and used == local_model else "claude", "used"
+    if configured and stage.value in configured:
+        model, backend = configured[stage.value]
+        return model, backend, "configured"
+    return None, None, None
+
+
 def _tasks(runs_dir: Path, state: ProjectState) -> TaskList | None:
     record = state.artifacts.get("tasks.json")
     if record is None:
@@ -193,7 +234,14 @@ def _notes(runs_dir: Path, state: ProjectState, stage: Stage) -> list[str]:
     return notes
 
 
-def project_activity(runs_dir: Path, state: ProjectState, *, alive: bool) -> list[AgentActivity]:
+def project_activity(
+    runs_dir: Path,
+    state: ProjectState,
+    *,
+    alive: bool,
+    configured: dict[str, tuple[str, str]] | None = None,
+    local_model: str | None = None,
+) -> list[AgentActivity]:
     tasks = _tasks(runs_dir, state)
     order = {s: n for n, s in enumerate(STAGES)}
     current = order.get(state.stage)
@@ -203,9 +251,13 @@ def project_activity(runs_dir: Path, state: ProjectState, *, alive: bool) -> lis
         is_developer = stage == Stage.DEVELOPER
         events = _events(runs_dir, state.project_slug, stage)
         recent = _recent(events)
+        model, backend, source = _model_info(runs_dir, state, stage, configured, local_model)
         common: dict[str, Any] = {
             "stage": stage.value,
             "name": label,
+            "model": model,
+            "backend": backend,
+            "model_source": source,
             "agenda": _agenda(runs_dir, state, tasks) if is_developer else [],
             "notes": _notes(runs_dir, state, stage),
         }

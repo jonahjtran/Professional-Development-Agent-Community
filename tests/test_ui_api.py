@@ -947,6 +947,19 @@ def test_confirming_autonomy_and_a_note_applies_them(client: TestClient, runs: P
     assert [x.text for x in pending_notes(runs, "demo")] == ["Use server actions"]
 
 
+def test_confirming_a_developer_model_switch_applies_it(client: TestClient, runs: Path) -> None:
+    from orchestrator.developer_backend import get_developer_backend
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    pid = propose(runs, "set_developer_backend", {"backend": "local"})
+
+    response = post(client, f"/api/projects/demo/proposals/{pid}/confirm")
+
+    assert response.status_code == 200
+    choice = get_developer_backend(runs, "demo")
+    assert (choice.backend, choice.source) == ("local", "project")
+
+
 def test_a_proposal_can_be_dismissed_and_does_nothing(client: TestClient, runs: Path) -> None:
     from orchestrator.project_settings import get_autonomy
 
@@ -1008,6 +1021,32 @@ def test_a_live_run_shows_the_agent_as_working(client: TestClient, runs: Path) -
 
 def test_the_activity_of_an_unknown_project_is_a_404(client: TestClient) -> None:
     assert client.get("/api/projects/ghost/activity").status_code == 404
+
+
+def test_the_activity_shows_the_model_of_each_agent(models_client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    people = {
+        p["stage"]: p for p in models_client.get("/api/projects/demo/activity").json()["agents"]
+    }
+
+    assert people["developer"]["model"] == "claude-sonnet-5-5"
+    assert people["developer"]["backend"] == "claude"
+    assert people["developer"]["model_source"] == "configured"
+    assert people["qa"]["model"] == "fast-model-id"
+
+
+def test_the_developers_local_model_is_shown_when_the_project_uses_it(
+    models_client: TestClient, runs: Path
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    post(models_client, "/api/projects/demo/developer-backend", {"backend": "local"})
+
+    dev = {
+        p["stage"]: p for p in models_client.get("/api/projects/demo/activity").json()["agents"]
+    }["developer"]
+
+    assert dev["backend"] == "local" and dev["model"].startswith("qwen3-coder")
 
 
 # --- action items ----------------------------------------------------------------------------

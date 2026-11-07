@@ -269,3 +269,6 @@ table.models th { text-align: left; font-weight: 600; padding: 8px 12px 8px 0; w
 table.models td { padding: 8px 12px 8px 0; }
 table.models tr + tr { border-top: 1px solid var(--separator); }
 table.models code { white-space: nowrap; }
+
+.person .model { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 4px; font-size: 12px; }
+.person .model code { font-size: 12px; word-break: break-all; }

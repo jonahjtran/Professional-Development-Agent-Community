@@ -88,6 +88,10 @@ The **Models** page (`/models`) shows every agent's exact model id, switches the
 backend, and shows whether Ollama is ready (with the fix when it is not). Each project page shows
 which model its Developer uses and why, with a switch (follow the default, Claude, or the local
 model). Health lists the local model only when something is set to use it.
+The Team page shows each agent's exact model id under its name, marked local when it is the
+open-source model and "running now" (the Developer's current task), "used last" (what the API
+reported) or "will use" (configured, not yet used). The chat can propose switching a project's
+Developer model; it applies once you confirm, from the next task.
 
 ## QA
 

@@ -120,6 +120,96 @@ def test_the_agents_that_only_write_documents_say_what_they_are_writing(tmp_path
     assert people["product_owner"].doing.startswith("Finished")
 
 
+# --- which model each agent is using ----------------------------------------------------------
+
+
+def end(tmp_path: Path, stage: Stage, model: str | None) -> None:
+    TraceWriter(tmp_path, "demo").write(
+        TraceEvent(
+            project="demo", stage=stage, event=EventType.AGENT_END, agent=stage.value, model=model
+        )
+    )
+
+
+def test_a_finished_agent_shows_the_model_that_actually_answered(tmp_path: Path) -> None:
+    end(tmp_path, Stage.PRODUCT_OWNER, "claude-opus-5-5-20261001")
+    state = project(tmp_path, stage=Stage.DEVELOPER, current_task_id="T2")
+
+    people = by_stage(tmp_path, state)
+
+    assert people["product_owner"].model == "claude-opus-5-5-20261001"
+    assert people["product_owner"].model_source == "used"
+
+
+def test_an_agent_that_has_not_run_shows_the_configured_model(tmp_path: Path) -> None:
+    state = project(tmp_path, stage=Stage.DEVELOPER, current_task_id="T2")
+
+    people = {
+        a.stage: a
+        for a in project_activity(
+            tmp_path,
+            state,
+            alive=True,
+            configured={
+                "qa": ("claude-haiku-5-5", "claude"),
+                "developer": ("claude-sonnet-5-5", "claude"),
+            },
+        )
+    }
+
+    assert (people["qa"].model, people["qa"].model_source) == ("claude-haiku-5-5", "configured")
+    assert people["qa"].backend == "claude"
+
+
+def test_the_developer_shows_the_model_its_current_task_started_on(tmp_path: Path) -> None:
+    from orchestrator.developer_backend import record_running_model
+
+    end(tmp_path, Stage.DEVELOPER, "claude-sonnet-5-5")  # the previous task
+    record_running_model(tmp_path, "demo", "T2", "local", "qwen3-coder:27b")
+    state = project(tmp_path, stage=Stage.DEVELOPER, current_task_id="T2")
+
+    dev = by_stage(tmp_path, state)["developer"]
+
+    assert dev.model == "qwen3-coder:27b" and dev.backend == "local"
+    assert dev.model_source == "running"
+
+
+def test_a_recorded_model_for_another_task_is_not_shown_as_running(tmp_path: Path) -> None:
+    from orchestrator.developer_backend import record_running_model
+
+    record_running_model(tmp_path, "demo", "T1", "local", "qwen3-coder:27b")
+    end(tmp_path, Stage.DEVELOPER, "claude-sonnet-5-5")
+    state = project(tmp_path, stage=Stage.DEVELOPER, current_task_id="T2")
+
+    dev = by_stage(tmp_path, state)["developer"]
+
+    assert dev.model == "claude-sonnet-5-5" and dev.model_source == "used"
+
+
+def test_a_model_name_that_is_not_the_local_model_counts_as_claude(tmp_path: Path) -> None:
+    end(tmp_path, Stage.PRODUCT_OWNER, "claude-opus-5-5")
+    state = project(tmp_path, stage=Stage.ARCHITECT)
+
+    people = {
+        a.stage: a
+        for a in project_activity(tmp_path, state, alive=True, local_model="qwen3-coder:27b")
+    }
+
+    assert people["product_owner"].backend == "claude"
+
+
+def test_a_model_name_that_is_the_local_model_counts_as_local(tmp_path: Path) -> None:
+    end(tmp_path, Stage.DEVELOPER, "qwen3-coder:27b")
+    state = project(tmp_path, stage=Stage.DEVELOPER, current_task_id="T2")
+
+    people = {
+        a.stage: a
+        for a in project_activity(tmp_path, state, alive=True, local_model="qwen3-coder:27b")
+    }
+
+    assert people["developer"].backend == "local"
+
+
 # --- the Developer's agenda -------------------------------------------------------------------
 
 
