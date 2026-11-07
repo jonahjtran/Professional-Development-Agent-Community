@@ -773,3 +773,61 @@ def test_installing_what_the_lockfile_lists_is_allowed_only_when_autonomous(
         (wt / lockfile).write_text("{}")
 
     assert bash(command, wt, autonomy=autonomy).verdict == expected
+
+
+# --- a folder-wide search must not be able to print an env file --------------------------------
+
+
+def _with_env_file(wt: Path, where: str = ".env") -> Path:
+    path = wt / where
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("FAKE_KEY=not-a-real-secret\n")
+    return wt
+
+
+@pytest.mark.parametrize("target", [None, ".", "src/.."])
+def test_a_search_of_a_folder_holding_an_env_file_is_refused(wt: Path, target: str | None) -> None:
+    _with_env_file(wt)
+    tool_input: dict[str, Any] = {"pattern": "KEY"}
+    if target is not None:
+        tool_input["path"] = str(wt / target) if target != "." else "."
+
+    decision = evaluate("Grep", tool_input, ctx(wt))
+
+    assert decision.verdict == D
+    assert "subfolder" in decision.reason
+
+
+def test_an_env_file_deep_in_the_tree_counts_too(wt: Path) -> None:
+    _with_env_file(wt, "src/deep/er/.env.local")
+
+    assert evaluate("Grep", {"pattern": "KEY"}, ctx(wt)).verdict == D
+
+
+def test_searching_a_subfolder_without_an_env_file_is_fine(wt: Path) -> None:
+    _with_env_file(wt)  # at the root, not under src
+
+    assert evaluate("Grep", {"pattern": "OLD_VAR", "path": str(wt / "src")}, ctx(wt)).verdict == A
+
+
+def test_a_folder_search_is_fine_when_there_is_no_env_file(wt: Path) -> None:
+    assert evaluate("Grep", {"pattern": "OLD_VAR"}, ctx(wt)).verdict == A
+
+
+def test_an_env_example_does_not_block_a_search(wt: Path) -> None:
+    _with_env_file(wt, ".env.example")
+
+    assert evaluate("Grep", {"pattern": "KEY"}, ctx(wt)).verdict == A
+
+
+def test_env_files_in_dependency_folders_are_ignored(wt: Path) -> None:
+    _with_env_file(wt, "node_modules/pkg/.env")
+
+    assert evaluate("Grep", {"pattern": "KEY"}, ctx(wt)).verdict == A
+
+
+def test_searching_a_single_file_is_unchanged(wt: Path) -> None:
+    _with_env_file(wt)
+
+    assert evaluate("Grep", {"pattern": "OLD", "path": "src/a.py"}, ctx(wt)).verdict == A
+    assert evaluate("Grep", {"pattern": "KEY", "path": ".env"}, ctx(wt)).verdict == D

@@ -263,7 +263,9 @@ the normal form. Text returned from agents or files is labelled untrusted. A not
 talks to one assistant, "Studio", through `orchestrator/ui/chat.py`. It runs the Agent SDK in the
 chosen repository (this app or any project clone) with only `Read`, `Glob` and `Grep` (the same
 secret and path rules as the Developer, enforced by a PreToolUse guard) plus the studio MCP tools,
-with no shell, edits or web. Sessions are in memory; each chat is capped by
+with no shell, edits or web. A `Grep` of a whole folder is refused when an env file sits anywhere
+under it (a matching line would print a secret); the refusal tells it to search a subfolder or name
+the files. Sessions are in memory; each chat is capped by
 `assistant.max_chat_usd` in `config.yaml` (and `max_turns`), `tier` picks the strong or fast model,
 and its cost goes to a ledger apart from projects (`assistant_cost.json`; `runs/_studio/` for this
 app). The reply streams as escaped text and is replaced by server-rendered Markdown when the turn
