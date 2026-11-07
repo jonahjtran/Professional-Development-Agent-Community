@@ -94,7 +94,7 @@ class LocalConfig(_Strict):
     """
 
     endpoint: str = "http://localhost:11434"
-    model: str = "qwen3-coder:27b-instruct-q4_K_M"  # the Ollama tag, see `ollama list`
+    model: str = "qwen3-coder:30b"  # the Ollama tag, see `ollama list`
     min_context: int = Field(default=65536, ge=1)  # Claude Code needs a large context window
 
 
