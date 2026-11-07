@@ -93,6 +93,15 @@ open-source model and "running now" (the Developer's current task), "used last" 
 reported) or "will use" (configured, not yet used). The chat can propose switching a project's
 Developer model; it applies once you confirm, from the next task.
 
+## Skills the Developer follows
+
+The Developer works in a project's own worktree and loads no settings files, so it cannot see this
+repo's `.claude` folder. The skills listed under `developer.skills` in `config.yaml` (today: `tdd`,
+from `.claude/skills/tdd/SKILL.md`) are read when each task starts and added to its instructions,
+after the role prompt, for both the Claude and the local backend. They are told to discover each
+project's own test commands rather than assume ours. A skill named in `config.yaml` that cannot be
+read stops the task before it starts, with the path.
+
 ## QA
 
 After the last Developer task is approved, merge its pull requests on GitHub. QA asks you to confirm

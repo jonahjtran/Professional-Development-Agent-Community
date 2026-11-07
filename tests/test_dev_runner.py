@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock
 
-from orchestrator.config import SandboxConfig
+from orchestrator.config import DeveloperConfig, SandboxConfig
 from orchestrator.dev_runner import DevRunner
 from orchestrator.developer_backend import LocalStatus
 from orchestrator.pipeline import AgentError, AgentRequest, AgentRunner
@@ -860,3 +860,70 @@ def test_the_runner_records_which_model_each_task_starts_on(repo: Path, tmp_path
         "local",
         harness.config.local.model,
     )
+
+
+# --- skills in the Developer's context --------------------------------------------------------
+
+
+def studio_with_skill(
+    tmp_path: Path, name: str = "tdd", body: str = "Write the failing test first."
+) -> Path:
+    root = tmp_path / "studio"
+    folder = root / ".claude" / "skills" / name
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(f"---\nname: {name}\n---\n\n{body}")
+    return root
+
+
+def test_the_configured_skills_are_part_of_the_developers_instructions(
+    repo: Path, tmp_path: Path
+) -> None:
+    harness = Harness(repo, tmp_path)
+    harness.config = harness.config.model_copy(
+        update={"developer": DeveloperConfig(skills=["tdd"])}
+    )
+
+    harness.runner(studio_root=studio_with_skill(tmp_path)).run(request())
+
+    prompt = str(harness.options[0].system_prompt)
+    assert prompt.startswith("You are the Developer.")  # the role comes first
+    assert "Write the failing test first." in prompt
+
+
+def test_with_no_skills_configured_the_instructions_are_just_the_prompt(
+    repo: Path, tmp_path: Path
+) -> None:
+    harness = Harness(repo, tmp_path)
+
+    harness.runner(studio_root=studio_with_skill(tmp_path)).run(request())
+
+    assert harness.options[0].system_prompt == "You are the Developer."
+
+
+def test_a_configured_skill_that_is_missing_stops_the_task_before_it_starts(
+    repo: Path, tmp_path: Path
+) -> None:
+    harness = Harness(repo, tmp_path)
+    harness.config = harness.config.model_copy(
+        update={"developer": DeveloperConfig(skills=["tdd"])}
+    )
+
+    with pytest.raises(AgentError, match="tdd"):
+        harness.runner(studio_root=tmp_path / "nowhere").run(request())
+
+    assert harness.options == []
+    assert not (tmp_path / "worktrees" / "project" / "T1").exists()
+
+
+def test_the_skills_reach_a_local_model_too(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.developer_backend import set_project_backend
+
+    set_project_backend(tmp_path / "runs", "demo", "local")
+    harness = Harness(repo, tmp_path)
+    harness.config = harness.config.model_copy(
+        update={"developer": DeveloperConfig(skills=["tdd"])}
+    )
+
+    harness.runner(studio_root=studio_with_skill(tmp_path)).run(request())
+
+    assert "Write the failing test first." in str(harness.options[0].system_prompt)

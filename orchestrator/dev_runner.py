@@ -31,6 +31,7 @@ from orchestrator.pipeline import AgentError, AgentRequest, AgentResult
 from orchestrator.project_settings import get_autonomy
 from orchestrator.prompts import Prompt
 from orchestrator.rules import active_rules
+from orchestrator.skills import SkillError, load_skills
 from orchestrator.tool_hooks import ToolPermissionBackend, ToolPermissionHooks, git_current_branch
 from orchestrator.worktree import (
     Worktree,
@@ -97,6 +98,10 @@ class DevRunner:
     def run(self, request: AgentRequest) -> AgentResult:
         task = _find_task(request)
         revising = request.previous_draft is not None
+        try:
+            skills = load_skills(self._studio_root, self._config.developer.skills)
+        except SkillError as error:
+            raise AgentError(str(error)) from error
         # Read at the start of every task, so a switch applies from the next task on.
         backend = get_developer_backend(self._runs_dir, request.project).backend
         if backend == "local":
@@ -136,6 +141,7 @@ class DevRunner:
                     interrupted=interrupted,
                     notes=[n.text for n in notes],
                     backend=backend,
+                    skills=skills,
                 )
             )
             consume_notes(self._runs_dir, request.project, [n.id for n in notes])
@@ -148,7 +154,12 @@ class DevRunner:
     # --- the SDK session -------------------------------------------------------------------
 
     def _options(
-        self, request: AgentRequest, task: Task, worktree: Worktree, backend: str = "claude"
+        self,
+        request: AgentRequest,
+        task: Task,
+        worktree: Worktree,
+        backend: str = "claude",
+        skills: str = "",
     ) -> ClaudeAgentOptions:
         hooks = ToolPermissionHooks(
             policy=PolicyContext(
@@ -168,7 +179,7 @@ class DevRunner:
             cwd=worktree.path,
             tools=list(_TOOLS),
             allowed_tools=list(_TOOLS),
-            system_prompt=self._prompt.text,
+            system_prompt=f"{self._prompt.text}\n\n{skills}" if skills else self._prompt.text,
             max_turns=self._config.limits.max_turns.developer,
             max_budget_usd=self._config.limits.max_task_usd,
             setting_sources=[],
@@ -196,10 +207,11 @@ class DevRunner:
         interrupted: bool = False,
         notes: list[str] | None = None,
         backend: str = "claude",
+        skills: str = "",
     ) -> AgentResult:
         head_before = head_sha(worktree.path)
         base_before = branch_sha(self._repo, self._base)
-        options = self._options(request, task, worktree, backend)
+        options = self._options(request, task, worktree, backend, skills)
 
         async with self._client_factory(options) as client:
             await client.query(self._task_prompt(request, task, worktree, interrupted, notes or []))

@@ -82,3 +82,9 @@ local:
   endpoint: http://localhost:11434
   model: qwen3-coder:30b
   min_context: 65536
+
+developer:
+  # Skills from this repo's .claude/skills folder that the Developer must follow on every task
+  # (they are added to its instructions, since it cannot see this repo's .claude folder).
+  skills:
+    - tdd
