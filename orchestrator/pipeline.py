@@ -423,7 +423,8 @@ def _check_budget(
     """Pause for the human while the next call would be over budget or past the warning line.
 
     Returns a RUNNING state when the call may go ahead, or a HALTED one if the human abandons.
-    Continuing at a warning lets this one call through; the next call is checked again.
+    Continuing at a warning is remembered for the cap in force, so it is not asked again until the
+    cap changes; reaching the cap still stops the run.
     """
     while True:
         assessment = assess_budget(state, ctx.config, stage or state.stage)
@@ -432,7 +433,7 @@ def _check_budget(
         paused = pause_for_budget(state, assessment)
         _save(paused, ctx)
         resolution = ctx.caps.resolve(cap_request(paused, ctx.config))
-        state = resolve_cap(paused, ctx.config, resolution)
+        state = resolve_cap(paused, ctx.config, resolution, stage=stage)
         _save(state, ctx)  # so the UI stops showing "awaiting human" while the agent works
         _trace(ctx, state, EventType.GATE, details={"cap": resolution.action.value})
         if state.status != Status.RUNNING:

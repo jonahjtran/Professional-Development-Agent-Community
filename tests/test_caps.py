@@ -182,20 +182,22 @@ def test_a_budget_pause_cannot_be_approved_anyway_once_a_cap_is_hit() -> None:
         resolve_cap(at_budget_pause(), make_config(), approve_anyway(), now=NOW)
 
 
-def test_continuing_at_a_warning_resumes_without_changing_any_cap() -> None:
+def test_continuing_at_a_warning_resumes_without_changing_any_limit() -> None:
     paused = at_budget_pause(Stage.PRODUCT_OWNER, product_owner=1.2)
 
     state = resolve_cap(paused, make_config(), approve_anyway(), now=NOW)
 
     assert state.status == Status.RUNNING
     assert state.intervention is None
-    assert state.allowances == paused.allowances
+    assert state.allowances.extra_project_usd == paused.allowances.extra_project_usd
+    assert state.allowances.extra_stage_usd == paused.allowances.extra_stage_usd
+    assert state.allowances.warned == {"product_owner": 1.5}  # remembered, so not asked again
     assert state.gate_history == paused.gate_history
 
 
-def test_the_warning_still_shows_on_the_next_check_after_continuing() -> None:
+def test_the_warning_is_quiet_on_the_next_check_after_continuing() -> None:
     paused = at_budget_pause(Stage.PRODUCT_OWNER, product_owner=1.2)
 
     state = resolve_cap(paused, make_config(), approve_anyway(), now=NOW)
 
-    assert assess_budget(state, make_config(), Stage.PRODUCT_OWNER).level.value == "warning"
+    assert assess_budget(state, make_config(), Stage.PRODUCT_OWNER).level.value == "ok"

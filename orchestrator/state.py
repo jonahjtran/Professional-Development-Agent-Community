@@ -119,6 +119,9 @@ class Allowances(BaseModel):
     extra_project_usd: Annotated[float, Field(ge=0)] = 0.0
     extra_stage_usd: dict[Stage, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
     extra_revisions: dict[Stage, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
+    # Budget warnings the human chose to continue past: "project" or a stage name -> the cap that
+    # was in force. That warning is not raised again until the cap changes; the cap still stops.
+    warned: dict[str, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

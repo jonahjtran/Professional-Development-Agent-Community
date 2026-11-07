@@ -319,19 +319,18 @@ def test_continuing_at_a_warning_runs_the_agent_without_asking_again(tmp_path: P
     assert agent.stages[0] == Stage.PRODUCT_OWNER
 
 
-def test_the_warning_comes_back_when_the_work_returns_to_a_stage(tmp_path: Path) -> None:
+def test_an_approved_warning_is_not_asked_again_when_the_work_returns_to_a_stage(
+    tmp_path: Path,
+) -> None:
     # The Developer is at 85% of its cap; QA fails once, so the Developer runs twice.
     agent = FakeAgent(cost=0.0, qa_results=[False, True])
-    caps = FakeCaps(
-        CapResolution(action=CapAction.APPROVE_ANYWAY),
-        CapResolution(action=CapAction.APPROVE_ANYWAY),
-    )
+    caps = FakeCaps(CapResolution(action=CapAction.APPROVE_ANYWAY))
     state = start(stage=Stage.DEVELOPER, cost_usd={Stage.DEVELOPER: 8.5})
 
     run_pipeline(state, make_ctx(tmp_path, agent, caps=caps))
 
     assert agent.stages.count(Stage.DEVELOPER) == 2
-    assert len(caps.requests) == 2
+    assert len(caps.requests) == 1
 
 
 # --- the QA loop -----------------------------------------------------------------------------
