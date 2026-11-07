@@ -44,8 +44,12 @@ def send_back(
     comment: str,
     *,
     now: datetime | None = None,
+    dry_run: bool = False,
 ) -> ProjectState:
-    """The project reopened at `to` with your instruction. The caller saves it and resumes."""
+    """The project reopened at `to` with your instruction. The caller saves it and resumes.
+
+    With `dry_run` nothing is moved or written: it only checks that the send-back is allowed.
+    """
     comment = comment.strip()
     if not 1 <= len(comment) <= _MAX_NOTE:
         raise ReworkError(f"say what to change, in 1 to {_MAX_NOTE} characters")
@@ -58,7 +62,8 @@ def send_back(
             f"the project has not reached the {LABELS[to]} yet, so it cannot be sent there"
         )
     when = now or datetime.now(UTC)
-    _put_aside_open_questions(runs_dir, state.project_slug)
+    if not dry_run:
+        _put_aside_open_questions(runs_dir, state.project_slug)
 
     changes: dict[str, object] = {
         "status": Status.RUNNING,
@@ -73,7 +78,7 @@ def send_back(
             purpose="human_design", note=f"The person asked for this change:\n{comment}"
         )
     if to == Stage.DEVELOPER:
-        changes["artifacts"] = _add_task(runs_dir, state, comment)
+        changes["artifacts"] = _add_task(runs_dir, state, comment, write=not dry_run)
     visit = StageVisit(
         stage=to,
         reason=f"you sent it back: {comment.splitlines()[0][:80]}",
@@ -94,7 +99,9 @@ def _put_aside_open_questions(runs_dir: Path, slug: str) -> None:
         shutil.move(str(path), str(aside / path.name))
 
 
-def _add_task(runs_dir: Path, state: ProjectState, comment: str) -> dict[str, object]:
+def _add_task(
+    runs_dir: Path, state: ProjectState, comment: str, *, write: bool = True
+) -> dict[str, object]:
     """Add your instruction to the task list as a task for the Developer."""
     record = state.artifacts.get("tasks.json")
     if record is None:
@@ -117,6 +124,8 @@ def _add_task(runs_dir: Path, state: ProjectState, comment: str) -> dict[str, ob
     merged = TaskList.model_validate(
         {"tasks": [*[t.model_dump() for t in existing.tasks], task.model_dump()]}
     )
+    if not write:
+        return dict(state.artifacts)
     written = {
         "tasks.json": store.write(
             "tasks.json", merged.model_dump_json(indent=2), revision=record.revision + 1

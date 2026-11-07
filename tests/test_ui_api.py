@@ -1028,6 +1028,139 @@ def test_the_project_carries_its_journey_and_how_often_each_agent_was_visited(
     assert architect["visits"] == 2 and architect["returned"] is True
 
 
+# --- sending a project back -------------------------------------------------------------------
+
+
+def sent_back(
+    client: TestClient, to: str = "product_owner", comment: str = "Add offline mode"
+) -> Any:
+    return post(client, "/api/projects/demo/send-back", {"to": to, "comment": comment})
+
+
+def test_a_finished_project_can_be_sent_back_and_is_resumed(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    from orchestrator.state import load_state
+
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+
+    response = sent_back(client)
+
+    assert response.status_code == 200
+    state = load_state(runs, "demo")
+    assert state.status == Status.RUNNING and state.stage == Stage.PRODUCT_OWNER
+    assert state.rework is not None and state.rework.note == "Add offline mode"
+    [(command, _cwd, _log)] = launched.calls
+    assert command[command.index("resume") + 1] == "demo"  # and the run is started again
+
+
+def test_a_paused_project_can_be_sent_back(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    make_project(runs, stage=Stage.DEVELOPER, status=Status.HALTED, agent="full")
+
+    assert sent_back(client, "architect", "Rethink the schema").status_code == 200
+    assert len(launched.calls) == 1
+
+
+def test_a_running_project_must_be_paused_first(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    from orchestrator.state import load_state
+
+    make_project(runs, stage=Stage.DEVELOPER, agent="full")
+
+    response = sent_back(client, "architect")
+
+    assert response.status_code == 409 and "Pause" in response.json()["error"]
+    assert load_state(runs, "demo").stage == Stage.DEVELOPER and launched.calls == []
+
+
+def test_a_live_run_blocks_it_and_nothing_changes(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    from orchestrator.state import load_state
+
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        response = sent_back(client)
+
+    assert response.status_code == 409 and "already running" in response.json()["error"]
+    assert load_state(runs, "demo").status == Status.DONE and launched.calls == []
+
+
+def test_a_project_that_did_not_record_how_it_started_is_not_changed(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    from orchestrator.state import load_state
+
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE)  # no agent recorded
+
+    response = sent_back(client)
+
+    assert response.status_code == 409 and "terminal" in response.json()["error"]
+    assert load_state(runs, "demo").status == Status.DONE and launched.calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"to": "intake", "comment": "x"},
+        {"to": "nowhere", "comment": "x"},
+        {"to": "qa", "comment": "   "},
+        {"to": "qa"},
+        {"comment": "x"},
+    ],
+)
+def test_a_bad_send_back_is_refused(
+    client: TestClient, runs: Path, launched: Launched, body: dict[str, Any]
+) -> None:
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+
+    assert post(client, "/api/projects/demo/send-back", body).status_code == 400
+    assert launched.calls == []
+
+
+def test_it_cannot_be_sent_past_where_it_has_got_to(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.ARCHITECT, status=Status.HALTED, agent="full")
+
+    response = sent_back(client, "qa", "Skip ahead")
+
+    assert response.status_code == 400 and "not reached" in response.json()["error"]
+
+
+def test_sending_back_needs_the_session_token(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+
+    response = client.post("/api/projects/demo/send-back", json={"to": "qa", "comment": "x"})
+
+    assert response.status_code == 403
+
+
+def test_the_project_says_whether_it_can_be_sent_back(client: TestClient, runs: Path) -> None:
+    make_project(runs, stage=Stage.DEVELOPER)
+    assert client.get("/api/projects/demo").json()["can_send_back"] is False
+    make_project(runs, stage=Stage.DEVELOPER, status=Status.HALTED)
+    assert client.get("/api/projects/demo").json()["can_send_back"] is True
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE)
+    assert client.get("/api/projects/demo").json()["can_send_back"] is True
+
+
+def test_confirming_a_send_back_proposal_does_it(
+    client: TestClient, runs: Path, launched: Launched
+) -> None:
+    from orchestrator.state import load_state
+
+    make_project(runs, stage=Stage.CAREER_COACH, status=Status.DONE, agent="full")
+    pid = propose(runs, "send_back", {"to": "architect", "comment": "Use Postgres"})
+
+    response = post(client, f"/api/projects/demo/proposals/{pid}/confirm")
+
+    assert response.status_code == 200
+    assert load_state(runs, "demo").stage == Stage.ARCHITECT and len(launched.calls) == 1
+
+
 # --- what each agent is doing ----------------------------------------------------------------
 
 
