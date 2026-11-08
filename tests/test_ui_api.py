@@ -1926,3 +1926,85 @@ def test_killing_a_task_needs_the_session_token(client: TestClient, runs: Path) 
     project_with_tasks(runs, status=Status.HALTED)
 
     assert client.post("/api/projects/demo/tasks/T2/kill", json={}).status_code == 403
+
+
+# --- asking the Architect to prioritize ----------------------------------------------------------
+
+
+def prioritize(client: TestClient, task_id: str = "T2", reason: str = "The demo is Friday") -> Any:
+    return post(client, f"/api/projects/demo/tasks/{task_id}/prioritize", {"reason": reason})
+
+
+def test_asking_for_a_priority_queues_the_request_for_the_architect(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.task_control import pending_priorities
+
+    project_with_tasks(runs, status=Status.HALTED, completed_tasks=["T1"])
+
+    response = prioritize(client)
+
+    assert response.status_code == 200 and response.json()["state"] == "asked"
+    [entry] = pending_priorities(runs, "demo")
+    assert entry["task_id"] == "T2" and entry["reason"] == "The demo is Friday"
+
+
+def test_a_request_can_be_made_while_the_run_is_going(client: TestClient, runs: Path) -> None:
+    from orchestrator.halt import halt_requested
+
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1", completed_tasks=[])
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        response = prioritize(client, "T2")
+
+    assert response.status_code == 200 and not halt_requested(runs, "demo")  # nothing is stopped
+
+
+def test_the_task_list_shows_the_request_and_the_architects_answer(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.task_control import resolve_priorities
+
+    project_with_tasks(runs, status=Status.HALTED, completed_tasks=["T1"])
+    prioritize(client)
+
+    def row() -> Any:
+        tasks = client.get("/api/tasks").json()["projects"][0]["tasks"]
+        return next(t for t in tasks if t["id"] == "T2")
+
+    asked = row()
+    assert asked["priority"] == {"status": "asked", "reason": "The demo is Friday", "answer": ""}
+
+    resolve_priorities(runs, "demo", "moved", "It has no dependencies and the demo needs it.")
+    answered = row()
+
+    assert answered["priority"]["status"] == "moved"
+    assert "demo needs it" in answered["priority"]["answer"]
+
+
+def test_a_task_that_cannot_be_prioritized_says_so(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED, completed_tasks=["T1", "T2"])
+
+    response = prioritize(client, "T2")
+
+    assert response.status_code == 409 and "finished" in response.json()["error"]
+
+
+def test_prioritizing_an_unknown_task_is_not_found(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert prioritize(client, "T99").status_code == 404
+
+
+def test_the_task_list_says_which_tasks_can_be_prioritized(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
+
+    tasks = client.get("/api/tasks").json()["projects"][0]["tasks"]
+
+    assert [(t["id"], t["can_prioritize"]) for t in tasks] == [("T1", False), ("T2", True)]
+
+
+def test_prioritizing_needs_the_session_token(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert client.post("/api/projects/demo/tasks/T2/prioritize", json={}).status_code == 403

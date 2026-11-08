@@ -18,6 +18,19 @@ function stateText(task: BoardTask): string {
   return WORDS[task.state];
 }
 
+function priorityText(priority: NonNullable<BoardTask["priority"]>): string {
+  switch (priority.status) {
+    case "asked":
+      return "Waiting for the Architect to decide the priority.";
+    case "moved":
+      return `The Architect moved this up: ${priority.answer}`;
+    case "kept":
+      return `The Architect kept the order: ${priority.answer}`;
+    default:
+      return `Not applied: ${priority.answer}`;
+  }
+}
+
 export function TasksPage() {
   const { data, error, reload } = useLoad<TaskBoardReply>("/api/tasks", 3000);
   const [problem, setProblem] = useState<string | null>(null);
@@ -56,6 +69,22 @@ export function TasksPage() {
     }
   }
 
+  async function prioritize(project: BoardProject, task: BoardTask) {
+    const reason = window.prompt(
+      `Ask the Architect to give ${task.id} more priority. Why does it matter now? (optional)\nThe Architect decides the order; it may keep it as it is.`,
+      "",
+    );
+    if (reason === null) return;
+    setProblem(null);
+    try {
+      await post(`/api/projects/${project.slug}/tasks/${task.id}/prioritize`, { reason: reason.trim() });
+      setNotice(`Asked the Architect about ${task.id}. The Architect decides the order between tasks and tells you what it chose.`);
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   if (error) return <Banner>{error.message}</Banner>;
   if (data === null) return <Loading what="the tasks" />;
 
@@ -64,7 +93,7 @@ export function TasksPage() {
       <h1>Tasks</h1>
       <p className="lede">
         What each active project is doing. Pause stops a project without losing anything. Kill cancels a task.
-        The Architect decides the order of tasks, so you cannot reorder them here.
+        Prioritize asks the Architect to consider moving a task up; the Architect decides the order, so you cannot reorder tasks yourself.
       </p>
       {problem && <Banner>{problem}</Banner>}
       {notice && <Banner>{notice}</Banner>}
@@ -98,7 +127,11 @@ export function TasksPage() {
                         )}
                       </div>
                       {!task.can_kill && task.kill_blocked && <div className="meta">Cannot kill: {task.kill_blocked}</div>}
+                      {task.priority && <div className="meta">{priorityText(task.priority)}</div>}
                     </div>
+                    {task.can_prioritize && (
+                      <Button tone="secondary" onClick={() => void prioritize(project, task)}>Prioritize</Button>
+                    )}
                     {task.can_kill && (
                       <Button tone="destructive" onClick={() => void kill(project, task)}>Kill</Button>
                     )}

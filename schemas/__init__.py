@@ -21,6 +21,7 @@ from schemas.fix_plan import FixPlan
 from schemas.prd import PRD, SuccessMetric, Track
 from schemas.profile import Goals, ResumeData, ResumeEntry, ResumeSection, TrackGoal
 from schemas.route import Route
+from schemas.task_order import TaskOrder
 from schemas.tasks import Size, Task, TaskList, unmapped_metrics
 from schemas.test_report import (
     CheckResult,
@@ -65,6 +66,7 @@ __all__ = [
     "SuccessMetric",
     "Task",
     "TaskList",
+    "TaskOrder",
     "TechChoice",
     "Track",
     "TrackFit",

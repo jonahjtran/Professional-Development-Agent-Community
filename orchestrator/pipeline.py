@@ -55,6 +55,7 @@ from orchestrator.gates import (
 from orchestrator.halt import halt_requested
 from orchestrator.journey import LABELS, ORDER, can_move, direction
 from orchestrator.notes import add_note
+from orchestrator.priority_types import Prioritizer, PriorityRequest
 from orchestrator.publish import PublishError
 from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
 from orchestrator.rework import drop_human_task
@@ -70,7 +71,14 @@ from orchestrator.state import (
     Status,
     save_state,
 )
-from orchestrator.task_control import apply_pending_cancels, pending_cancels
+from orchestrator.task_control import (
+    TaskControlError,
+    apply_order,
+    apply_pending_cancels,
+    pending_cancels,
+    pending_priorities,
+    resolve_priorities,
+)
 from orchestrator.todos import add_todo
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 from orchestrator.worktree import WorktreeError
@@ -203,6 +211,8 @@ class PipelineContext:
     career: CareerPreparer | None = None
     # When set, a failed QA report goes to the Architect for a fix plan instead of the human.
     fixer: FixPlanner | None = None
+    # Decides the task order when you ask for a task to be prioritized (see task_control.py).
+    prioritizer: Prioritizer | None = None
     # When set, approved career items are published as pull requests (see career_publish).
     career_publisher: CareerPublisher | None = None
 
@@ -277,6 +287,10 @@ def _run_stage(
     loop = stage == Stage.DEVELOPER and ctx.publisher is not None
     task: Task | None = None
     if loop:
+        if state.current_task_id is None:  # between tasks: the safe moment to reorder
+            state = _consider_priorities(state, ctx)
+            if state.status != Status.RUNNING:
+                return state
         task = _next_task(state, ctx)
         if task is None:  # every task is built and approved
             return _move(state, ctx, Stage.QA)
@@ -677,6 +691,59 @@ def _publish_design_record(state: ProjectState, ctx: PipelineContext) -> Project
     state = approve_artifacts(state, ["design_record.json"], now=datetime.now(UTC))
     _trace(ctx, state, EventType.TRANSITION, details={"design_record_pr": url})
     return state
+
+
+def _consider_priorities(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """Between tasks: let the Architect decide what you asked to have prioritized.
+
+    The Architect owns the order; it may move tasks or keep the order and say why. Its answer is
+    checked in code (every task once, dependencies first). Whatever happens, the project carries on:
+    a failed call or an invalid order is logged as not applied and the order stays as it was.
+    """
+    asked = pending_priorities(ctx.runs_dir, state.project_slug)
+    if not asked or ctx.prioritizer is None:
+        return state
+    state = _check_budget(state, ctx, Stage.ARCHITECT)  # the Architect's own budget
+    if state.status != Status.RUNNING:
+        return state
+    store = ArtifactStore(ctx.runs_dir, state.project_slug)
+    listing = TaskList.model_validate_json(store.read(state.artifacts["tasks.json"]))
+    done = set(state.completed_tasks)
+    unfinished = TaskList(tasks=[t for t in listing.tasks if t.id not in done])
+    architecture = state.artifacts.get("architecture.md")
+    request = PriorityRequest(
+        project=state.project_slug,
+        idea=state.idea,
+        architecture=store.read(architecture) if architecture else "",
+        tasks_json=unfinished.model_dump_json(indent=2),
+        asked=[{"task_id": e["task_id"], "reason": e.get("reason", "")} for e in asked],
+    )
+    try:
+        decided = ctx.prioritizer.prioritize(request)
+    except AgentError as error:
+        resolve_priorities(
+            ctx.runs_dir,
+            state.project_slug,
+            "not_applied",
+            f"The Architect could not decide: {error}",
+        )
+        return record_cost(state, Stage.ARCHITECT, error.cost_usd)
+    state = record_cost(state, Stage.ARCHITECT, decided.cost_usd)
+    before = [t.id for t in unfinished.tasks]
+    try:
+        reordered = apply_order(ctx.runs_dir, state, decided.order)
+    except TaskControlError as problem:
+        resolve_priorities(ctx.runs_dir, state.project_slug, "not_applied", str(problem))
+        return state
+    outcome = "moved" if decided.order.order != before else "kept"
+    resolve_priorities(ctx.runs_dir, state.project_slug, outcome, decided.order.reason)
+    _trace(
+        ctx,
+        reordered,
+        EventType.TRANSITION,
+        details={"priority": outcome, "order": decided.order.order},
+    )
+    return reordered
 
 
 def _next_task(state: ProjectState, ctx: PipelineContext) -> Task | None:

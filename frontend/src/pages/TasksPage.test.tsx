@@ -6,7 +6,8 @@ import { mockApi } from "../test/mockApi";
 import { TasksPage } from "./TasksPage";
 
 const task = (over: Record<string, unknown>) => ({
-  id: "T1", title: "Create the table", state: "ready", waiting_on: [], pr_url: null, can_kill: true, kill_blocked: null, ...over,
+  id: "T1", title: "Create the table", state: "ready", waiting_on: [], pr_url: null, can_kill: true, kill_blocked: null,
+  can_prioritize: over.state === "ready" || over.state === "waiting", priority: null, ...over,
 });
 
 function board(over: Record<string, unknown> = {}) {
@@ -34,6 +35,7 @@ function open(reply: unknown = board(), extra: Record<string, unknown> = {}) {
     "POST /api/projects/demo/pause": { ok: true },
     "POST /api/projects/demo/tasks/T2/kill": { ok: true, state: "cancelled" },
     "POST /api/projects/demo/tasks/T3/kill": { ok: true, state: "stopping" },
+    "POST /api/projects/demo/tasks/T3/prioritize": { ok: true, state: "asked" },
     ...extra,
   });
   render(<MemoryRouter><TasksPage /></MemoryRouter>);
@@ -135,5 +137,51 @@ describe("the tasks page", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Kill" }));
 
     expect(await screen.findByText(/it is finished/)).toBeInTheDocument();
+  });
+
+  it("asks the Architect to prioritize a task, with your reason, and says the Architect decides", async () => {
+    const api = open();
+    vi.spyOn(window, "prompt").mockReturnValue("The demo is Friday");
+    const row = (await screen.findByText("Add the page")).closest("li") as HTMLElement;
+
+    await userEvent.click(within(row).getByRole("button", { name: "Prioritize" }));
+
+    await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/tasks/T3/prioritize"]));
+    expect(api.posts()[0]?.body).toEqual({ reason: "The demo is Friday" });
+    expect(await screen.findByText(/The Architect decides the order/)).toBeInTheDocument();
+  });
+
+  it("asks for nothing if you cancel the reason prompt", async () => {
+    const api = open();
+    vi.spyOn(window, "prompt").mockReturnValue(null);
+    const row = (await screen.findByText("Add the page")).closest("li") as HTMLElement;
+
+    await userEvent.click(within(row).getByRole("button", { name: "Prioritize" }));
+
+    expect(api.posts()).toHaveLength(0);
+  });
+
+  it("offers no prioritize button on the working task or the Architect's row", async () => {
+    open();
+    const working = (await screen.findByText("Add the API")).closest("li") as HTMLElement;
+
+    expect(within(working).queryByRole("button", { name: "Prioritize" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Prioritize" })).toHaveLength(2); // T3 and T4, both waiting
+  });
+
+  it("shows what the Architect decided on a request", async () => {
+    open(board({
+      tasks: [
+        task({ id: "T2", title: "Add the API", state: "ready", priority: { status: "moved", reason: "demo", answer: "T2 has no dependencies." } }),
+        task({ id: "T3", title: "Add the page", state: "ready", priority: { status: "kept", reason: "", answer: "T3 needs T2 first." } }),
+        task({ id: "T4", title: "Wire the form", state: "ready", priority: { status: "asked", reason: "now", answer: "" } }),
+        task({ id: "T5", title: "Polish", state: "ready", priority: { status: "not_applied", reason: "", answer: "The order put T5 before T4." } }),
+      ],
+    }));
+
+    expect(await screen.findByText(/The Architect moved this up: T2 has no dependencies\./)).toBeInTheDocument();
+    expect(screen.getByText(/The Architect kept the order: T3 needs T2 first\./)).toBeInTheDocument();
+    expect(screen.getByText(/Waiting for the Architect to decide/)).toBeInTheDocument();
+    expect(screen.getByText(/Not applied: The order put T5 before T4\./)).toBeInTheDocument();
   });
 });
