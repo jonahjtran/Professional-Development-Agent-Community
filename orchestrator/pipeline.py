@@ -57,6 +57,7 @@ from orchestrator.journey import LABELS, ORDER, can_move, direction
 from orchestrator.notes import add_note
 from orchestrator.publish import PublishError
 from orchestrator.qa_prepare import MergeBackend, QaError, QaPreparer
+from orchestrator.rework import drop_human_task
 from orchestrator.stages import StageSpec
 from orchestrator.state import (
     GateOutcome,
@@ -135,6 +136,18 @@ class AgentError(Exception):
     def __init__(self, message: str, *, cost_usd: float = 0.0) -> None:
         super().__init__(message)
         self.cost_usd = cost_usd
+
+
+class NeedsArchitectError(AgentError):
+    """The Developer made no commits because the task cannot be built as defined.
+
+    It carries the design problems the Developer reported, so the orchestrator can take the
+    project back to the Architect instead of stopping.
+    """
+
+    def __init__(self, message: str, *, problems: list[str], cost_usd: float = 0.0) -> None:
+        super().__init__(message, cost_usd=cost_usd)
+        self.problems = problems
 
 
 class AgentRunner(Protocol):
@@ -285,8 +298,13 @@ def _run_stage(
             latency_ms=int((time.monotonic() - started) * 1000),
             details={"error": str(error)},
         )
+        billed = record_cost(state, stage, error.cost_usd)
+        if task is not None and isinstance(error, NeedsArchitectError):
+            handed = _stuck_task_to_architect(billed, ctx, task, error)
+            if handed is not None:
+                return handed
         _raise_pause_todo(ctx, state, str(error))
-        return record_cost(state, stage, error.cost_usd).evolve(status=Status.HALTED)
+        return billed.evolve(status=Status.HALTED)
     state = record_cost(state, stage, result.cost_usd)
     spec = ctx.stages.get(stage)
     summary: str | None = None
@@ -872,6 +890,32 @@ def _escalate_design_problems(
         ctx,
         Stage.ARCHITECT,
         f"design problem raised on {task_id}",
+    )
+
+
+def _stuck_task_to_architect(
+    state: ProjectState, ctx: PipelineContext, task: Task, error: NeedsArchitectError
+) -> ProjectState | None:
+    """The Developer could not start a task and made no commits: ask the Architect to plan it.
+
+    Returns None (the caller pauses, as for any failure) when there is no Architect to ask or the
+    replans are used up. A task you added by sending the project back is replaced by the
+    Architect's tasks, so the vague one cannot sit first in the list and block them.
+    """
+    if ctx.fixer is None or _replan_rounds(state) >= ctx.config.limits.max_replans:
+        return None
+    state = drop_human_task(ctx.runs_dir, state, task.id)
+    detail = (
+        f"The Developer could not start {task.id} ({task.title}) and made no commits. "
+        f"The task said:\n{task.description}\n\nFinished tasks so far: "
+        f"{', '.join(state.completed_tasks) or 'none'}.\n\n"
+        + "\n".join(f"- {problem}" for problem in error.problems)
+    )
+    return _goto(
+        state.evolve(current_task_id=None, handoff=Handoff(purpose="design_review", note=detail)),
+        ctx,
+        Stage.ARCHITECT,
+        f"design problem raised on {task.id}",
     )
 
 

@@ -135,3 +135,33 @@ def _add_task(
         record_artifacts(state, written), list(written), now=datetime.now(UTC)
     )
     return dict(updated.artifacts)
+
+
+def drop_human_task(runs_dir: Path, state: ProjectState, task_id: str) -> ProjectState:
+    """Take an unfinished task you added (H<n>-1) out of the task list.
+
+    Used when the Developer cannot start it and the Architect is asked to plan it properly: the
+    Architect's tasks replace it, so it cannot sit first in the list and block them. A finished
+    task, or one the Architect planned, is never removed.
+    """
+    record = state.artifacts.get("tasks.json")
+    if record is None or not task_id.startswith("H") or task_id in state.completed_tasks:
+        return state
+    store = ArtifactStore(runs_dir, state.project_slug)
+    existing = TaskList.model_validate_json(store.read(record))
+    kept = [t.model_dump() for t in existing.tasks if t.id != task_id]
+    if len(kept) == len(existing.tasks):
+        return state
+    for task in kept:
+        task["depends_on"] = [d for d in task["depends_on"] if d != task_id]
+    written = {
+        "tasks.json": store.write(
+            "tasks.json",
+            TaskList.model_validate({"tasks": kept}).model_dump_json(indent=2),
+            revision=record.revision + 1,
+        )
+    }
+    updated = approve_artifacts(
+        record_artifacts(state, written), list(written), now=datetime.now(UTC)
+    )
+    return updated

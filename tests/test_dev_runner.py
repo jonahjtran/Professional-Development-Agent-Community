@@ -353,6 +353,44 @@ def test_no_commits_says_what_the_developer_reported_instead_of_hiding_it(
     assert "Add the Apollo key" in text
 
 
+def test_no_commits_with_a_design_problem_is_reported_as_one(repo: Path, tmp_path: Path) -> None:
+    from orchestrator.pipeline import NeedsArchitectError
+
+    said = json.dumps(
+        {
+            "task_id": "T1",
+            "summary": "The task names no specific change.",
+            "deviations_from_plan": [],
+            "known_gaps": [],
+            "needs_architect": ["Give it a concrete scope"],
+        }
+    )
+
+    def stuck(cwd: Path) -> list[Any]:
+        return [result_message(result=said)]
+
+    with pytest.raises(NeedsArchitectError) as error:
+        Harness(repo, tmp_path, stuck).runner().run(request())
+
+    assert error.value.problems == ["Give it a concrete scope"]
+    assert error.value.cost_usd == pytest.approx(0.5)
+    assert str(error.value).startswith("the Developer made no commits")
+
+
+def test_no_commits_without_a_design_problem_stays_a_plain_error(
+    repo: Path, tmp_path: Path
+) -> None:
+    from orchestrator.pipeline import NeedsArchitectError
+
+    def lazy(cwd: Path) -> list[Any]:
+        return [result_message()]
+
+    with pytest.raises(AgentError) as error:
+        Harness(repo, tmp_path, lazy).runner().run(request())
+
+    assert not isinstance(error.value, NeedsArchitectError)
+
+
 def test_uncommitted_changes_are_an_error_because_they_would_be_lost(
     repo: Path, tmp_path: Path
 ) -> None:

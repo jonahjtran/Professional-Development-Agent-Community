@@ -27,7 +27,7 @@ from orchestrator.developer_backend import (
 from orchestrator.halt import halt_requested
 from orchestrator.notes import consume_notes, pending_notes
 from orchestrator.permissions import PolicyContext
-from orchestrator.pipeline import AgentError, AgentRequest, AgentResult
+from orchestrator.pipeline import AgentError, AgentRequest, AgentResult, NeedsArchitectError
 from orchestrator.project_settings import get_autonomy
 from orchestrator.prompts import Prompt
 from orchestrator.rules import active_rules
@@ -282,7 +282,14 @@ class DevRunner:
         # nothing left to do is fine as long as the branch has work on it.
         no_new_work = head_sha(worktree.path) == head_before and not interrupted
         if no_new_work or commits_ahead(worktree) == 0:
-            raise fail("the Developer made no commits" + _what_it_said(report))
+            message = "the Developer made no commits" + _what_it_said(report)
+            if report is not None and report.needs_architect:
+                raise NeedsArchitectError(
+                    message,
+                    problems=list(report.needs_architect),
+                    cost_usd=fail(message).cost_usd,
+                )
+            raise fail(message)
         left_over = uncommitted_paths(worktree)
         if left_over:
             shown = ", ".join(left_over[:5])

@@ -297,3 +297,103 @@ def test_an_exceeded_architect_budget_asks_the_human_first(tmp_path: Path) -> No
 
     assert planner.requests == [] and state.status == Status.HALTED
     assert caps.requests and caps.requests[0].stage == Stage.ARCHITECT
+
+
+# --- a Developer that cannot start a task and made no commits ----------------------------------
+
+
+class StuckDev(Dev):
+    """Cannot build the task ids in `stuck` (no commits, a design problem); builds the rest."""
+
+    def __init__(self, *stuck: str) -> None:
+        super().__init__()
+        self.stuck = set(stuck)
+
+    def run(self, request: AgentRequest) -> AgentResult:
+        from orchestrator.pipeline import NeedsArchitectError
+
+        if request.task_id in self.stuck:
+            self.requests.append(request)
+            raise NeedsArchitectError(
+                "the Developer made no commits (it said: no specific change)",
+                problems=["The task names no specific change"],
+                cost_usd=0.07,
+            )
+        return super().run(request)
+
+
+def test_a_task_the_developer_cannot_start_goes_back_to_the_architect(tmp_path: Path) -> None:
+    planner = FakePlanner()
+    ctx = ctx_for(tmp_path, StuckDev("T1"), planner)
+    state = at_developer(tmp_path)
+
+    state = advance(state, ctx)
+
+    assert state.stage == Stage.ARCHITECT and state.status == Status.RUNNING
+    assert state.handoff is not None and state.handoff.purpose == "design_review"
+    assert "T1" in state.handoff.note and "names no specific change" in state.handoff.note
+    assert state.cost_usd[Stage.DEVELOPER] == pytest.approx(0.07)  # the failed call is billed
+    assert "design problem raised on T1" in state.path[-1].reason
+
+
+def test_the_architect_is_told_what_the_stuck_task_was_meant_to_do(tmp_path: Path) -> None:
+    planner = FakePlanner()
+    ctx = ctx_for(tmp_path, StuckDev("T1"), planner)
+
+    state = advance(at_developer(tmp_path), ctx)
+    advance(state, ctx)
+
+    sent = planner.requests[0].problem
+    assert "T1" in sent and "Create the table" in sent  # its title and text reach the Architect
+    assert "Add the table and a migration." in sent
+
+
+def test_a_task_you_added_by_sending_the_project_back_is_replaced_by_the_architects_tasks(
+    tmp_path: Path,
+) -> None:
+    from orchestrator.rework import send_back
+
+    state = at_developer(tmp_path).evolve(status=Status.HALTED)
+    state = send_back(tmp_path, state, Stage.DEVELOPER, "Make everything pass the PRD")
+    assert "H1-1" in tasks_of(tmp_path, state)
+    planner = FakePlanner(plan(replan_task("R1-1")))
+    ctx = ctx_for(tmp_path, StuckDev("H1-1"), planner)
+
+    for _ in range(40):
+        state = advance(state, ctx)
+        if state.stage == Stage.QA or state.status != Status.RUNNING:
+            break
+
+    ids = tasks_of(tmp_path, state)
+    assert "H1-1" not in ids and "R1-1" in ids
+    assert state.current_task_id is None or state.current_task_id != "H1-1"
+    assert "Make everything pass the PRD" in planner.requests[0].problem
+
+
+def test_a_stuck_task_from_the_architects_own_plan_is_kept(tmp_path: Path) -> None:
+    ctx = ctx_for(tmp_path, StuckDev("T1"), FakePlanner())
+
+    state = advance(at_developer(tmp_path), ctx)
+
+    assert "T1" in tasks_of(tmp_path, state)
+
+
+def test_when_the_replans_are_used_up_a_stuck_task_pauses_with_what_it_said(
+    tmp_path: Path,
+) -> None:
+    ctx = ctx_for(tmp_path, StuckDev("T1"), FakePlanner(), max_replans=0)
+
+    state = advance(at_developer(tmp_path), ctx)
+
+    assert state.status == Status.HALTED and state.stage == Stage.DEVELOPER
+    assert any(
+        "no commits" in t.title or "no commits" in t.detail for t in open_todos(tmp_path, "demo")
+    )
+
+
+def test_without_an_architect_available_a_stuck_task_pauses(tmp_path: Path) -> None:
+    ctx = ctx_for(tmp_path, StuckDev("T1"), None)
+
+    state = advance(at_developer(tmp_path), ctx)
+
+    assert state.status == Status.HALTED
