@@ -19,13 +19,19 @@ function models(over: Record<string, unknown> = {}) {
       agent("chat", "Chat assistant", "claude-opus-5-5"),
       agent("explanations", "Approval explanations", "claude-haiku-5-5"),
     ],
+    billing: { default: "api", sign_in: null },
     local: { ok: true, reachable: true, installed: true, context: 131072, detail: "qwen3-coder is installed and loaded (context 131072).", fix: "" },
     ...over,
   };
 }
 
 function open(body: unknown = models(), extra: Record<string, unknown> = {}) {
-  const api = mockApi({ "GET /api/models": body, "POST /api/models/developer": { ok: true }, ...extra });
+  const api = mockApi({
+    "GET /api/models": body,
+    "POST /api/models/developer": { ok: true },
+    "POST /api/models/developer-billing": { ok: true },
+    ...extra,
+  });
   render(<MemoryRouter><ModelsPage /></MemoryRouter>);
   return api;
 }
@@ -93,5 +99,44 @@ describe("the models page", () => {
     open({ status: 500, body: { error: "boom" } });
 
     expect(await screen.findByText("boom")).toBeInTheDocument();
+  });
+
+  it("says the Developer is paid for with API credits by default", async () => {
+    open();
+
+    expect(await screen.findByLabelText("API credits")).toBeChecked();
+    expect(screen.getByLabelText("My subscription")).not.toBeChecked();
+  });
+
+  it("switches the Developer to your subscription and says how it differs", async () => {
+    const api = open();
+
+    await userEvent.click(await screen.findByLabelText("My subscription"));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ billing: "subscription" }]));
+    expect(screen.getByText(/ordinary individual use/i)).toBeInTheDocument();
+    expect(screen.getByText(/estimates/i)).toBeInTheDocument();
+    expect(screen.getByText(/planning agents.*API/i)).toBeInTheDocument();
+  });
+
+  it("shows whether you are signed in when a subscription is in use", async () => {
+    open(models({ billing: { default: "subscription", sign_in: { ok: true, detail: "signed in with your Claude account", fix: "", skipped: false } } }));
+
+    expect(await screen.findByText("signed in with your Claude account")).toBeInTheDocument();
+    expect(screen.getByLabelText("My subscription")).toBeChecked();
+  });
+
+  it("shows how to sign in when you are not", async () => {
+    open(models({ billing: { default: "subscription", sign_in: { ok: false, detail: "Claude Code is not signed in to a Claude account.", fix: "Run `claude auth login` and sign in.", skipped: false } } }));
+
+    expect(await screen.findByText(/not signed in to a Claude account/)).toBeInTheDocument();
+    expect(screen.getByText(/claude auth login/)).toBeInTheDocument();
+  });
+
+  it("shows nothing about sign-in while API credits are in use", async () => {
+    open();
+
+    await screen.findByLabelText("API credits");
+    expect(screen.queryByText(/signed in/i)).not.toBeInTheDocument();
   });
 });

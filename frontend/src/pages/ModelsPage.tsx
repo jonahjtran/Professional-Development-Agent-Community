@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ApiError, post } from "../api";
 import { Banner, Button, Card, Loading, Pill, Section, Segmented } from "../components/ui";
 import { useLoad } from "../hooks";
-import type { ModelsReply } from "../types";
+import type { Billing, ModelsReply } from "../types";
 
 type Backend = "claude" | "local";
 
@@ -22,9 +22,21 @@ export function ModelsPage() {
     }
   }
 
+  async function chooseBilling(billing: Billing) {
+    setProblem(null);
+    try {
+      await post("/api/models/developer-billing", { billing });
+      setChanged(true);
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   if (error) return <Banner>{error.message}</Banner>;
   if (data === null) return <Loading what="the models" />;
-  const { developer, local } = data;
+  const { developer, local, billing } = data;
+  const signIn = billing.sign_in;
 
   return (
     <>
@@ -48,6 +60,42 @@ export function ModelsPage() {
             running finishes on the model it started with.
           </p>
           {changed && <p className="hint">Saved. It applies from the next task.</p>}
+        </Card>
+      </Section>
+
+      <Section title="Who pays for the Developer">
+        <Card>
+          <Segmented<Billing>
+            name="default-billing"
+            value={billing.default}
+            onChange={(b) => void chooseBilling(b)}
+            options={[
+              { value: "api", label: "API credits" },
+              { value: "subscription", label: "My subscription" },
+            ]}
+          />
+          {signIn && !signIn.skipped && (
+            <p>
+              <Pill tone={signIn.ok ? "done" : "halted"}>{signIn.ok ? "Ready" : "Not ready"}</Pill>{" "}
+              {signIn.detail}
+            </p>
+          )}
+          {signIn && !signIn.ok && signIn.fix && <p className="hint">{signIn.fix}</p>}
+          <p className="hint">
+            With a subscription the Developer uses your Claude account instead of your API key, and
+            each task checks the account is ready first. Anthropic's terms allow this for ordinary
+            individual use of Claude Code and the Agent SDK, so keep it to your own projects.
+          </p>
+          <p className="hint">
+            Dollar figures become estimates, since nothing is billed per call, and the caps still limit
+            how much a project may use. Your plan's usage limit can stop a long run: resume after it
+            resets, or switch back.
+          </p>
+          <p className="hint">
+            Only the Developer can use a subscription. The planning agents (Product Owner, Architect,
+            QA, Career coach) and the helpers still call the API with your key. A project can override
+            this on its own page; a switch applies from the next task.
+          </p>
         </Card>
       </Section>
 
