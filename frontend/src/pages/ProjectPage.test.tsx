@@ -14,7 +14,7 @@ function project(over: Record<string, unknown> = {}, summary: Record<string, unk
   return {
     starting: false,
     summary: { slug: "demo", idea: "An idea", stage: "developer", status: "running", detail: "", cost_usd: 3.4, cap_usd: 20, pending: 0, alive: true, ...summary },
-    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], journey: { path: [], going_back: null }, can_send_back: false, developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5" }, gates: [], links: [], artifacts: [], pending: [], ...over,
+    stages, warn_fraction: 0.8, helper: { explain_usd: 0.002, chat_usd: 0 }, autonomy: "standard", todos: [], journey: { path: [], going_back: null }, can_send_back: false, developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5", billing: "api", billing_source: "default" }, gates: [], links: [], artifacts: [], pending: [], ...over,
   };
 }
 
@@ -186,6 +186,34 @@ describe("the project page", () => {
     expect(screen.getByText("prd.md")).toBeInTheDocument();
   });
 
+  it("says who pays for the Developer and lets you switch it for this project", async () => {
+    const api = open(project(), { "POST /api/projects/demo/developer-billing": { ok: true } });
+
+    expect(await screen.findByLabelText("Default billing")).toBeChecked();
+    await userEvent.click(screen.getByLabelText("My subscription"));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ billing: "subscription" }]));
+  });
+
+  it("shows when the project uses your subscription, and can go back to the default", async () => {
+    const api = open(
+      project({ developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5", billing: "subscription", billing_source: "project" } }),
+      { "POST /api/projects/demo/developer-billing": { ok: true } },
+    );
+
+    expect(await screen.findByText(/paid from your subscription/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("My subscription")).toBeChecked();
+    await userEvent.click(screen.getByLabelText("Default billing"));
+
+    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ billing: "default" }]));
+  });
+
+  it("says billing does not apply to the local model", async () => {
+    open(project({ developer: { backend: "local", source: "project", model: "qwen3-coder:30b", billing: "api", billing_source: "default" } }));
+
+    expect(await screen.findByText(/does not use your Claude account or API credits/i)).toBeInTheDocument();
+  });
+
   it("lets you send a finished project back to an agent with an instruction", async () => {
     const done = project(
       {
@@ -278,7 +306,7 @@ describe("the project page", () => {
 
   it("can go back to following the default", async () => {
     const api = open(
-      project({ developer: { backend: "local", source: "project", model: "qwen3-coder:27b" } }),
+      project({ developer: { backend: "local", source: "project", model: "qwen3-coder:27b", billing: "api", billing_source: "default" } }),
       { "POST /api/projects/demo/developer-backend": { ok: true } },
     );
     expect(await screen.findByText("qwen3-coder:27b")).toBeInTheDocument();

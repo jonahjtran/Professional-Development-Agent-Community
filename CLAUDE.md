@@ -151,6 +151,24 @@ and read at the start of every task, so a switch applies from the next task on:
   `min_context`; if not, the project pauses with the exact command to fix it. Start Ollama with
   `OLLAMA_CONTEXT_LENGTH=65536 ollama serve` and `ollama pull <the tag>`.
 
+**Who pays for the Developer** (`orchestrator/developer_billing.py`). Separate from which model it
+runs: *API credits* (default; the Developer's Claude Code is given your `ANTHROPIC_API_KEY`) or *My
+subscription*, where that key is blanked for the Developer's process only, so Claude Code uses the
+Claude account you signed in with (`claude auth login`, or a token from `claude setup-token` in
+`CLAUDE_CODE_OAUTH_TOKEN`). Per project (overrides) or global, read at every task start, like the
+model switch. Before each subscription task Studio runs `claude auth status` with the key blanked
+(it keeps only signed-in and the method, never the account details) and pauses with the exact fix
+if you are not signed in or Claude Code would still use an API key; if the check cannot run it
+does not block. A plan failure (sign-in, usage limit, plan or billing) pauses with a plain message.
+Under a subscription the dollar figures are estimates and the caps still apply, as a guard on how
+much of your plan a project may use; a local model task ignores the setting. Only the Developer
+(and the Agent SDK chat, unchanged) can use a plan: the planning agents, QA, the Career coach and
+the helper calls use the Messages API, which needs a key. Anthropic's terms allow a subscription
+for ordinary individual use of Claude Code and the Agent SDK and ask developers building products
+for other people to use API keys, so keep this to your own projects. Live check (one tiny message
+from your plan, a fake key in the environment on purpose):
+`ANTHROPIC_API_KEY=sk-ant-fake uv run pytest tests/live --live -s -k subscription`.
+
 The **Models** page (`/models`) shows every agent's exact model id, switches the default Developer
 backend, and shows whether Ollama is ready (with the fix when it is not). Each project page shows
 which model its Developer uses and why, with a switch (follow the default, Claude, or the local

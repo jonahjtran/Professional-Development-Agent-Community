@@ -24,6 +24,11 @@ from orchestrator.developer_backend import (
     get_developer_backend,
     record_running_model,
 )
+from orchestrator.developer_billing import (
+    SubscriptionStatus,
+    check_subscription,
+    get_developer_billing,
+)
 from orchestrator.halt import halt_requested
 from orchestrator.notes import consume_notes, pending_notes
 from orchestrator.permissions import PolicyContext
@@ -84,6 +89,7 @@ class DevRunner:
         base: str = "main",
         client_factory: ClientFactory = ClaudeSDKClient,
         local_check: Callable[[LocalConfig], LocalStatus] = check_local,
+        subscription_check: Callable[[], SubscriptionStatus] = check_subscription,
     ) -> None:
         self._config = config
         self._runs_dir = runs_dir
@@ -94,6 +100,7 @@ class DevRunner:
         self._base = base
         self._client_factory = client_factory
         self._local_check = local_check
+        self._subscription_check = subscription_check
 
     def run(self, request: AgentRequest) -> AgentResult:
         task = _find_task(request)
@@ -108,6 +115,14 @@ class DevRunner:
             status = self._local_check(self._config.local)
             if not status.ok:
                 raise AgentError(f"{status.detail} {status.fix}".strip())
+        # Whose plan pays: your API credits, or your Claude subscription (Claude backend only).
+        billing = get_developer_billing(self._runs_dir, request.project).billing
+        if backend == "local":
+            billing = "api"
+        if billing == "subscription":
+            signed_in = self._subscription_check()
+            if not signed_in.ok:
+                raise AgentError(f"{signed_in.detail} {signed_in.fix}".strip())
         if request.task_id:
             record_running_model(
                 self._runs_dir,
@@ -142,6 +157,7 @@ class DevRunner:
                     notes=[n.text for n in notes],
                     backend=backend,
                     skills=skills,
+                    billing=billing,
                 )
             )
             consume_notes(self._runs_dir, request.project, [n.id for n in notes])
@@ -160,6 +176,7 @@ class DevRunner:
         worktree: Worktree,
         backend: str = "claude",
         skills: str = "",
+        billing: str = "api",
     ) -> ClaudeAgentOptions:
         hooks = ToolPermissionHooks(
             policy=PolicyContext(
@@ -193,7 +210,7 @@ class DevRunner:
                 "excludedCommands": ["git"],
                 "network": {"allowedDomains": list(self._config.sandbox.allowed_domains)},
             },
-            env=developer_env(backend, self._config.local),
+            env=developer_env(backend, self._config.local, billing),
             **hooks.sdk_options(),
         )
 
@@ -208,18 +225,23 @@ class DevRunner:
         notes: list[str] | None = None,
         backend: str = "claude",
         skills: str = "",
+        billing: str = "api",
     ) -> AgentResult:
         head_before = head_sha(worktree.path)
         base_before = branch_sha(self._repo, self._base)
-        options = self._options(request, task, worktree, backend, skills)
+        options = self._options(request, task, worktree, backend, skills, billing)
+        # Nothing is billed per call under a subscription, so a missing price is not an error.
+        priced = backend != "local" and billing != "subscription"
 
         async with self._client_factory(options) as client:
             await client.query(self._task_prompt(request, task, worktree, interrupted, notes or []))
-            turn = await _collect(client, priced=backend != "local")
+            turn = await _collect(client, priced=priced, subscription=billing == "subscription")
             report, problem = _parse_report(turn.result.result or "")
             if report is None:
                 await client.query(_FOLLOW_UP.format(problem=problem))
-                turn = await _collect(client, priced=backend != "local")  # a running total
+                turn = await _collect(  # a running total
+                    client, priced=priced, subscription=billing == "subscription"
+                )
                 report, problem = _parse_report(turn.result.result or "")
 
         # A local model costs nothing, whatever price the SDK guesses for an unknown model name.
@@ -364,19 +386,39 @@ def _find_task(request: AgentRequest) -> Task:
     raise AgentError(f"task {request.task_id} is not in tasks.json")
 
 
-async def _collect(client: Any, *, priced: bool = True) -> _Turn:
+_PLAN_HINTS = {
+    "authentication_failed": (
+        "Claude Code could not sign in to your Claude account. "
+        "Run `claude auth login` (or refresh the token from `claude setup-token`) and resume."
+    ),
+    "rate_limit": (
+        "Your Claude plan's usage limit was reached. Resume after it resets, "
+        "or switch the Developer to API credits."
+    ),
+    "billing_error": (
+        "Your Claude plan could not be used (a plan or billing problem). "
+        "Check your plan, or switch the Developer to API credits."
+    ),
+}
+
+
+async def _collect(client: Any, *, priced: bool = True, subscription: bool = False) -> _Turn:
     model: str | None = None
     result: ResultMessage | None = None
+    problem: str | None = None
     async for message in client.receive_response():
         if isinstance(message, AssistantMessage):
             model = message.model
+            problem = message.error or problem
         elif isinstance(message, ResultMessage):
             result = message
     if result is None:
         raise AgentError("the Developer ended without a result message")
     if result.is_error:
+        hint = _PLAN_HINTS.get(problem or "") if subscription else None
         raise AgentError(
-            f"the Developer failed: {result.subtype} {result.errors or ''}".strip(),
+            f"the Developer failed: {result.subtype} {result.errors or ''}".strip()
+            + (f" ({hint})" if hint else ""),
             cost_usd=result.total_cost_usd or 0.0,
         )
     if priced and result.total_cost_usd is None:
