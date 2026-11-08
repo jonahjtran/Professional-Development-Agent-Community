@@ -55,6 +55,19 @@ main { max-width: 860px; margin: 0 auto; padding: 36px 20px 80px; }
 .bar a.nav:hover { opacity: 1; background: var(--fill); }
 .bar a.nav.active { color: var(--blue); background: var(--blue-bg); font-weight: 500; }
 #badge { font-weight: 600; }
+/* Profile button and its dropdown */
+.profile { position: relative; margin-left: auto; }
+#notify + .profile { margin-left: 8px; }
+.avatar { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 999px; display: grid;
+  place-items: center; background: var(--fill); color: var(--label-2); border: none; }
+.avatar:hover, .avatar[aria-expanded="true"] { background: var(--blue-bg); color: var(--blue); }
+.avatar.active { color: var(--blue); background: var(--blue-bg); }
+.menu { position: absolute; right: 0; top: 40px; min-width: 160px; padding: 6px; z-index: 20;
+  background: var(--bar); border: 0.5px solid var(--separator); border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); }
+.menu a { display: block; padding: 8px 12px; border-radius: 8px; color: var(--label); font-size: 15px; }
+.menu a:hover { background: var(--fill); opacity: 1; }
 #notify { margin-left: auto; min-height: 32px; font-size: 13px; padding: 0 12px; }
 
 /* Type */
