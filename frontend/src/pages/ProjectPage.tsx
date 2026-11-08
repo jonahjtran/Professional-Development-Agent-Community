@@ -11,6 +11,7 @@ import {
   Meter,
   money,
   Section,
+  CollapsibleSection,
   Segmented,
   Steps,
   StatusPill,
@@ -258,7 +259,7 @@ export function ProjectPage() {
       </Section>
 
       {data.links.length > 0 && (
-        <Section title="Pull requests">
+        <CollapsibleSection title="Pull requests">
           <Group>
             {data.links.map((l) => (
               <Item key={l.url} href={l.url}>
@@ -267,10 +268,10 @@ export function ProjectPage() {
               </Item>
             ))}
           </Group>
-        </Section>
+        </CollapsibleSection>
       )}
 
-      <Section title="Your decisions">
+      <CollapsibleSection title="Your decisions">
         {data.gates.length === 0 ? (
           <Card><span className="muted">No decisions yet.</span></Card>
         ) : (
@@ -292,16 +293,16 @@ export function ProjectPage() {
             </table>
           </div>
         )}
-      </Section>
+      </CollapsibleSection>
 
-      <Section title="Documents">
+      <CollapsibleSection title="Documents">
         <Group>
           {data.artifacts.length === 0 && <Item><span className="muted">Nothing produced yet.</span></Item>}
           {data.artifacts.map((name) => (
             <Item key={name} to={`/p/${slug}/a/${name}`}>{name}</Item>
           ))}
         </Group>
-      </Section>
+      </CollapsibleSection>
 
       <Section title="Activity">
         <Group>

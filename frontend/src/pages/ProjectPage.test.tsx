@@ -155,6 +155,37 @@ describe("the project page", () => {
     expect(screen.queryByText(/Back at the/)).not.toBeInTheDocument();
   });
 
+  it("lets you collapse and open the pull requests, decisions and documents sections", async () => {
+    open(project({
+      links: [{ label: "Developer PR", url: "https://github.com/x/y/pull/1" }],
+      gates: [{ ts: "2026-11-01T10:00:00Z", stage: "product_owner", outcome: "approve", comments: "Looks right" }],
+      artifacts: ["prd.md"],
+    }));
+
+    for (const title of ["Pull requests", "Your decisions", "Documents"]) {
+      const toggle = await screen.findByRole("button", { name: title });
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+    }
+    expect(screen.getByText("Looks right")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Your decisions" }));
+    expect(screen.getByRole("button", { name: "Your decisions" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Looks right")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Your decisions" }));
+    expect(screen.getByText("Looks right")).toBeInTheDocument();
+  });
+
+  it("collapses the pull requests section without hiding the others", async () => {
+    open(project({ links: [{ label: "Developer PR", url: "https://github.com/x/y/pull/1" }], artifacts: ["prd.md"] }));
+
+    await userEvent.click(await screen.findByRole("button", { name: "Pull requests" }));
+
+    expect(screen.queryByText("Developer PR")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Documents" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("prd.md")).toBeInTheDocument();
+  });
+
   it("lets you send a finished project back to an agent with an instruction", async () => {
     const done = project(
       {
