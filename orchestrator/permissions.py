@@ -190,6 +190,28 @@ def _new_env_names(old: str, new: str) -> list[str]:
 # --- file tools -------------------------------------------------------------------------------
 
 
+# Folders a search never needs to enter, and the most files looked at before giving up.
+_SKIPPED_DIRS = frozenset(
+    {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".mypy_cache"}
+    | {".ruff_cache", ".pytest_cache", ".next", "target"}
+)
+_WALK_LIMIT = 50_000
+
+
+def _env_file_under(folder: Path) -> Path | None:
+    """The first real env file (not .env.example and the like) anywhere under `folder`."""
+    seen = 0
+    for current, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in _SKIPPED_DIRS]
+        for name in files:
+            if _is_env_file(name) and name not in _SAFE_ENV_TEMPLATES:
+                return Path(current) / name
+        seen += len(files)
+        if seen > _WALK_LIMIT:
+            return folder  # too big to be sure: treat it as holding one
+    return None
+
+
 def _file_tool(tool: str, tool_input: dict[str, Any], ctx: PolicyContext) -> Decision:
     root = ctx.worktree.resolve()
     if tool in ("Read", "Glob", "Grep"):
@@ -197,6 +219,16 @@ def _file_tool(tool: str, tool_input: dict[str, Any], ctx: PolicyContext) -> Dec
         denied = _check_path(str(raw), ctx, root)
         if denied:
             return denied
+        if tool == "Grep":
+            # A search of a whole folder prints matching lines, and a line of an env file is a
+            # secret. Name the file or a folder without one.
+            target = _real(str(raw), root)
+            if target.is_dir() and (found := _env_file_under(target)) is not None:
+                return Decision(
+                    Verdict.DENY,
+                    f"a search of {raw} could print lines from an env file ({found.name}); "
+                    "search a subfolder (for example the source folder) or name the files",
+                )
         # A glob can name a secret file too. (Grep's "pattern" is a regex, so it is not checked.)
         patterns = [tool_input.get("glob", "")]
         if tool != "Grep":

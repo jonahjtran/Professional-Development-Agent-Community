@@ -136,16 +136,17 @@ class ChatService:
             tool, tool_input = data_in["tool_name"], data_in["tool_input"]
             if tool in studio_tools:
                 return {}
-            allowed = tool in _READ_TOOLS and (
-                evaluate(tool, tool_input, policy).verdict == Verdict.ALLOW
-            )
-            if allowed:
-                return {}
+            reason = "the assistant may only read this repository"
+            if tool in _READ_TOOLS:
+                decision = evaluate(tool, tool_input, policy)
+                if decision.verdict == Verdict.ALLOW:
+                    return {}
+                reason = f"{reason}: {decision.reason}"
             return {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
-                    "permissionDecisionReason": "the assistant may only read this repository",
+                    "permissionDecisionReason": reason,
                 }
             }
 
