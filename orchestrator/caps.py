@@ -27,6 +27,7 @@ __all__ = [
     "CapBackend",
     "CapRequest",
     "CapResolution",
+    "add_room",
     "cap_request",
     "resolve_cap",
     "run_cap_pause",
@@ -164,6 +165,41 @@ def resolve_cap(
         }
         raised = {**allowances.model_dump(), "extra_stage_usd": extra}
     return state.evolve(**running, allowances=Allowances.model_validate(raised))
+
+
+CAPPED_STAGES = (
+    Stage.PRODUCT_OWNER,
+    Stage.ARCHITECT,
+    Stage.DEVELOPER,
+    Stage.QA,
+    Stage.CAREER_COACH,
+)
+
+
+def add_room(state: ProjectState, scope: str, amount: float) -> ProjectState:
+    """Give the project or one agent more room under its dollar cap, without waiting for a pause.
+
+    `scope` is "project" or an agent's name. It adds to the room already granted. A warning already
+    continued past is asked again at 80% of the new cap, because the cap in force changed.
+    """
+    if amount <= 0:
+        raise ValueError("raising a cap needs a positive amount")
+    allowances = state.allowances
+    if scope == "project":
+        raised = {
+            **allowances.model_dump(),
+            "extra_project_usd": allowances.extra_project_usd + amount,
+        }
+    else:
+        stage = next((s for s in CAPPED_STAGES if s.value == scope), None)
+        if stage is None:
+            raise ValueError(f"there is no agent called {scope!r} with a cap")
+        extra = {
+            **allowances.extra_stage_usd,
+            stage: allowances.extra_stage_usd.get(stage, 0.0) + amount,
+        }
+        raised = {**allowances.model_dump(), "extra_stage_usd": extra}
+    return state.evolve(allowances=Allowances.model_validate(raised))
 
 
 def _raise_revisions(state: ProjectState, resolution: CapResolution) -> ProjectState:

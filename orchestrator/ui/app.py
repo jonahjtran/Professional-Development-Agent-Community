@@ -24,6 +24,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from orchestrator.activity import project_activity
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.assistant_cost import assistant_totals
+from orchestrator.caps import add_room
 from orchestrator.config import Config, LocalConfig
 from orchestrator.coordinator import Coordinator, Decision, Routing, choose
 from orchestrator.developer_backend import (
@@ -76,7 +77,14 @@ from orchestrator.rules import (
     global_store,
     project_store,
 )
-from orchestrator.state import ProjectState, Stage, Status, save_state, state_path
+from orchestrator.state import (
+    InterventionKind,
+    ProjectState,
+    Stage,
+    Status,
+    save_state,
+    state_path,
+)
 from orchestrator.task_control import (
     TaskControlError,
     cancel_task,
@@ -712,6 +720,28 @@ def create_app(
             return fail(409, str(refusal))
         save_state(runs_dir, cancelled)
         return JSONResponse({"ok": True, "state": "cancelled"})
+
+    @app.post("/api/projects/{slug}/raise-cap")
+    async def raise_cap(request: Request, slug: str) -> JSONResponse:
+        """Give the project, or any one agent, more room under its dollar cap before it is hit."""
+        body = await checked_body(request)
+        state = view_or_404(slug).state
+        amount = body.get("amount")
+        if isinstance(amount, bool) or not isinstance(amount, int | float):
+            return fail(400, "the amount must be a number of dollars")
+        if run_is_alive(runs_dir, slug) or state.status == Status.RUNNING:
+            return fail(409, "Pause the project first, then raise the cap.")
+        if (
+            state.intervention is not None
+            and state.intervention.kind == InterventionKind.BUDGET_CAP
+        ):
+            return fail(409, "The project is waiting on a budget question: raise the cap there.")
+        try:
+            raised = add_room(state, str(body.get("scope", "")), float(amount))
+        except ValueError as problem:
+            return fail(400, str(problem))
+        save_state(runs_dir, raised)
+        return JSONResponse({"ok": True})
 
     @app.post("/api/projects/{slug}/pause")
     async def pause(request: Request, slug: str) -> JSONResponse:

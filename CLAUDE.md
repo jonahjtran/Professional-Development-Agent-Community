@@ -220,6 +220,13 @@ At 80% of a cap the run stops and asks. Choosing to continue is remembered again
 or when the work returns to that stage. The cap itself still stops the run, and raising a cap
 re-arms the warning at 80% of the new cap. The project and each stage warn separately.
 
+**Raising a cap ahead of time.** At a cap pause you can raise the cap that was hit. You can also
+raise the project cap or any one agent's cap (Product Owner, Architect, Developer, QA, Career
+coach) without waiting: the Spend card on the project page has **Raise the cap of** and **Add
+dollars** (`POST /api/projects/<p>/raise-cap`, `{scope, amount}`, `caps.add_room`). It adds to the
+room already granted (`allowances`, no schema change) and needs the project paused; a project
+waiting on a budget question is raised there instead.
+
 ## Web UI
 
 `uv run --env-file .env studio ui` opens a local control panel (it listens on 127.0.0.1 only; add

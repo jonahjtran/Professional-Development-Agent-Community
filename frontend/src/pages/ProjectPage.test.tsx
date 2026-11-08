@@ -360,4 +360,35 @@ describe("the project page", () => {
 
     expect(await screen.findByText("There is no such project.")).toBeInTheDocument();
   });
+  describe("raising a cap", () => {
+    it("offers every agent and the project, and sends the amount for the one chosen", async () => {
+      const api = open(project({}, { status: "halted", alive: false }), { "POST /api/projects/demo/raise-cap": { ok: true } });
+
+      const choose = await screen.findByLabelText("Raise the cap of");
+      const options = within(choose).getAllByRole("option").map((o) => o.textContent);
+      expect(options).toEqual(["Project", "Product Owner", "Developer"]);
+      await userEvent.selectOptions(choose, "product_owner");
+      await userEvent.type(screen.getByLabelText("Add dollars"), "2.5");
+      await userEvent.click(screen.getByRole("button", { name: "Raise cap" }));
+
+      await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ scope: "product_owner", amount: 2.5 }]));
+    });
+
+    it("says to pause first while the run is going", async () => {
+      open(project());
+
+      expect(await screen.findByText(/Pause the project to raise a cap/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Raise cap" })).toBeNull();
+    });
+
+    it("refuses an amount that is not a positive number without calling the server", async () => {
+      const api = open(project({}, { status: "halted", alive: false }));
+
+      await userEvent.type(await screen.findByLabelText("Add dollars"), "lots");
+      await userEvent.click(screen.getByRole("button", { name: "Raise cap" }));
+
+      expect(await screen.findByText(/positive number of dollars/)).toBeInTheDocument();
+      expect(api.posts()).toEqual([]);
+    });
+  });
 });
