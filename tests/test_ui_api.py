@@ -658,7 +658,13 @@ def test_a_project_shows_which_model_its_developer_uses_and_why(
 
     shown = models_client.get("/api/projects/demo").json()["developer"]
 
-    assert shown == {"backend": "claude", "source": "default", "model": "claude-sonnet-5-5"}
+    assert shown == {
+        "backend": "claude",
+        "source": "default",
+        "model": "claude-sonnet-5-5",
+        "billing": "api",
+        "billing_source": "default",
+    }
 
 
 def test_a_project_can_use_the_local_model_and_go_back_to_the_default(
@@ -1986,5 +1992,156 @@ def test_raising_a_cap_needs_the_session_token(client: TestClient, runs: Path) -
     project_with_tasks(runs, status=Status.HALTED)
 
     response = client.post("/api/projects/demo/raise-cap", json={"scope": "qa", "amount": 1})
+# --- paying for the Developer with your Claude subscription ---------------------------------
+
+
+def billing_client(
+    runs: Path,
+    launched: Launched,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: Any = None,
+) -> tuple[TestClient, list[int]]:
+    from orchestrator.developer_billing import SubscriptionStatus
+
+    for key, value in env_for(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    checks: list[int] = []
+    shown = status or SubscriptionStatus(True, "signed in with your Claude account")
+
+    def check() -> Any:
+        checks.append(1)
+        return shown
+
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        launcher=launched,
+        projects_dir=tmp_path / "clones",
+        health=lambda: run_all(tmp_path),
+        subscription_check=check,
+    )
+    return TestClient(app), checks
+
+
+def test_the_models_page_data_says_how_the_developer_is_billed(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web, checks = billing_client(runs, launched, tmp_path, monkeypatch)
+
+    body = web.get("/api/models").json()
+
+    assert body["billing"]["default"] == "api"
+    assert body["billing"]["sign_in"] is None  # nothing uses it, so it is not checked
+    assert checks == []
+
+
+def test_the_sign_in_is_checked_only_when_a_subscription_is_in_use(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web, checks = billing_client(runs, launched, tmp_path, monkeypatch)
+    assert (
+        post(web, "/api/models/developer-billing", {"billing": "subscription"}).status_code == 200
+    )
+
+    body = web.get("/api/models").json()
+
+    assert body["billing"]["default"] == "subscription"
+    assert body["billing"]["sign_in"] == {
+        "ok": True,
+        "detail": "signed in with your Claude account",
+        "fix": "",
+        "skipped": False,
+    }
+    assert checks == [1]
+
+
+def test_a_project_using_a_subscription_also_triggers_the_check(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web, checks = billing_client(runs, launched, tmp_path, monkeypatch)
+    make_project(runs, stage=Stage.DEVELOPER)
+    post(web, "/api/projects/demo/developer-billing", {"billing": "subscription"})
+
+    assert web.get("/api/models").json()["billing"]["sign_in"]["ok"] is True
+    assert checks == [1]
+
+
+def test_a_failing_sign_in_check_shows_the_fix(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.developer_billing import SubscriptionStatus
+
+    web, _checks = billing_client(
+        runs,
+        launched,
+        tmp_path,
+        monkeypatch,
+        SubscriptionStatus(False, "Claude Code is not signed in.", "Run `claude auth login`."),
+    )
+    post(web, "/api/models/developer-billing", {"billing": "subscription"})
+
+    sign_in = web.get("/api/models").json()["billing"]["sign_in"]
+
+    assert sign_in["ok"] is False and "claude auth login" in sign_in["fix"]
+
+
+def test_a_project_can_follow_the_default_or_choose_its_own_billing(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web, _checks = billing_client(runs, launched, tmp_path, monkeypatch)
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    def shown() -> Any:
+        return web.get("/api/projects/demo").json()["developer"]
+
+    assert (shown()["billing"], shown()["billing_source"]) == ("api", "default")
+    post(web, "/api/projects/demo/developer-billing", {"billing": "subscription"})
+    assert (shown()["billing"], shown()["billing_source"]) == ("subscription", "project")
+    post(web, "/api/projects/demo/developer-billing", {"billing": "default"})
+    assert shown()["billing_source"] == "default"
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/models/developer-billing", "/api/projects/demo/developer-billing"]
+)
+def test_an_unknown_billing_is_refused(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    web, _checks = billing_client(runs, launched, tmp_path, monkeypatch)
+    make_project(runs, stage=Stage.DEVELOPER)
+
+    assert post(web, path, {"billing": "free"}).status_code == 400
+
+
+def test_health_lists_the_claude_sign_in_only_when_a_subscription_is_in_use(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.developer_billing import SubscriptionStatus
+
+    web, _checks = billing_client(
+        runs,
+        launched,
+        tmp_path,
+        monkeypatch,
+        SubscriptionStatus(False, "Claude Code is not signed in.", "Run `claude auth login`."),
+    )
+    names = [c["name"] for c in web.get("/api/health").json()["checks"]]
+    assert "Claude subscription sign-in" not in names
+
+    post(web, "/api/models/developer-billing", {"billing": "subscription"})
+
+    checks = {c["name"]: c for c in web.get("/api/health").json()["checks"]}
+    assert checks["Claude subscription sign-in"]["status"] == "fail"
+    assert "claude auth login" in checks["Claude subscription sign-in"]["fix"]
+
+
+def test_changing_billing_needs_the_session_token(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web, _checks = billing_client(runs, launched, tmp_path, monkeypatch)
+
+    response = web.post("/api/models/developer-billing", json={"billing": "subscription"})
 
     assert response.status_code == 403

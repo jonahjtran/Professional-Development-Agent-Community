@@ -36,6 +36,14 @@ from orchestrator.developer_backend import (
     set_global_backend,
     set_project_backend,
 )
+from orchestrator.developer_billing import (
+    SubscriptionStatus,
+    check_subscription,
+    get_default_billing,
+    get_developer_billing,
+    set_global_billing,
+    set_project_billing,
+)
 from orchestrator.explain import Explainer, ExplainInput, ExplainResult
 from orchestrator.halt import clear_halt, request_halt
 from orchestrator.inbox import (
@@ -193,6 +201,7 @@ def create_app(
     chat: Chatting | None = None,
     coordinator: Routing | None = None,
     local_check: Callable[[LocalConfig], LocalStatus] = check_local,
+    subscription_check: Callable[[], SubscriptionStatus] = check_subscription,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
@@ -272,10 +281,13 @@ def create_app(
         shown["helper"] = assistant_totals(runs_dir, slug)  # kept apart from the project's spend
         shown["autonomy"] = get_autonomy(runs_dir, slug)
         choice = get_developer_backend(runs_dir, slug)
+        billing = get_developer_billing(runs_dir, slug)
         shown["developer"] = {
             "backend": choice.backend,
             "source": choice.source,
             "model": developer_model(choice.backend, config),
+            "billing": billing.billing,
+            "billing_source": billing.source,
         }
         shown["todos"] = [todo_view(t) for t in open_todos(runs_dir, slug)]
         return shown
@@ -480,10 +492,31 @@ def create_app(
             )
         )
 
+    def subscription_in_use() -> bool:
+        return get_default_billing().billing == "subscription" or any(
+            get_developer_billing(runs_dir, p.slug).billing == "subscription"
+            for p in data.list_projects(runs_dir, config)
+        )
+
+    def subscription_health() -> health_checks.Check | None:
+        """A health check for the Claude sign-in, only when something is set to use it."""
+        if not subscription_in_use():
+            return None
+        status = subscription_check()
+        if status.skipped:
+            return None
+        return (
+            health_checks.Check("Claude subscription sign-in", health_checks.OK, status.detail)
+            if status.ok
+            else health_checks.Check(
+                "Claude subscription sign-in", health_checks.FAIL, status.detail, status.fix
+            )
+        )
+
     def with_local(runner: Callable[[], list[health_checks.Check]]) -> Callable[[], list[Any]]:
         def run() -> list[Any]:
-            extra = local_health()
-            return [*runner(), *([extra] if extra else [])]
+            extras = [c for c in (local_health(), subscription_health()) if c is not None]
+            return [*runner(), *extras]
 
         return run
 
@@ -497,6 +530,10 @@ def create_app(
                 "claude_model": config.models.developer,
                 "local_model": config.local.model,
                 "endpoint": config.local.endpoint,
+            },
+            "billing": {
+                "default": get_default_billing().billing,
+                "sign_in": (asdict(subscription_check()) if subscription_in_use() else None),
             },
             "agents": [asdict(a) for a in agent_models(config, default.backend)],
             "local": {
@@ -514,6 +551,26 @@ def create_app(
         body = await checked_body(request)
         try:
             set_global_backend(str(body.get("backend", "")))
+        except ValueError as error:
+            return fail(400, str(error))
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/models/developer-billing")
+    async def set_default_billing(request: Request) -> JSONResponse:
+        body = await checked_body(request)
+        try:
+            set_global_billing(str(body.get("billing", "")))
+        except ValueError as error:
+            return fail(400, str(error))
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/projects/{slug}/developer-billing")
+    async def set_project_developer_billing(request: Request, slug: str) -> JSONResponse:
+        body = await checked_body(request)
+        view_or_404(slug)
+        choice = str(body.get("billing", ""))
+        try:
+            set_project_billing(runs_dir, slug, None if choice == "default" else choice)
         except ValueError as error:
             return fail(400, str(error))
         return JSONResponse({"ok": True})

@@ -57,7 +57,13 @@ export interface Project {
   helper: { explain_usd: number; chat_usd: number };
   autonomy: "cautious" | "standard" | "autonomous";
   todos: TodoItem[];
-  developer: { backend: "claude" | "local"; source: "project" | "global" | "default"; model: string };
+  developer: {
+    backend: "claude" | "local";
+    source: "project" | "global" | "default";
+    model: string;
+    billing: Billing;
+    billing_source: "project" | "global" | "default";
+  };
   journey: Journey;
   can_send_back: boolean;
   gates: { ts: string; stage: string; outcome: string; comments: string }[];
@@ -294,6 +300,10 @@ export interface LocalState {
 
 export interface ModelsReply {
   developer: { default: "claude" | "local"; claude_model: string; local_model: string; endpoint: string };
+  billing: {
+    default: Billing;
+    sign_in: { ok: boolean; detail: string; fix: string; skipped: boolean } | null;
+  };
   agents: AgentModelRow[];
   local: LocalState;
 }
@@ -324,3 +334,6 @@ export interface BoardProject {
 export interface TaskBoardReply {
   projects: BoardProject[];
 }
+
+/** Who pays for the Developer: Anthropic API credits, or your Claude subscription. */
+export type Billing = "api" | "subscription";
