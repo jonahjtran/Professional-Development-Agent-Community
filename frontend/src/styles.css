@@ -305,3 +305,9 @@ h2 .chevron {
   opacity: 0.6;
   width: 0.9em;
 }
+
+/* The usage page: one meter per plan window (see UsagePage). */
+.usage-windows { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 14px; }
+.usage-head { display: flex; justify-content: space-between; align-items: baseline; }
+.meter { height: 8px; border-radius: 4px; background: rgba(127,127,127,.2); overflow: hidden; margin: 6px 0 4px; }
+.meter-fill { height: 100%; border-radius: 4px; background: var(--accent, #3b82f6); }

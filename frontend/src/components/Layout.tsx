@@ -19,6 +19,7 @@ export function Layout() {
             Inbox{waiting > 0 && <span id="badge" className={todos.length > 0 ? "alert" : ""}> ({waiting})</span>}
           </NavLink>
           <NavLink className={link} to="/tasks">Tasks</NavLink>
+          <NavLink className={link} to="/usage">Usage</NavLink>
           <NavLink className={link} to="/chat">Chat</NavLink>
           <NavLink className={link} to="/new">New project</NavLink>
           <NavLink className={link} to="/models">Models</NavLink>

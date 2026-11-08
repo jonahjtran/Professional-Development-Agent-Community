@@ -14,6 +14,7 @@ import { RulesPage } from "./pages/RulesPage";
 import { TasksPage } from "./pages/TasksPage";
 import { TeamPage } from "./pages/TeamPage";
 import { TracePage } from "./pages/TracePage";
+import { UsagePage } from "./pages/UsagePage";
 
 export function App() {
   return (
@@ -26,6 +27,7 @@ export function App() {
         <Route path="p/:slug/trace" element={<TracePage />} />
         <Route path="p/:slug/q/:id" element={<QuestionPage />} />
         <Route path="tasks" element={<TasksPage />} />
+        <Route path="usage" element={<UsagePage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="new" element={<NewProjectPage />} />
