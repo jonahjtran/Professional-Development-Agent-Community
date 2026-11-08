@@ -285,9 +285,7 @@ def test_an_unknown_repository_is_an_error(runs: Path, studio: Path, tmp_path: P
 # --- the guard on file reads ------------------------------------------------------------------
 
 
-def hook_decision(
-    chat_options: ClaudeAgentOptions, tool: str, tool_input: dict[str, Any]
-) -> str | None:
+def hook_output(chat_options: ClaudeAgentOptions, tool: str, tool_input: dict[str, Any]) -> Any:
     assert chat_options.hooks is not None
     hook: Any = chat_options.hooks["PreToolUse"][0].hooks[0]
     data = {
@@ -296,7 +294,13 @@ def hook_decision(
         "tool_input": tool_input,
         "tool_use_id": "t",
     }
-    output: Any = asyncio.run(hook(data, "t", {"signal": None}))
+    return asyncio.run(hook(data, "t", {"signal": None}))
+
+
+def hook_decision(
+    chat_options: ClaudeAgentOptions, tool: str, tool_input: dict[str, Any]
+) -> str | None:
+    output: Any = hook_output(chat_options, tool, tool_input)
     decision: str | None = output.get("hookSpecificOutput", {}).get("permissionDecision")
     return decision
 
@@ -306,7 +310,10 @@ def hook_decision(
     [
         ("Read", {"file_path": "app.py"}, None),
         ("Glob", {"pattern": "*.py"}, None),
-        ("Grep", {"pattern": "hi"}, None),
+        ("Grep", {"pattern": "hi", "path": "app.py"}, None),
+        # A search of the whole folder could print a line of the .env file that sits in it.
+        ("Grep", {"pattern": "hi"}, "deny"),
+        ("Grep", {"pattern": "sk-ant", "path": "."}, "deny"),
         ("Read", {"file_path": ".env"}, "deny"),
         ("Read", {"file_path": "../outside.txt"}, "deny"),
         ("Edit", {"file_path": "app.py", "old_string": "a", "new_string": "b"}, "deny"),
@@ -333,6 +340,20 @@ def test_the_assistant_can_only_read_inside_the_repository(
     decision = hook_decision(FakeClient.instances[0].options, tool, tool_input)
 
     assert decision == expected
+
+
+def test_a_refused_search_tells_the_assistant_what_to_do_instead(
+    runs: Path, studio: Path, tmp_path: Path
+) -> None:
+    FakeClient.script = [hello]
+    run(service(runs, studio, tmp_path))
+    options = FakeClient.instances[0].options
+
+    output = hook_output(options, "Grep", {"pattern": "hi"})
+
+    reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "subfolder" in reason
+    assert "sk-ant-secret" not in reason
 
 
 # --- cost -------------------------------------------------------------------------------------

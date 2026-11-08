@@ -287,3 +287,21 @@ table.models code { white-space: nowrap; }
 .board-task.cancelled { opacity: 0.6; }
 .board-task-main { min-width: 0; }
 .board-project h3 { margin: 16px 0 0; font-size: 13px; font-weight: 400; text-transform: uppercase; opacity: 0.6; }
+/* A section heading that folds its body away (see CollapsibleSection). */
+h2 .fold {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+h2 .fold:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+h2 .chevron {
+  font-size: 0.8em;
+  opacity: 0.6;
+  width: 0.9em;
+}

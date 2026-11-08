@@ -81,6 +81,12 @@ happens when you confirm; the coordinator chooses then. Live check (cents):
   task list and built by the Developer), or answers that the design stands (the Developer gets that as
   a note on its next task, and you are not alerted), or hands a choice only you can make to Action
   needed. If it cannot plan, or the limit is used, the problem goes to you as an action item.
+- The **Developer** cannot start a task and makes no commits, but says why in its report
+  (`needs_architect`): the project goes **back to the Architect** at once, with the task's own
+  text, instead of pausing (same `max_replans` limit; past it, or with no Architect available, it
+  pauses and shows what the Developer said). A task you added by sending the project back (`H…`)
+  that got stuck this way is taken out of the task list, so the Architect's new tasks replace it and
+  it cannot sit first and block them. Tasks the Architect planned are never removed.
 - Every such visit is checked against the Architect's own budget, saved with a `handoff` so a pause
   or crash resumes into it, and shown in the journey.
 
@@ -276,7 +282,9 @@ the normal form. Text returned from agents or files is labelled untrusted. A not
 talks to one assistant, "Studio", through `orchestrator/ui/chat.py`. It runs the Agent SDK in the
 chosen repository (this app or any project clone) with only `Read`, `Glob` and `Grep` (the same
 secret and path rules as the Developer, enforced by a PreToolUse guard) plus the studio MCP tools,
-with no shell, edits or web. Sessions are in memory; each chat is capped by
+with no shell, edits or web. A `Grep` of a whole folder is refused when an env file sits anywhere
+under it (a matching line would print a secret); the refusal tells it to search a subfolder or name
+the files. Sessions are in memory; each chat is capped by
 `assistant.max_chat_usd` in `config.yaml` (and `max_turns`), `tier` picks the strong or fast model,
 and its cost goes to a ledger apart from projects (`assistant_cost.json`; `runs/_studio/` for this
 app). The reply streams as escaped text and is replaced by server-rendered Markdown when the turn

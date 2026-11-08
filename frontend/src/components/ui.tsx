@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { StageRow, Status } from "../types";
@@ -59,6 +60,34 @@ export function Section({ title, children }: { title: string; children: ReactNod
     <>
       <h2>{title}</h2>
       {children}
+    </>
+  );
+}
+
+/** A section whose body can be folded away; the heading is the button that folds it. */
+export function CollapsibleSection({
+  title,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <>
+      <h2>
+        <button
+          type="button"
+          className="fold"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span className="chevron" aria-hidden="true">{open ? "▾" : "▸"}</span> {title}
+        </button>
+      </h2>
+      {open && children}
     </>
   );
 }
