@@ -1926,3 +1926,65 @@ def test_killing_a_task_needs_the_session_token(client: TestClient, runs: Path) 
     project_with_tasks(runs, status=Status.HALTED)
 
     assert client.post("/api/projects/demo/tasks/T2/kill", json={}).status_code == 403
+
+
+# --- raising any agent's cap ahead of time -----------------------------------------------------
+
+
+def raise_cap(client: TestClient, scope: str, amount: object = 1.0) -> Any:
+    return post(client, "/api/projects/demo/raise-cap", {"scope": scope, "amount": amount})
+
+
+def test_a_paused_project_can_have_any_agents_cap_raised(client: TestClient, runs: Path) -> None:
+    from orchestrator.state import load_state
+
+    project_with_tasks(runs, status=Status.HALTED)
+
+    for scope in ("product_owner", "architect", "developer", "qa", "career_coach"):
+        assert raise_cap(client, scope, 2.0).status_code == 200
+    assert raise_cap(client, "project", 5.0).status_code == 200
+
+    allowances = load_state(runs, "demo").allowances
+    assert {s.value: v for s, v in allowances.extra_stage_usd.items()} == {
+        "product_owner": 2.0,
+        "architect": 2.0,
+        "developer": 2.0,
+        "qa": 2.0,
+        "career_coach": 2.0,
+    }
+    assert allowances.extra_project_usd == 5.0
+
+
+def test_the_project_view_shows_the_raised_cap(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+    raise_cap(client, "architect", 4.0)
+
+    stages = client.get("/api/projects/demo").json()["stages"]
+
+    assert next(s for s in stages if s["stage"] == "architect")["cap"] == 6.5
+
+
+def test_a_cap_cannot_be_raised_while_the_run_is_going(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        response = raise_cap(client, "qa")
+
+    assert response.status_code == 409 and "Pause" in response.json()["error"]
+
+
+def test_a_bad_scope_or_amount_is_refused(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert raise_cap(client, "intake").status_code == 400
+    assert raise_cap(client, "qa", 0).status_code == 400
+    assert raise_cap(client, "qa", "lots").status_code == 400
+    assert raise_cap(client, "qa", True).status_code == 400
+
+
+def test_raising_a_cap_needs_the_session_token(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    response = client.post("/api/projects/demo/raise-cap", json={"scope": "qa", "amount": 1})
+
+    assert response.status_code == 403

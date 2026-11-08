@@ -27,6 +27,8 @@ export function ProjectPage() {
   const [sendTo, setSendTo] = useState("");
   const [sendNote, setSendNote] = useState("");
   const [sentNotice, setSentNotice] = useState<string | null>(null);
+  const [raiseScope, setRaiseScope] = useState("project");
+  const [raiseAmount, setRaiseAmount] = useState("");
 
   if (error) {
     return (
@@ -79,6 +81,22 @@ export function ProjectPage() {
       });
       setSentNotice(`Sent to the ${sent.label}. ${sent.reason}`);
       setSendNote("");
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  async function raiseCap() {
+    const amount = Number(raiseAmount);
+    if (raiseAmount.trim() === "" || !Number.isFinite(amount) || amount <= 0) {
+      setProblem("Enter a positive number of dollars to add.");
+      return;
+    }
+    setProblem(null);
+    try {
+      await post(`/api/projects/${slug}/raise-cap`, { scope: raiseScope, amount });
+      setRaiseAmount("");
       reload();
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : String(e));
@@ -249,6 +267,26 @@ export function ProjectPage() {
             <Meter key={s.stage} label={s.label} spent={s.spent} cap={s.cap} warn={warn} />
           ))}
           <p className="hint">The marker shows the {Math.round(warn * 100)}% warning point.</p>
+          {summary.alive || summary.status === "running" ? (
+            <p className="hint">Pause the project to raise a cap.</p>
+          ) : (
+            <>
+              <label className="field">
+                Raise the cap of
+                <select value={raiseScope} onChange={(e) => setRaiseScope(e.target.value)}>
+                  <option value="project">Project</option>
+                  {stages.map((s) => (
+                    <option key={s.stage} value={s.stage}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                Add dollars
+                <input type="text" inputMode="decimal" value={raiseAmount} onChange={(e) => setRaiseAmount(e.target.value)} />
+              </label>
+              <Button tone="secondary" onClick={() => void raiseCap()}>Raise cap</Button>
+            </>
+          )}
           {data.helper.explain_usd + data.helper.chat_usd > 0 && (
             <p className="hint">
               Helper calls (explanations and chat), not counted against the caps:{" "}

@@ -201,3 +201,48 @@ def test_the_warning_is_quiet_on_the_next_check_after_continuing() -> None:
     state = resolve_cap(paused, make_config(), approve_anyway(), now=NOW)
 
     assert assess_budget(state, make_config(), Stage.PRODUCT_OWNER).level.value == "ok"
+
+
+# --- raising a cap ahead of time, for any agent ------------------------------------------------
+
+
+def test_any_agent_cap_can_be_raised_without_a_pause() -> None:
+    from orchestrator.caps import add_room
+
+    state = new_state().evolve(status=Status.HALTED)
+    for stage in (
+        Stage.PRODUCT_OWNER,
+        Stage.ARCHITECT,
+        Stage.DEVELOPER,
+        Stage.QA,
+        Stage.CAREER_COACH,
+    ):
+        state = add_room(state, stage.value, 1.0)
+        assert state.allowances.extra_stage_usd[stage] == 1.0
+    assert add_room(state, "qa", 0.5).allowances.extra_stage_usd[Stage.QA] == 1.5
+
+
+def test_the_project_cap_can_be_raised_too() -> None:
+    from orchestrator.caps import add_room
+
+    state = add_room(new_state().evolve(status=Status.HALTED), "project", 5.0)
+    assert state.allowances.extra_project_usd == 5.0
+
+
+def test_raising_a_cap_rearms_its_warning() -> None:
+    from orchestrator.caps import add_room
+
+    state = new_state().evolve(status=Status.HALTED, cost_usd={Stage.QA: 2.1})
+    warned = state.allowances.model_copy(update={"warned": {"qa": 2.5}})
+    state = add_room(state.evolve(allowances=warned), "qa", 1.0)
+    assert assess_budget(state, make_config(), Stage.QA).level.value == "ok"
+
+
+def test_an_unknown_scope_or_a_bad_amount_is_refused() -> None:
+    from orchestrator.caps import add_room
+
+    state = new_state().evolve(status=Status.HALTED)
+    with pytest.raises(ValueError, match="no agent called"):
+        add_room(state, "intake", 1.0)
+    with pytest.raises(ValueError, match="positive"):
+        add_room(state, "qa", 0)
