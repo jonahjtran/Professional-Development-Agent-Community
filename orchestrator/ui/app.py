@@ -69,6 +69,13 @@ from orchestrator.rules import (
     project_store,
 )
 from orchestrator.state import ProjectState, Stage, Status, save_state, state_path
+from orchestrator.task_control import (
+    TaskControlError,
+    cancel_task,
+    cancelled_tasks,
+    request_cancel,
+    task_rows,
+)
 from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
 from orchestrator.trace import EventType
 from orchestrator.ui import data, serialize
@@ -592,6 +599,62 @@ def create_app(
         if error is not None:
             return fail(status, error)
         return JSONResponse({"ok": True})
+
+    @app.get("/api/tasks")
+    def all_tasks() -> JSONResponse:
+        projects: list[dict[str, Any]] = []
+        for summary in data.list_projects(runs_dir, config):
+            view = data.load_project(runs_dir, summary.slug)
+            if view is None or view.status == Status.DONE:
+                continue
+            alive = run_is_alive(runs_dir, summary.slug)
+            agent_state = {
+                Status.RUNNING: "running",
+                Status.AWAITING_HUMAN: "waiting",
+                Status.HALTED: "paused",
+            }.get(view.status, view.status.value)
+            projects.append(
+                {
+                    "slug": summary.slug,
+                    "status": view.status.value,
+                    "alive": alive,
+                    "can_pause": alive and view.status != Status.HALTED,
+                    "agent": {
+                        "stage": view.stage.value,
+                        "label": LABELS[view.stage],
+                        "state": agent_state,
+                    },
+                    "tasks": [asdict(row) for row in task_rows(runs_dir, view)],
+                    "cancelled": cancelled_tasks(runs_dir, summary.slug),
+                    "pending": summary.pending,
+                }
+            )
+        return JSONResponse({"projects": projects})
+
+    @app.post("/api/projects/{slug}/tasks/{task_id}/kill")
+    async def kill_task(request: Request, slug: str, task_id: str) -> JSONResponse:
+        """Cancel a task. A run that is going is stopped first and the kill waits for it."""
+        await checked_body(request)
+        state = view_or_404(slug).state
+        row = next((r for r in task_rows(runs_dir, state) if r.id == task_id), None)
+        if row is None:
+            return fail(404, f"{slug} has no task {task_id}")
+        if not row.can_kill:
+            return fail(409, f"{task_id} cannot be cancelled: {row.kill_blocked}")
+        if run_is_alive(runs_dir, slug):
+            request_cancel(runs_dir, slug, task_id)
+            request_halt(runs_dir, slug)
+            return JSONResponse({"ok": True, "state": "stopping"})
+        if state.status == Status.RUNNING:  # a run that died without saying so
+            state = state.evolve(status=Status.HALTED)
+        try:
+            cancelled = cancel_task(
+                runs_dir, state, task_id, repo=Path(state.repo_path) if state.repo_path else None
+            )
+        except TaskControlError as refusal:
+            return fail(409, str(refusal))
+        save_state(runs_dir, cancelled)
+        return JSONResponse({"ok": True, "state": "cancelled"})
 
     @app.post("/api/projects/{slug}/pause")
     async def pause(request: Request, slug: str) -> JSONResponse:

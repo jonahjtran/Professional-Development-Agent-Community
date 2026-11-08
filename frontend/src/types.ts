@@ -297,3 +297,30 @@ export interface ModelsReply {
   agents: AgentModelRow[];
   local: LocalState;
 }
+
+export type TaskState = "working" | "in_review" | "ready" | "waiting" | "done";
+
+export interface BoardTask {
+  id: string;
+  title: string;
+  state: TaskState;
+  waiting_on: string[];
+  pr_url: string | null;
+  can_kill: boolean;
+  kill_blocked: string | null;
+}
+
+export interface BoardProject {
+  slug: string;
+  status: string;
+  alive: boolean;
+  can_pause: boolean;
+  agent: { stage: string; label: string; state: "running" | "waiting" | "paused" };
+  tasks: BoardTask[];
+  cancelled: { id: string; title: string; ts: string }[];
+  pending: number;
+}
+
+export interface TaskBoardReply {
+  projects: BoardProject[];
+}

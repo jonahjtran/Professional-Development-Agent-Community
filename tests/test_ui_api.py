@@ -1810,3 +1810,119 @@ def test_a_project_runs_to_the_end_answered_only_through_the_api(
     assert result["state"].status == Status.DONE
     assert approved >= 4
     assert all_pending(runs) == [] and len(answered(runs, "demo")) == approved
+
+
+# --- the task list and killing a task ---------------------------------------------------------
+
+
+def project_with_tasks(runs: Path, **fields: Any) -> Any:
+    from orchestrator.state import save_state
+    from tests.test_task_loop import at_developer
+
+    runs.mkdir(exist_ok=True)
+    state = at_developer(runs, **fields)
+    save_state(runs, state)
+    return state
+
+
+def test_the_task_list_covers_every_unfinished_project(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
+    make_project(runs, "finished", stage=Stage.CAREER_COACH, status=Status.DONE)
+
+    body = client.get("/api/tasks").json()
+
+    assert [p["slug"] for p in body["projects"]] == ["demo"]
+    project = body["projects"][0]
+    assert project["agent"] == {"stage": "developer", "label": "Developer", "state": "running"}
+    assert [t["id"] for t in project["tasks"]] == ["T1", "T2"]
+    assert project["tasks"][0]["state"] == "working" and project["tasks"][0]["can_kill"] is False
+    assert project["tasks"][1]["state"] == "waiting" and project["tasks"][1]["can_kill"] is True
+    assert project["can_pause"] is False  # no live run to pause
+
+
+def test_a_live_run_can_be_paused_from_the_task_list(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        project = client.get("/api/tasks").json()["projects"][0]
+
+    assert project["alive"] is True and project["can_pause"] is True
+
+
+def test_cancelled_tasks_are_listed_with_their_projects(client: TestClient, runs: Path) -> None:
+    from orchestrator.task_control import cancel_task
+
+    state = project_with_tasks(runs, status=Status.HALTED)
+    cancel_task(runs, state, "T2", repo=None)
+
+    cancelled = client.get("/api/tasks").json()["projects"][0]["cancelled"]
+
+    assert [c["id"] for c in cancelled] == ["T2"]
+
+
+def kill(client: TestClient, task_id: str = "T2") -> Any:
+    return post(client, f"/api/projects/demo/tasks/{task_id}/kill")
+
+
+def test_killing_a_task_of_a_paused_project_cancels_it_at_once(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.state import load_state
+
+    project_with_tasks(runs, status=Status.HALTED)
+
+    response = kill(client)
+
+    assert response.status_code == 200 and response.json()["state"] == "cancelled"
+    assert [t["id"] for t in client.get("/api/tasks").json()["projects"][0]["tasks"]] == ["T1"]
+    assert load_state(runs, "demo").status == Status.HALTED
+
+
+def test_killing_a_task_while_the_run_is_going_stops_the_run_and_queues_it(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.halt import halt_requested
+    from orchestrator.task_control import pending_cancels
+
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T2", completed_tasks=["T1"])
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        response = kill(client)
+
+    assert response.status_code == 200 and response.json()["state"] == "stopping"
+    assert halt_requested(runs, "demo") and pending_cancels(runs, "demo") == ["T2"]
+    assert [t["id"] for t in client.get("/api/tasks").json()["projects"][0]["tasks"]] == [
+        "T1",
+        "T2",
+    ]
+
+
+def test_a_task_that_cannot_be_killed_is_refused_with_why(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    response = kill(client, "T1")
+
+    assert response.status_code == 409 and "T2" in response.json()["error"]
+
+
+def test_a_refused_kill_does_not_stop_a_running_project(client: TestClient, runs: Path) -> None:
+    from orchestrator.halt import halt_requested
+
+    project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        response = kill(client, "T1")  # T2 depends on T1
+
+    assert response.status_code == 409 and not halt_requested(runs, "demo")
+
+
+def test_killing_an_unknown_task_is_not_found(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert kill(client, "T99").status_code == 404
+
+
+def test_killing_a_task_needs_the_session_token(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert client.post("/api/projects/demo/tasks/T2/kill", json={}).status_code == 403

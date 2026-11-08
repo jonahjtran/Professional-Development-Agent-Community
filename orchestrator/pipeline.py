@@ -70,6 +70,7 @@ from orchestrator.state import (
     Status,
     save_state,
 )
+from orchestrator.task_control import apply_pending_cancels, pending_cancels
 from orchestrator.todos import add_todo
 from orchestrator.trace import EventType, TraceEvent, TraceWriter
 from orchestrator.worktree import WorktreeError
@@ -224,7 +225,7 @@ def advance(state: ProjectState, ctx: PipelineContext) -> ProjectState:
             EventType.TRANSITION,
             details={"to": "halted", "reason": "a halt was requested with studio halt"},
         )
-        halted = state.evolve(status=Status.HALTED, intervention=None)
+        halted = _apply_queued_kills(state.evolve(status=Status.HALTED, intervention=None), ctx)
         _save(halted, ctx)
         return halted
     new = (
@@ -232,8 +233,21 @@ def advance(state: ProjectState, ctx: PipelineContext) -> ProjectState:
         if state.status == Status.AWAITING_HUMAN
         else _run_stage(state, ctx)
     )
+    if new.status == Status.HALTED:  # a stopped agent: now the saved state is ours to change
+        new = _apply_queued_kills(new, ctx)
     _save(new, ctx)
     return new
+
+
+def _apply_queued_kills(state: ProjectState, ctx: PipelineContext) -> ProjectState:
+    """Cancel the tasks you asked to kill while the run was going (see task_control.py)."""
+    if not pending_cancels(ctx.runs_dir, state.project_slug):
+        return state
+    repo = Path(state.repo_path) if state.repo_path else None
+    cancelled = apply_pending_cancels(ctx.runs_dir, state, repo=repo)
+    if cancelled is not state:
+        _trace(ctx, cancelled, EventType.TRANSITION, details={"tasks_cancelled": True})
+    return cancelled
 
 
 # --- running a stage -------------------------------------------------------------------------
