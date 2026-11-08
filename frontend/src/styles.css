@@ -277,3 +277,13 @@ table.models code { white-space: nowrap; }
 .journey { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
 .journey li { padding: 4px 10px; border-radius: 999px; background: var(--fill); font-size: 14px; }
 .journey li.back { background: var(--orange-bg); color: var(--orange); font-weight: 600; }
+
+/* The tasks page: one block per active project (see TasksPage). */
+.board-project { margin-bottom: 28px; }
+.board-agent { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 12px; background: var(--card, rgba(127,127,127,.12)); }
+.board-tasks { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.board-task { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 12px; background: var(--card, rgba(127,127,127,.12)); }
+.board-task.working { outline: 2px solid var(--accent, #3b82f6); }
+.board-task.cancelled { opacity: 0.6; }
+.board-task-main { min-width: 0; }
+.board-project h3 { margin: 16px 0 0; font-size: 13px; font-weight: 400; text-transform: uppercase; opacity: 0.6; }
