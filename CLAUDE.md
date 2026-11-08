@@ -169,6 +169,20 @@ for other people to use API keys, so keep this to your own projects. Live check 
 from your plan, a fake key in the environment on purpose):
 `ANTHROPIC_API_KEY=sk-ant-fake uv run pytest tests/live --live -s -k subscription`.
 
+**Plan usage report** (`/usage`, `GET /api/usage`, `orchestrator/plan_usage.py`): your *real*
+plan usage, not an estimate. Claude Code reports your limit windows as it works (the Agent SDK's
+`RateLimitEvent`, the same figures as `/usage` in Claude Code): how much of the 5-hour and weekly
+windows (and per-model weekly ones) you have used, when each resets, a warning/limit status, and
+whether pay-as-you-go overage is in use. Every Developer task keeps the latest reading
+(`runs/_studio/plan_windows.json`) and, per task (`runs/<project>/plan_usage.json`), the real token
+counts the API reported plus how far the task moved each window, measured from the reading before
+the task (same window) to the one after; a window that reset in between is left out, never
+guessed. **Check now** (`POST /api/usage/refresh`) reads the windows with one tiny message from
+your plan. The server reports whole percentages, so a small task can show no change; tokens are
+exact. Tokens are recorded for API-credit tasks too (no window figures then); local tasks record
+nothing. Nothing reads your login token or calls an unpublished endpoint. Live check (one tiny
+message): `ANTHROPIC_API_KEY=sk-ant-fake uv run pytest tests/live --live -s -k plan_usage`.
+
 The **Models** page (`/models`) shows every agent's exact model id, switches the default Developer
 backend, and shows whether Ollama is ready (with the fix when it is not). Each project page shows
 which model its Developer uses and why, with a switch (follow the default, Claude, or the local

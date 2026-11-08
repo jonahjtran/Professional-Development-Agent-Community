@@ -8,11 +8,17 @@ and turn limit) and afterwards checks the repository itself instead of trusting 
 import asyncio
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    RateLimitEvent,
+    ResultMessage,
+)
 from pydantic import ValidationError
 
 from orchestrator.config import Config, LocalConfig
@@ -33,6 +39,15 @@ from orchestrator.halt import halt_requested
 from orchestrator.notes import consume_notes, pending_notes
 from orchestrator.permissions import PolicyContext
 from orchestrator.pipeline import AgentError, AgentRequest, AgentResult, NeedsArchitectError
+from orchestrator.plan_usage import (
+    Reading,
+    load_reading,
+    reading_from_raw,
+    record_task_usage,
+    save_reading,
+    task_window_change,
+    tokens_from,
+)
 from orchestrator.project_settings import get_autonomy
 from orchestrator.prompts import Prompt
 from orchestrator.rules import active_rules
@@ -72,6 +87,15 @@ ClientFactory = Callable[[ClaudeAgentOptions], Any]
 class _Turn:
     result: ResultMessage
     model: str | None
+
+
+@dataclass
+class _Meter:
+    """What Claude Code reported about the plan while a task ran (see plan_usage.py)."""
+
+    limits: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, Any] | None = None
+    model: str | None = None
 
 
 class DevRunner:
@@ -227,6 +251,71 @@ class DevRunner:
         skills: str = "",
         billing: str = "api",
     ) -> AgentResult:
+        """Run the task, and keep the real plan usage whether it finishes or fails."""
+        meter = _Meter()
+        earlier = load_reading(self._runs_dir)
+        try:
+            return await self._converse(
+                request,
+                task,
+                worktree,
+                branches_before,
+                interrupted=interrupted,
+                notes=notes,
+                backend=backend,
+                skills=skills,
+                billing=billing,
+                meter=meter,
+            )
+        finally:
+            if backend != "local":
+                self._keep_usage(request.project, task.id, backend, billing, meter, earlier)
+
+    def _keep_usage(
+        self,
+        project: str,
+        task_id: str,
+        backend: str,
+        billing: str,
+        meter: _Meter,
+        earlier: Reading | None,
+    ) -> None:
+        """Save the tokens the API reported and how far the task moved the plan windows.
+
+        A problem here must never break the task, so it is swallowed.
+        """
+        try:
+            readings = [r for r in (reading_from_raw(raw) for raw in meter.limits) if r]
+            change: dict[str, float] = {}
+            if readings:
+                change = task_window_change(before=earlier, first=readings[0], last=readings[-1])
+                save_reading(self._runs_dir, readings[-1])
+            record_task_usage(
+                self._runs_dir,
+                project,
+                task_id=task_id,
+                model=meter.model or developer_model(backend, self._config),
+                billing=billing,
+                tokens=tokens_from(meter.usage),
+                change=change,
+            )
+        except (OSError, ValueError):
+            return
+
+    async def _converse(
+        self,
+        request: AgentRequest,
+        task: Task,
+        worktree: Worktree,
+        branches_before: set[str],
+        *,
+        interrupted: bool = False,
+        notes: list[str] | None = None,
+        backend: str = "claude",
+        skills: str = "",
+        billing: str = "api",
+        meter: _Meter,
+    ) -> AgentResult:
         head_before = head_sha(worktree.path)
         base_before = branch_sha(self._repo, self._base)
         options = self._options(request, task, worktree, backend, skills, billing)
@@ -235,12 +324,14 @@ class DevRunner:
 
         async with self._client_factory(options) as client:
             await client.query(self._task_prompt(request, task, worktree, interrupted, notes or []))
-            turn = await _collect(client, priced=priced, subscription=billing == "subscription")
+            turn = await _collect(
+                client, priced=priced, subscription=billing == "subscription", meter=meter
+            )
             report, problem = _parse_report(turn.result.result or "")
             if report is None:
                 await client.query(_FOLLOW_UP.format(problem=problem))
                 turn = await _collect(  # a running total
-                    client, priced=priced, subscription=billing == "subscription"
+                    client, priced=priced, subscription=billing == "subscription", meter=meter
                 )
                 report, problem = _parse_report(turn.result.result or "")
 
@@ -402,7 +493,13 @@ _PLAN_HINTS = {
 }
 
 
-async def _collect(client: Any, *, priced: bool = True, subscription: bool = False) -> _Turn:
+async def _collect(
+    client: Any,
+    *,
+    priced: bool = True,
+    subscription: bool = False,
+    meter: _Meter | None = None,
+) -> _Turn:
     model: str | None = None
     result: ResultMessage | None = None
     problem: str | None = None
@@ -410,8 +507,15 @@ async def _collect(client: Any, *, priced: bool = True, subscription: bool = Fal
         if isinstance(message, AssistantMessage):
             model = message.model
             problem = message.error or problem
+            if meter is not None:
+                meter.model = message.model
+        elif isinstance(message, RateLimitEvent):
+            if meter is not None:
+                meter.limits.append(message.rate_limit_info.raw)
         elif isinstance(message, ResultMessage):
             result = message
+            if meter is not None:  # kept even when the call failed: the plan was still used
+                meter.usage = message.usage
     if result is None:
         raise AgentError("the Developer ended without a result message")
     if result.is_error:

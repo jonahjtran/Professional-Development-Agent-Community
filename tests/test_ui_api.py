@@ -2087,3 +2087,129 @@ def test_changing_billing_needs_the_session_token(
     response = web.post("/api/models/developer-billing", json={"billing": "subscription"})
 
     assert response.status_code == 403
+
+
+# --- the real plan usage report ---------------------------------------------------------
+
+USAGE_RAW = {
+    "status": "allowed",
+    "resetsAt": 1794133200,
+    "rateLimitType": "five_hour",
+    "overageStatus": "allowed",
+    "isUsingOverage": False,
+    "unifiedWindows": {
+        "five_hour": {"utilization": 0.2, "resetsAt": 1794133200, "status": "allowed"},
+        "seven_day": {"utilization": 0.05, "resetsAt": 1794686400, "status": "allowed"},
+        "seven_day_sonnet": {"utilization": 0.01, "resetsAt": 1794686400, "status": "allowed"},
+    },
+}
+
+
+def usage_client(
+    runs: Path,
+    launched: Launched,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe: Any = None,
+) -> TestClient:
+    for key, value in env_for(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    app = create_app(
+        runs,
+        make_config(),
+        config_path=CONFIG,
+        launcher=launched,
+        projects_dir=tmp_path / "clones",
+        health=lambda: run_all(tmp_path),
+        usage_probe=probe or (lambda: [USAGE_RAW]),
+    )
+    return TestClient(app)
+
+
+def test_the_usage_report_is_empty_before_anything_is_measured(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web = usage_client(runs, launched, tmp_path, monkeypatch)
+
+    assert web.get("/api/usage").json() == {"plan": None, "projects": []}
+
+
+def test_the_report_shows_each_window_with_its_label_and_reset(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.plan_usage import reading_from_raw, save_reading
+
+    runs.mkdir(exist_ok=True)
+    reading = reading_from_raw(USAGE_RAW)
+    assert reading is not None
+    save_reading(runs, reading)
+    web = usage_client(runs, launched, tmp_path, monkeypatch)
+
+    plan = web.get("/api/usage").json()["plan"]
+
+    windows = {w["name"]: w for w in plan["windows"]}
+    assert windows["five_hour"]["label"] == "5-hour window"
+    assert windows["five_hour"]["utilization"] == pytest.approx(0.2)
+    assert windows["five_hour"]["resets_at"].startswith("2026-")
+    assert windows["seven_day"]["label"] == "Weekly"
+    assert windows["seven_day_sonnet"]["label"] == "Weekly (Sonnet)"
+    assert plan["overage"] == {"status": "allowed", "in_use": False}
+    assert plan["age_seconds"] >= 0 and plan["as_of"]
+
+
+def test_the_report_lists_each_project_with_its_tasks_and_totals(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.plan_usage import record_task_usage
+
+    make_project(runs, stage=Stage.DEVELOPER)
+    make_project(runs, "quiet", stage=Stage.DEVELOPER)
+    tokens = {"input": 10, "output": 5, "cache_read": 100, "cache_write": 7}
+    record_task_usage(
+        runs,
+        "demo",
+        task_id="T1",
+        model="claude-sonnet-5-5",
+        billing="subscription",
+        tokens=tokens,
+        change={"five_hour": 0.04},
+    )
+    web = usage_client(runs, launched, tmp_path, monkeypatch)
+
+    projects = web.get("/api/usage").json()["projects"]
+
+    assert [p["slug"] for p in projects] == ["demo"]  # a project with nothing recorded is left out
+    assert projects[0]["totals"]["tasks"] == 1
+    assert projects[0]["tasks"][0]["task_id"] == "T1"
+    assert projects[0]["totals"]["change"]["five_hour"] == pytest.approx(0.04)
+
+
+def test_checking_now_reads_the_plan_and_returns_it(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web = usage_client(runs, launched, tmp_path, monkeypatch)
+
+    response = post(web, "/api/usage/refresh")
+
+    assert response.status_code == 200
+    names = [w["name"] for w in response.json()["plan"]["windows"]]
+    assert names == ["five_hour", "seven_day", "seven_day_sonnet"]
+    assert web.get("/api/usage").json()["plan"] is not None  # and it is kept
+
+
+def test_checking_now_says_why_when_it_cannot(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web = usage_client(runs, launched, tmp_path, monkeypatch, probe=lambda: [])
+
+    response = post(web, "/api/usage/refresh")
+
+    assert response.status_code == 409 and "signed in" in response.json()["error"]
+
+
+def test_checking_now_needs_the_session_token(
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web = usage_client(runs, launched, tmp_path, monkeypatch)
+
+    assert web.post("/api/usage/refresh", json={}).status_code == 403

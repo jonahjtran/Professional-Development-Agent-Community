@@ -6,6 +6,7 @@ needs the session token in a header, a JSON body and a matching Origin, so no ot
 browser has open can make it do anything. Agent-written text is escaped before it is sent.
 """
 
+import asyncio
 import json
 import re
 import secrets
@@ -13,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -65,6 +67,14 @@ from orchestrator.newproject import (
 )
 from orchestrator.notes import add_note
 from orchestrator.permissions import PolicyContext
+from orchestrator.plan_usage import (
+    PlanUsageError,
+    Reading,
+    load_reading,
+    project_usage,
+    sdk_probe,
+    snapshot,
+)
 from orchestrator.project_settings import AUTONOMY_LEVELS, get_autonomy, set_autonomy
 from orchestrator.proposals import Proposal, get_proposal, list_proposals, set_status
 from orchestrator.rework import ReworkError
@@ -194,6 +204,7 @@ def create_app(
     coordinator: Routing | None = None,
     local_check: Callable[[LocalConfig], LocalStatus] = check_local,
     subscription_check: Callable[[], SubscriptionStatus] = check_subscription,
+    usage_probe: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Agent Studio", docs_url=None, redoc_url=None, openapi_url=None)
     csrf_token = secrets.token_urlsafe(32)
@@ -546,6 +557,56 @@ def create_app(
         except ValueError as error:
             return fail(400, str(error))
         return JSONResponse({"ok": True})
+
+    window_labels = {
+        "five_hour": "5-hour window",
+        "seven_day": "Weekly",
+        "seven_day_opus": "Weekly (Opus)",
+        "seven_day_sonnet": "Weekly (Sonnet)",
+    }
+
+    def plan_view(reading: Reading) -> dict[str, Any]:
+        def reset(stamp: int | None) -> str | None:
+            return datetime.fromtimestamp(stamp, UTC).isoformat() if stamp is not None else None
+
+        return {
+            "as_of": reading.ts.isoformat(),
+            "age_seconds": max(0, int((datetime.now(UTC) - reading.ts).total_seconds())),
+            "windows": [
+                {
+                    "name": name,
+                    "label": window_labels.get(name, name.replace("_", " ")),
+                    "utilization": w.utilization,
+                    "resets_at": reset(w.resets_at),
+                    "status": w.status,
+                }
+                for name, w in reading.windows.items()
+            ],
+            "overage": {"status": reading.overage_status, "in_use": reading.using_overage},
+        }
+
+    @app.get("/api/usage")
+    def usage_report() -> dict[str, Any]:
+        """Your real plan usage: the windows Claude Code last reported, and what each task used."""
+        reading = load_reading(runs_dir)
+        projects = []
+        for summary in data.list_projects(runs_dir, config):
+            used = project_usage(runs_dir, summary.slug)
+            if used["tasks"]:
+                projects.append({"slug": summary.slug, **used})
+        return {"plan": plan_view(reading) if reading else None, "projects": projects}
+
+    @app.post("/api/usage/refresh")
+    async def refresh_usage(request: Request) -> JSONResponse:
+        """Read the plan windows now (one tiny message from your plan)."""
+        await checked_body(request)
+        try:
+            reading = await asyncio.to_thread(
+                snapshot, runs_dir, probe=usage_probe or sdk_probe(config)
+            )
+        except PlanUsageError as problem:
+            return fail(409, str(problem))
+        return JSONResponse({"plan": plan_view(reading)})
 
     @app.post("/api/models/developer-billing")
     async def set_default_billing(request: Request) -> JSONResponse:

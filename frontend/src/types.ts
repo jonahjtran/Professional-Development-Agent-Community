@@ -337,3 +337,34 @@ export interface TaskBoardReply {
 
 /** Who pays for the Developer: Anthropic API credits, or your Claude subscription. */
 export type Billing = "api" | "subscription";
+
+export interface UsageWindow {
+  name: string;
+  label: string;
+  utilization: number; // the fraction of the window used, from the server
+  resets_at: string | null;
+  status: "allowed" | "allowed_warning" | "rejected" | string;
+}
+
+export interface TaskUsage {
+  task_id: string;
+  model: string;
+  billing: Billing;
+  tokens: { input: number; output: number; cache_read: number; cache_write: number };
+  change: Record<string, number>; // window name -> fraction of the window the task used
+  ts: string;
+}
+
+export interface UsageReply {
+  plan: {
+    as_of: string;
+    age_seconds: number;
+    windows: UsageWindow[];
+    overage: { status: string | null; in_use: boolean };
+  } | null;
+  projects: {
+    slug: string;
+    tasks: TaskUsage[];
+    totals: { tasks: number; tokens: TaskUsage["tokens"]; change: Record<string, number> };
+  }[];
+}
