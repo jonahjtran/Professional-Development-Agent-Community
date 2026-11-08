@@ -308,6 +308,8 @@ export interface BoardTask {
   pr_url: string | null;
   can_kill: boolean;
   kill_blocked: string | null;
+  can_prioritize: boolean;
+  priority: { status: "asked" | "moved" | "kept" | "not_applied"; reason: string; answer: string } | null;
 }
 
 export interface BoardProject {

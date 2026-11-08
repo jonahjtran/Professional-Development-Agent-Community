@@ -242,6 +242,18 @@ owns the saved state, so a kill asked of a live run stops the run (a halt) and i
 Architect owns the plan, so nobody can add, edit or reorder tasks here, and the Architect's own row
 has only Pause.
 
+**Prioritize** asks the Architect; it never moves a task for you. On a task that is next up or
+waiting you say why it matters (optional); the request is kept in `runs/<project>/priorities.json`
+and decided **between tasks** (never while a task is being built, and a task being built is never
+moved) by one Architect call (`orchestrator/prioritizer.py`, prompt
+`agents/prompts/architect_prioritize.v1.md`, strong tier, billed to the Architect's stage and
+budget). It returns an order for the unfinished tasks and a reason, or keeps the order and says why;
+code checks the answer (every unfinished task exactly once, each after the tasks it needs) and only
+then rewrites `tasks.json`. The row then shows "The Architect moved this up / kept the order / not
+applied" with its reason. A failed call or an invalid order is logged as not applied and the project
+carries on in the old order. Live check (a few cents):
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k prioritizer`.
+
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).
 It lives in `frontend/` and builds into `orchestrator/ui/static/app/` (git-ignored), which the

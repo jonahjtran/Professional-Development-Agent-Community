@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from orchestrator.artifacts import ArtifactStore, approve_artifacts, record_artifacts
 from orchestrator.state import ProjectState, Status, atomic_write
 from orchestrator.worktree import WorktreeError, discard_unused
-from schemas import TaskList
+from schemas import TaskList, TaskOrder
 
 
 class TaskControlError(ValueError):
@@ -229,3 +229,115 @@ def apply_pending_cancels(
             continue
     _requests_path(runs_dir, state.project_slug).unlink(missing_ok=True)
     return state
+
+
+# --- asking the Architect to prioritize ----------------------------------------------------------
+#
+# You never reorder the list. You say a task matters more (and why); the Architect decides the
+# order at the next safe point, between tasks, and may keep the order and say so. Each request and
+# its outcome live in `priorities.json`: status asked, then moved, kept or not_applied.
+
+_MAX_REASON = 500
+
+
+def _priorities_path(runs_dir: Path, project: str) -> Path:
+    return runs_dir / project / "priorities.json"
+
+
+def priority_log(runs_dir: Path, project: str) -> list[dict[str, str]]:
+    """Every request and its outcome, oldest first."""
+    try:
+        raw = json.loads(_priorities_path(runs_dir, project).read_text())
+    except (FileNotFoundError, ValueError):
+        return []
+    return [
+        {k: str(v) for k, v in item.items()}
+        for item in (raw if isinstance(raw, list) else [])
+        if isinstance(item, dict)
+    ]
+
+
+def pending_priorities(runs_dir: Path, project: str) -> list[dict[str, str]]:
+    return [e for e in priority_log(runs_dir, project) if e.get("status") == "asked"]
+
+
+def _save_priorities(runs_dir: Path, project: str, entries: list[dict[str, str]]) -> None:
+    path = _priorities_path(runs_dir, project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(entries, indent=2))
+
+
+def request_priority(runs_dir: Path, state: ProjectState, task_id: str, reason: str) -> None:
+    """Ask the Architect to give a task more priority. Raises TaskControlError if it cannot."""
+    why = reason.strip()
+    if len(why) > _MAX_REASON:
+        raise TaskControlError(f"the reason is too long ({_MAX_REASON} characters at most)")
+    row = next((r for r in task_rows(runs_dir, state) if r.id == task_id), None)
+    if row is None:
+        raise TaskControlError(f"there is no task {task_id or '(none)'} in this project")
+    if row.state == "done":
+        raise TaskControlError(f"{task_id} is finished")
+    if row.state in ("working", "in_review"):
+        raise TaskControlError(
+            f"{task_id} is already being built, so it has no queue place to move"
+        )
+    entries = [
+        e
+        for e in priority_log(runs_dir, state.project_slug)
+        if not (e.get("task_id") == task_id and e.get("status") == "asked")
+    ]
+    entries.append(
+        {
+            "task_id": task_id,
+            "title": row.title,
+            "reason": why,
+            "status": "asked",
+            "ts": datetime.now(UTC).isoformat(),
+        }
+    )
+    _save_priorities(runs_dir, state.project_slug, entries)
+
+
+def resolve_priorities(runs_dir: Path, project: str, status: str, architect_reason: str) -> None:
+    """Close every open request with the Architect's outcome (moved, kept or not_applied)."""
+    entries = priority_log(runs_dir, project)
+    for entry in entries:
+        if entry.get("status") == "asked":
+            entry["status"] = status
+            entry["architect_reason"] = architect_reason
+    _save_priorities(runs_dir, project, entries)
+
+
+def apply_order(runs_dir: Path, state: ProjectState, decision: TaskOrder) -> ProjectState:
+    """Put the unfinished tasks in the Architect's order. Finished tasks stay first.
+
+    The order must name every unfinished task exactly once and keep every task after the tasks it
+    depends on; anything else is refused and nothing changes.
+    """
+    listing = _task_list(runs_dir, state)
+    record = state.artifacts.get("tasks.json")
+    if listing is None or record is None:
+        raise TaskControlError("the project has no task list yet")
+    done = set(state.completed_tasks)
+    unfinished = [t for t in listing.tasks if t.id not in done]
+    wanted = {t.id for t in unfinished}
+    if sorted(decision.order) != sorted(wanted):
+        raise TaskControlError("the order must list every unfinished task exactly once")
+    position = {task_id: n for n, task_id in enumerate(decision.order)}
+    for task in unfinished:
+        for needed in task.depends_on:
+            if needed in wanted and position[needed] > position[task.id]:
+                raise TaskControlError(f"the order puts {task.id} before {needed}, which it needs")
+    by_id = {t.id: t for t in listing.tasks}
+    ordered = [t for t in listing.tasks if t.id in done] + [by_id[i] for i in decision.order]
+    store = ArtifactStore(runs_dir, state.project_slug)
+    written = {
+        "tasks.json": store.write(
+            "tasks.json",
+            TaskList.model_validate({"tasks": [t.model_dump() for t in ordered]}).model_dump_json(
+                indent=2
+            ),
+            revision=record.revision + 1,
+        )
+    }
+    return approve_artifacts(record_artifacts(state, written), list(written), now=datetime.now(UTC))

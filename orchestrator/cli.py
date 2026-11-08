@@ -41,6 +41,7 @@ from orchestrator.inbox import (
 from orchestrator.journey import LABELS
 from orchestrator.newproject import NewProjectError, create_project, default_projects_dir
 from orchestrator.pipeline import AgentRunner, PipelineContext, RoutingRunner, run_pipeline
+from orchestrator.prioritizer import ApiPrioritizer
 from orchestrator.profile import ProfileError, load_profile, profile_dir
 from orchestrator.prompts import load_prompt
 from orchestrator.publish import Publisher, PublishError, load_token, strip_credentials
@@ -254,6 +255,7 @@ def _context(
         career=career,
         career_publisher=career_publisher,
         fixer=ApiFixPlanner(config) if (agent == AgentKind.FULL and publisher) else None,
+        prioritizer=ApiPrioritizer(config) if (agent == AgentKind.FULL and publisher) else None,
     )
 
 

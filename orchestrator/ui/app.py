@@ -73,7 +73,9 @@ from orchestrator.task_control import (
     TaskControlError,
     cancel_task,
     cancelled_tasks,
+    priority_log,
     request_cancel,
+    request_priority,
     task_rows,
 )
 from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
@@ -608,6 +610,14 @@ def create_app(
             if view is None or view.status == Status.DONE:
                 continue
             alive = run_is_alive(runs_dir, summary.slug)
+            latest = {
+                e["task_id"]: {
+                    "status": e["status"],
+                    "reason": e.get("reason", ""),
+                    "answer": e.get("architect_reason", ""),
+                }
+                for e in priority_log(runs_dir, summary.slug)
+            }
             agent_state = {
                 Status.RUNNING: "running",
                 Status.AWAITING_HUMAN: "waiting",
@@ -624,7 +634,14 @@ def create_app(
                         "label": LABELS[view.stage],
                         "state": agent_state,
                     },
-                    "tasks": [asdict(row) for row in task_rows(runs_dir, view)],
+                    "tasks": [
+                        {
+                            **asdict(row),
+                            "can_prioritize": row.state in ("ready", "waiting"),
+                            "priority": latest.get(row.id),
+                        }
+                        for row in task_rows(runs_dir, view)
+                    ],
                     "cancelled": cancelled_tasks(runs_dir, summary.slug),
                     "pending": summary.pending,
                 }
@@ -655,6 +672,21 @@ def create_app(
             return fail(409, str(refusal))
         save_state(runs_dir, cancelled)
         return JSONResponse({"ok": True, "state": "cancelled"})
+
+    @app.post("/api/projects/{slug}/tasks/{task_id}/prioritize")
+    async def prioritize_task(request: Request, slug: str, task_id: str) -> JSONResponse:
+        """Ask the Architect to give a task more priority. It decides, between tasks."""
+        body = await checked_body(request)
+        state = view_or_404(slug).state
+        if state.status == Status.DONE:
+            return fail(409, f"{slug} is already done.")
+        if not any(r.id == task_id for r in task_rows(runs_dir, state)):
+            return fail(404, f"{slug} has no task {task_id}")
+        try:
+            request_priority(runs_dir, state, task_id, str(body.get("reason", "")))
+        except TaskControlError as refusal:
+            return fail(409, str(refusal))
+        return JSONResponse({"ok": True, "state": "asked"})
 
     @app.post("/api/projects/{slug}/pause")
     async def pause(request: Request, slug: str) -> JSONResponse:
