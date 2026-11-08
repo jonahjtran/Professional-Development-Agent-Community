@@ -76,11 +76,15 @@ def developer_model(backend: str, config: Config) -> str:
     return config.local.model if backend == "local" else config.models.developer
 
 
-def developer_env(backend: str, local: LocalConfig) -> dict[str, str]:
-    """Environment overrides for the Developer's Claude Code process."""
+def developer_env(backend: str, local: LocalConfig, billing: str = "api") -> dict[str, str]:
+    """Environment overrides for the Developer's Claude Code process.
+
+    With `billing="subscription"` (Claude backend only) the API key is blanked, so Claude Code
+    uses the Claude account you signed in with. See developer_billing.py.
+    """
     env = hidden_env()
     if backend != "local":
-        return env
+        return {**env, "ANTHROPIC_API_KEY": ""} if billing == "subscription" else env
     return {
         **env,
         "ANTHROPIC_BASE_URL": local.endpoint,
