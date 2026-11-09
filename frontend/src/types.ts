@@ -325,14 +325,9 @@ export interface BoardProject {
   status: string;
   alive: boolean;
   can_pause: boolean;
+  can_resume: boolean;
   agent: { stage: string; label: string; state: "running" | "waiting" | "paused" };
   tasks: BoardTask[];
-  cancelled: { id: string; title: string; ts: string }[];
-  pending: number;
-}
-
-export interface TaskBoardReply {
-  projects: BoardProject[];
 }
 
 /** Who pays for the Developer: Anthropic API credits, or your Claude subscription. */
