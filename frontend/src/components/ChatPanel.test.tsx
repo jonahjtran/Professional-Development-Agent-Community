@@ -1,9 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mockApi } from "../test/mockApi";
-import { ChatPage } from "./ChatPage";
+import { ChatPanel } from "./ChatPanel";
 
 const repos = {
   repos: [
@@ -21,15 +20,29 @@ const reply = [
   { type: "done", html: "<p>It decides <strong>what</strong> is allowed.</p>", cost_usd: 0.02, session_cost_usd: 0.02, proposals: [] },
 ];
 
-function open(routes: Record<string, unknown> = {}, url = "/chat") {
+const past = [
+  { id: "c1", title: "Why did QA fail?", repo: "studio", project: "demo", updated: "2026-11-08T12:00:00+00:00", turns: 2, cost_usd: 0.03 },
+  { id: "c2", title: "What is the Developer doing?", repo: "studio", project: "demo", updated: "2026-11-07T12:00:00+00:00", turns: 4, cost_usd: 0.1 },
+];
+
+const stored = {
+  id: "c1", title: "Why did QA fail?", repo: "studio", tier: "fast", project: "demo", cost_usd: 0.03,
+  turns: [
+    { role: "you", text: "Why did QA fail?" },
+    { role: "assistant", text: "Because", html: "<p>Because <em>gitleaks</em> is missing.</p>", steps: ["Reading qa_report.md"], proposals: [] },
+  ],
+};
+
+function open(routes: Record<string, unknown> = {}, request: { prompt?: string; question?: string } | null = null) {
   const api = mockApi({
     "GET /api/chat/repos": repos,
+    "GET /api/chats?project=demo": { chats: [] },
     "POST /api/chat": { stream: reply },
-    "GET /api/proposals?status=pending": { proposals: [] },
     ...routes,
   });
-  render(<MemoryRouter initialEntries={[url]}><ChatPage /></MemoryRouter>);
-  return api;
+  const onClose = vi.fn();
+  render(<ChatPanel project="demo" request={request} onClose={onClose} />);
+  return { ...api, onClose };
 }
 
 async function send(text: string) {
@@ -37,7 +50,7 @@ async function send(text: string) {
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
 }
 
-describe("the chat page", () => {
+describe("the chat sidebar", () => {
   it("sends a message and shows the streamed answer, its steps and the cost", async () => {
     const api = open();
 
@@ -48,7 +61,7 @@ describe("the chat page", () => {
     expect(screen.getByText("what does permissions.py do?")).toBeInTheDocument();
     expect(screen.getByText(/\$0\.02 of \$1\.00/)).toBeInTheDocument();
     const call = api.posts().find((p) => p.url === "/api/chat");
-    expect(call?.body).toEqual({ message: "what does permissions.py do?", repo: "studio", tier: "strong", session_id: null, context: null });
+    expect(call?.body).toEqual({ message: "what does permissions.py do?", repo: "demo", tier: "strong", session_id: null, context: null, project: "demo" });
   });
 
   it("continues the same chat with the session id, and New chat starts over", async () => {
@@ -68,13 +81,13 @@ describe("the chat page", () => {
 
   it("lets you pick the repository and the model", async () => {
     const api = open();
-    await userEvent.selectOptions(await screen.findByLabelText("Ask about"), "demo");
+    await userEvent.selectOptions(await screen.findByLabelText("Ask about"), "studio");
     await userEvent.click(screen.getByLabelText("Fast"));
 
     await send("hi");
 
     await waitFor(() => expect(api.posts().length).toBeGreaterThan(0));
-    expect(api.posts()[0]?.body).toMatchObject({ repo: "demo", tier: "fast" });
+    expect(api.posts()[0]?.body).toMatchObject({ repo: "studio", tier: "fast" });
   });
 
   it("shows an error from the assistant", async () => {
@@ -131,7 +144,7 @@ describe("the chat page", () => {
   });
 
   it("starts from a question: prefilled, with that question as context", async () => {
-    const api = open({}, "/chat?project=demo&question=q1&prompt=What%20is%20this%20asking%3F");
+    const api = open({}, { prompt: "What is this asking?", question: "q1" });
     const box = await screen.findByLabelText("Message");
     expect(box).toHaveValue("What is this asking?");
 
@@ -147,5 +160,104 @@ describe("the chat page", () => {
 
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(api.posts()).toHaveLength(0);
+  });
+
+  it("defaults to asking about the project you are in", async () => {
+    open();
+
+    expect(await screen.findByLabelText("Ask about")).toHaveValue("demo");
+  });
+
+  it("falls back to this app when the project has no clone to read", async () => {
+    open({ "GET /api/chat/repos": { repos: [{ id: "studio", label: "Agent Studio (this app)" }], cap_usd: 1 } });
+
+    expect(await screen.findByLabelText("Ask about")).toHaveValue("studio");
+  });
+
+  it("closes from its own button", async () => {
+    const { onClose } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Close chat" }));
+
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("chat history", () => {
+  async function showHistory() {
+    await userEvent.click(await screen.findByRole("button", { name: "History" }));
+  }
+
+  it("lists the past chats of this project, newest first, with a way to start a new one", async () => {
+    open({ "GET /api/chats?project=demo": { chats: past } });
+    await showHistory();
+
+    const rows = await screen.findAllByRole("button", { name: /^Open chat:/ });
+
+    expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("Why did QA fail?"), expect.stringContaining("What is the Developer doing?")]);
+    expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
+  });
+
+  it("says so when there are no past chats", async () => {
+    open();
+    await showHistory();
+
+    expect(await screen.findByText(/No past chats yet/)).toBeInTheDocument();
+  });
+
+  it("opens a past chat with its answers, and keeps talking in it", async () => {
+    const api = open({ "GET /api/chats?project=demo": { chats: past }, "GET /api/chats/c1": stored });
+    await showHistory();
+    await userEvent.click(await screen.findByRole("button", { name: /Open chat: Why did QA fail/ }));
+
+    expect(await screen.findByText("gitleaks")).toBeInTheDocument();
+    expect(screen.getByText("Reading qa_report.md")).toBeInTheDocument();
+    expect(screen.getByText(/\$0\.03 of \$1\.00/)).toBeInTheDocument();
+    await send("and the fix?");
+
+    await waitFor(() => expect(api.posts().some((p) => p.url === "/api/chat")).toBe(true));
+    expect(api.posts()[0]?.body).toMatchObject({ session_id: "c1", repo: "studio", tier: "fast", project: "demo" });
+  });
+
+  it("locks the repository and model of a chat that has begun", async () => {
+    open({ "GET /api/chats?project=demo": { chats: past }, "GET /api/chats/c1": stored });
+    await showHistory();
+    await userEvent.click(await screen.findByRole("button", { name: /Open chat: Why did QA fail/ }));
+    await screen.findByText("gitleaks");
+
+    expect(screen.getByLabelText("Ask about")).toBeDisabled();
+  });
+
+  it("New chat clears the conversation and starts without a session", async () => {
+    const api = open({ "GET /api/chats?project=demo": { chats: past }, "GET /api/chats/c1": stored });
+    await showHistory();
+    await userEvent.click(await screen.findByRole("button", { name: /Open chat: Why did QA fail/ }));
+    await screen.findByText("gitleaks");
+
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(screen.queryByText("gitleaks")).toBeNull();
+    await send("fresh");
+
+    await waitFor(() => expect(api.posts().some((p) => p.url === "/api/chat")).toBe(true));
+    expect(api.posts()[0]?.body).toMatchObject({ session_id: null });
+  });
+
+  it("deletes a past chat after you confirm", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const api = open({ "GET /api/chats?project=demo": { chats: past }, "POST /api/chats/c2/delete": { ok: true } });
+    await showHistory();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Delete chat: What is the Developer doing/ }));
+
+    await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/chats/c2/delete"]));
+  });
+
+  it("tells you when a chat cannot be opened", async () => {
+    open({ "GET /api/chats?project=demo": { chats: past }, "GET /api/chats/c1": { status: 404, body: { error: "there is no such chat" } } });
+    await showHistory();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Open chat: Why did QA fail/ }));
+
+    expect(await screen.findByText("there is no such chat")).toBeInTheDocument();
   });
 });

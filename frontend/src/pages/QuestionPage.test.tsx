@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { ChatContext } from "../components/ChatContext";
 import { mockApi } from "../test/mockApi";
 import { QuestionPage } from "./QuestionPage";
 
@@ -27,6 +28,8 @@ const workbench = {
   readme_html: "<h1>README</h1>", case_study_html: "<h1>Case study</h1>",
 };
 
+const asked = vi.fn();
+
 function open(question: unknown, extra: Record<string, unknown> = {}) {
   const api = mockApi({
     "GET /api/projects/demo/questions/abc": question,
@@ -34,12 +37,14 @@ function open(question: unknown, extra: Record<string, unknown> = {}) {
     ...extra,
   });
   render(
-    <MemoryRouter initialEntries={["/p/demo/q/abc"]}>
-      <Routes>
-        <Route path="/p/:slug/q/:id" element={<QuestionPage />} />
-        <Route path="/inbox" element={<div>the inbox</div>} />
-      </Routes>
-    </MemoryRouter>,
+    <ChatContext.Provider value={{ isOpen: false, request: null, open: asked, close: () => {}, toggle: () => {} }}>
+      <MemoryRouter initialEntries={["/p/demo/q/abc"]}>
+        <Routes>
+          <Route path="/p/:slug/q/:id" element={<QuestionPage />} />
+          <Route path="/inbox" element={<div>the inbox</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ChatContext.Provider>,
   );
   return api;
 }
@@ -310,12 +315,9 @@ describe("asking the assistant", () => {
   it("offers to ask about this question, carrying the question as context", async () => {
     open(gate);
 
-    const link = await screen.findByRole("link", { name: /Ask the assistant/ });
+    await userEvent.click(await screen.findByRole("button", { name: /Ask the assistant/ }));
 
-    const url = new URL(link.getAttribute("href") ?? "", "http://x");
-    expect(url.pathname).toBe("/chat");
-    expect(url.searchParams.get("project")).toBe("demo");
-    expect(url.searchParams.get("question")).toBe("abc");
+    expect(asked).toHaveBeenCalledWith({ prompt: expect.stringContaining("What is this asking"), question: "abc" });
   });
 });
 

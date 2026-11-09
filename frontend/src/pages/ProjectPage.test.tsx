@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { ChatContext } from "../components/ChatContext";
 import { mockApi } from "../test/mockApi";
 import { ProjectPage } from "./ProjectPage";
 
@@ -18,12 +19,16 @@ function project(over: Record<string, unknown> = {}, summary: Record<string, unk
   };
 }
 
+const asked = vi.fn();
+
 function open(body: unknown, extra: Record<string, unknown> = {}) {
   const api = mockApi({ "GET /api/projects/demo": body, ...extra });
   render(
-    <MemoryRouter initialEntries={["/p/demo"]}>
-      <Routes><Route path="/p/:slug" element={<ProjectPage />} /></Routes>
-    </MemoryRouter>,
+    <ChatContext.Provider value={{ isOpen: false, request: null, open: asked, close: () => {}, toggle: () => {} }}>
+      <MemoryRouter initialEntries={["/p/demo"]}>
+        <Routes><Route path="/p/:slug" element={<ProjectPage />} /></Routes>
+      </MemoryRouter>
+    </ChatContext.Provider>,
   );
   return api;
 }
@@ -111,9 +116,9 @@ describe("the project page", () => {
   it("offers to ask the assistant about a paused project", async () => {
     open(project({}, { status: "halted", alive: false }));
 
-    const link = await screen.findByRole("link", { name: /Ask the assistant/ });
+    await userEvent.click(await screen.findByRole("button", { name: /Ask the assistant/ }));
 
-    expect(link.getAttribute("href")).toContain("/chat?project=demo");
+    expect(asked).toHaveBeenCalledWith({ prompt: expect.stringContaining("Why is demo paused") });
   });
 
   it("shows the journey, with each move back marked and explained", async () => {

@@ -337,3 +337,30 @@ export interface TaskBoardReply {
 
 /** Who pays for the Developer: Anthropic API credits, or your Claude subscription. */
 export type Billing = "api" | "subscription";
+
+export interface ChatSummary {
+  id: string;
+  title: string;
+  repo: string;
+  project: string | null;
+  updated: string;
+  turns: number;
+  cost_usd: number;
+}
+
+export interface StoredChat {
+  id: string;
+  title: string;
+  repo: string;
+  tier: "strong" | "fast";
+  project: string | null;
+  cost_usd: number;
+  turns: {
+    role: "you" | "assistant";
+    text: string;
+    html?: string | null;
+    steps?: string[];
+    proposals?: ProposalView[];
+    error?: string;
+  }[];
+}
