@@ -5,6 +5,7 @@ import { useAttention } from "../hooks";
 const SETTINGS = [
   { to: "/models", label: "Models" },
   { to: "/rules", label: "Rules" },
+  { to: "/health", label: "Health" },
 ];
 
 /** The profile button and its dropdown. There is no account here, so there is no sign-out. */
@@ -75,7 +76,6 @@ export function Layout() {
             Inbox{waiting > 0 && <span id="badge" className={todos.length > 0 ? "alert" : ""}> ({waiting})</span>}
           </NavLink>
           <NavLink className={link} to="/chat">Chat</NavLink>
-          <NavLink className={link} to="/health">Health</NavLink>
           {askable && (
             <button
               id="notify"

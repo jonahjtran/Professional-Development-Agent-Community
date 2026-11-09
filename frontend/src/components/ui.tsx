@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { StageRow, Status } from "../types";
+import type { Status } from "../types";
 
 export const money = (usd: number, digits = 2): string => `$${usd.toFixed(digits)}`;
 
@@ -126,26 +126,6 @@ export function Meter({
         <span className={level} style={{ width: `${fraction * 100}%` }} />
         <i style={{ left: `${warn * 100}%` }} />
       </div>
-    </div>
-  );
-}
-
-/** The word under an agent's name. "finished" is for now; only a finished project is "done". */
-function stepWord(s: StageRow): string {
-  if (s.state === "upcoming" && s.visits > 0) return "will run again";
-  if (s.returned) return `${s.state} · ↻ round ${s.visits}`;
-  return s.state;
-}
-
-export function Steps({ stages }: { stages: StageRow[] }) {
-  return (
-    <div className="steps" role="list">
-      {stages.map((s) => (
-        <div key={s.stage} className={`step ${s.state}`} role="listitem">
-          {s.label}
-          <small>{stepWord(s)}</small>
-        </div>
-      ))}
     </div>
   );
 }

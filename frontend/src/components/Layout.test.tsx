@@ -17,11 +17,12 @@ describe("the profile menu", () => {
 
     expect(within(main).queryByRole("link", { name: "Models" })).toBeNull();
     expect(within(main).queryByRole("link", { name: "Rules" })).toBeNull();
+    expect(within(main).queryByRole("link", { name: "Health" })).toBeNull();
     expect(within(main).queryByRole("link", { name: "Tasks" })).toBeNull(); // tasks live in each project
     expect(within(main).getByRole("link", { name: "Projects" })).toBeInTheDocument();
   });
 
-  it("opens from the profile button and lists Models and Rules, and nothing that does not exist", async () => {
+  it("opens from the profile button and lists Models, Rules and Health, and nothing that does not exist", async () => {
     show();
     const button = await screen.findByRole("button", { name: "Profile and settings" });
     expect(button).toHaveAttribute("aria-expanded", "false");
@@ -34,6 +35,7 @@ describe("the profile menu", () => {
     expect(within(menu).getAllByRole("menuitem").map((i) => [i.textContent, i.getAttribute("href")])).toEqual([
       ["Models", "/models"],
       ["Rules", "/rules"],
+      ["Health", "/health"],
     ]);
   });
 
