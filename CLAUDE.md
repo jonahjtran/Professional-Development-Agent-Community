@@ -169,6 +169,9 @@ for other people to use API keys, so keep this to your own projects. Live check 
 from your plan, a fake key in the environment on purpose):
 `ANTHROPIC_API_KEY=sk-ant-fake uv run pytest tests/live --live -s -k subscription`.
 
+**New project.** There is no New project page. The **+** beside the Projects title expands a form
+beneath it (Review, then Create and start); Cancel or Escape closes it.
+
 **Settings menu.** Models (`/models`) and Rules (`/rules`) are reached from the profile button at the
 right of the top bar, not the main bar. There is no sign-in (the UI listens on this computer only),
 so the menu has no logout.
