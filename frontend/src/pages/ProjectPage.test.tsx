@@ -29,7 +29,7 @@ function open(body: unknown, extra: Record<string, unknown> = {}) {
 }
 
 describe("the project page", () => {
-  it("shows the timeline, spend against caps and the documents", async () => {
+  it("shows spend against caps, the decisions and the documents", async () => {
     open(project({ artifacts: ["prd.md"], gates: [{ ts: "2026-11-05T12:00:00Z", stage: "architect", outcome: "approve", comments: "looks good" }] }));
 
     expect((await screen.findAllByText("Product Owner")).length).toBeGreaterThan(0);
@@ -37,6 +37,28 @@ describe("the project page", () => {
     expect(screen.getByRole("link", { name: "prd.md" })).toHaveAttribute("href", "/p/demo/a/prd.md");
     expect(screen.getByText("looks good")).toBeInTheDocument();
     expect(screen.getAllByRole("meter").length).toBe(3);
+  });
+
+  it("shows only the agent that is active, not the journey", async () => {
+    const step = (stage: string, label: string, direction: string, reason: string) => ({ stage, label, direction, reason, ts: "2026-11-07T12:00:00Z" });
+    open(project({
+      journey: {
+        path: [step("product_owner", "Product Owner", "forward", "start"), step("architect", "Architect", "back", "QA failed")],
+        going_back: { stage: "architect", label: "Architect", reason: "QA failed", came_from: "QA" },
+      },
+    }));
+
+    expect(await screen.findByText(/Active agent/)).toHaveTextContent("Active agent: Developer");
+    expect(screen.queryByRole("list", { name: "Journey" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Back at the/)).not.toBeInTheDocument();
+    expect(screen.queryByText("will run again")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listitem", { name: "" })).not.toBeInTheDocument();
+  });
+
+  it("says when every agent is finished", async () => {
+    open(project({}, { status: "done", stage: "career_coach", alive: false }));
+
+    expect(await screen.findByText(/Active agent/)).toHaveTextContent("No agent is active: the project is finished");
   });
 
   it("links straight to an open question", async () => {
@@ -114,45 +136,6 @@ describe("the project page", () => {
     const link = await screen.findByRole("link", { name: /Ask the assistant/ });
 
     expect(link.getAttribute("href")).toContain("/chat?project=demo");
-  });
-
-  it("shows the journey, with each move back marked and explained", async () => {
-    const step = (stage: string, label: string, direction: string, reason: string) => ({ stage, label, direction, reason, ts: "2026-11-07T12:00:00Z" });
-    open(project({
-      journey: {
-        path: [
-          step("product_owner", "Product Owner", "forward", "start"),
-          step("architect", "Architect", "forward", "PRD approved"),
-          step("qa", "QA", "forward", "tasks done"),
-          step("architect", "Architect", "back", "QA failed"),
-        ],
-        going_back: { stage: "architect", label: "Architect", reason: "QA failed", came_from: "QA" },
-      },
-    }));
-
-    const journey = await screen.findByRole("list", { name: "Journey" });
-    expect(within(journey).getAllByRole("listitem")).toHaveLength(4);
-    expect(within(journey).getByText(/↩ Architect/)).toBeInTheDocument();
-    expect(within(journey).getByTitle("QA failed")).toBeInTheDocument();
-  });
-
-  it("says when the project has gone back, to whom, and why", async () => {
-    open(project({
-      journey: {
-        path: [],
-        going_back: { stage: "architect", label: "Architect", reason: "QA failed: fix round 1", came_from: "QA" },
-      },
-    }));
-
-    const banner = await screen.findByRole("status");
-    expect(banner).toHaveTextContent("Back at the Architect: QA failed: fix round 1 (from QA)");
-  });
-
-  it("has no going-back notice for a project that only moved forward", async () => {
-    open(project());
-    await screen.findByText("An idea");
-
-    expect(screen.queryByText(/Back at the/)).not.toBeInTheDocument();
   });
 
   it("lets you collapse and open the pull requests, decisions and documents sections", async () => {
