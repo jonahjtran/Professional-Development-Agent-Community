@@ -12,6 +12,26 @@ interface Turn {
   steps: string[];
   proposals: ProposalView[];
   error?: string;
+  stopped?: boolean; // you pressed Stop: what is shown is what it had written
+}
+
+const lastKey = (project: string) => `studio.chat.last.${project}`;
+
+function remember(project: string, id: string | null) {
+  try {
+    if (id === null) localStorage.removeItem(lastKey(project));
+    else localStorage.setItem(lastKey(project), id);
+  } catch {
+    // a browser that will not keep it: the chat still works, it is just not remembered
+  }
+}
+
+function remembered(project: string): string | null {
+  try {
+    return localStorage.getItem(lastKey(project));
+  } catch {
+    return null;
+  }
 }
 
 type Tier = "strong" | "fast";
@@ -77,6 +97,7 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
   const [problem, setProblem] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const session = useRef<string | null>(null);
+  const writing = useRef<AbortController | null>(null);
   const context = useRef<{ project: string; question_id: string } | null>(null);
 
   function newChat() {
@@ -88,7 +109,16 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
     setInput("");
     setProblem(null);
     setView("chat");
+    remember(project, null);
   }
+
+  // Coming back to a project: pick up the chat you were in.
+  useEffect(() => {
+    const id = remembered(project);
+    if (request || id === null) return;
+    void openPast(id, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // A page asked the chat to start from something (for example an open question).
   useEffect(() => {
@@ -116,6 +146,8 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
       { role: "you", text: message, steps: [], proposals: [] },
       { role: "assistant", text: "", steps: [], proposals: [] },
     ]);
+    const controller = new AbortController();
+    writing.current = controller;
     const body = {
       message,
       repo: chosenRepo,
@@ -126,25 +158,38 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
     };
     try {
       await postStream<ChatEvent>("/api/chat", body, (event) => {
-        if (event.type === "session") session.current = event.id;
-        else if (event.type === "step") patchLast((t) => ({ ...t, steps: [...t.steps, event.text] }));
+        if (event.type === "session") {
+          session.current = event.id;
+          remember(project, event.id);
+        } else if (event.type === "step") patchLast((t) => ({ ...t, steps: [...t.steps, event.text] }));
         else if (event.type === "text") patchLast((t) => ({ ...t, text: t.text + event.delta }));
         else if (event.type === "error") patchLast((t) => ({ ...t, error: event.message }));
         else {
           setCost(event.session_cost_usd);
           patchLast((t) => ({ ...t, html: event.html, proposals: event.proposals }));
         }
-      });
+      }, controller.signal);
       context.current = null;
       history.reload();
     } catch (e) {
-      patchLast((t) => ({ ...t, error: e instanceof ApiError ? e.message : String(e) }));
+      if (controller.signal.aborted) {
+        context.current = null;
+        patchLast((t) => ({ ...t, stopped: true }));
+        history.reload();
+      } else {
+        patchLast((t) => ({ ...t, error: e instanceof ApiError ? e.message : String(e) }));
+      }
     } finally {
+      writing.current = null;
       setBusy(false);
     }
   }
 
-  async function openPast(id: string) {
+  function stop() {
+    writing.current?.abort();
+  }
+
+  async function openPast(id: string, quiet = false) {
     setProblem(null);
     try {
       const chat = await get<StoredChat>(`/api/chats/${id}`);
@@ -163,11 +208,14 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
           steps: t.steps ?? [],
           proposals: t.proposals ?? [],
           error: t.error,
+          stopped: t.stopped,
         })),
       );
+      remember(project, chat.id);
       setView("chat");
     } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : String(e));
+      if (quiet) remember(project, null); // the remembered chat is gone: start fresh, say nothing
+      else setProblem(e instanceof ApiError ? e.message : String(e));
     }
   }
 
@@ -205,7 +253,7 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
           >
             History
           </Button>
-          <button type="button" className="chat-close" aria-label="Close chat" onClick={onClose}>×</button>
+          <button type="button" className="chat-close" aria-label="Collapse chat" title="Collapse chat" onClick={onClose}>»</button>
         </div>
       </div>
       {problem && <Banner>{problem}</Banner>}
@@ -265,8 +313,9 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
                     {t.html !== undefined ? (
                       <div className="markdown" dangerouslySetInnerHTML={{ __html: t.html }} />
                     ) : (
-                      <div className="streaming">{t.text}{busy && i === turns.length - 1 && !t.error ? "…" : ""}</div>
+                      <div className="streaming">{t.text}{busy && i === turns.length - 1 && !t.error && !t.stopped ? "…" : ""}</div>
                     )}
+                    {t.stopped && <div className="muted">Stopped</div>}
                     {t.error && <Banner>{t.error}</Banner>}
                     {t.proposals.map((p) => (
                       <ProposalCard key={p.id} proposal={p} onChange={(next) => updateProposal(i, next)} />
@@ -292,13 +341,17 @@ export function ChatPanel({ project, request, onClose }: { project: string; requ
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void send();
+                    e.preventDefault(); // while it is answering, the draft waits: Stop it or wait
+                    if (!busy) void send();
                   }
                 }}
               />
             </label>
-            <Button type="submit" disabled={busy || input.trim() === ""}>Send</Button>
+            {busy ? (
+              <Button type="button" tone="destructive" onClick={stop}>Stop</Button>
+            ) : (
+              <Button type="submit" disabled={input.trim() === ""}>Send</Button>
+            )}
           </form>
         </>
       )}

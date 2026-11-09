@@ -359,5 +359,6 @@ export interface StoredChat {
     steps?: string[];
     proposals?: ProposalView[];
     error?: string;
+    stopped?: boolean;
   }[];
 }

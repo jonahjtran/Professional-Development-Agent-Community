@@ -212,21 +212,60 @@ class ChatService:
         """Run one turn, and keep it in the chat's history when it ends."""
         sid: str | None = None
         text, steps = "", []
-        async for event in self._turn(message, session_id, repo, tier, context, project):
-            kind = event["type"]
-            if kind == "session":
-                sid = event["id"]
-            elif kind == "text":
-                text += event["delta"]
-            elif kind == "step":
-                steps.append(event["text"])
-            elif kind in ("done", "error") and sid is not None:
-                answer = {"text": text, "html": event.get("html"), "steps": steps}
-                answer["proposals"] = event.get("proposals", [])
-                if kind == "error":
-                    answer["error"] = event["message"]
-                self._keep(sid, message, answer)
-            yield event
+        finished = False
+        try:
+            async for event in self._turn(message, session_id, repo, tier, context, project):
+                kind = event["type"]
+                if kind == "session":
+                    sid = event["id"]
+                elif kind == "text":
+                    text += event["delta"]
+                elif kind == "step":
+                    steps.append(event["text"])
+                elif kind in ("done", "error") and sid is not None:
+                    finished = True
+                    answer = {"text": text, "html": event.get("html"), "steps": steps}
+                    answer["proposals"] = event.get("proposals", [])
+                    if kind == "error":
+                        answer["error"] = event["message"]
+                    self._keep(sid, message, answer)
+                yield event
+        except (asyncio.CancelledError, GeneratorExit):
+            # The person pressed Stop (the browser closed the stream): stop the assistant, and keep
+            # what it had written so the chat shows it and can carry on.
+            if sid is not None and not finished:
+                await self._stopped(sid, message, text, steps)
+            raise
+
+    async def _stopped(self, sid: str, message: str, text: str, steps: list[str]) -> None:
+        session = self._sessions.get(sid)
+        if session is not None:
+            await self._interrupt(session)
+        self._keep(
+            sid,
+            message,
+            {
+                "text": text,
+                "html": markdown_html(text) if text else None,
+                "steps": steps,
+                "proposals": [],
+                "stopped": True,
+            },
+        )
+
+    async def _interrupt(self, session: _Session) -> None:
+        """Interrupt the assistant, then read what it still sends so the next message is clean."""
+
+        async def drain() -> None:
+            await session.client.interrupt()
+            async for item in session.client.receive_response():
+                if isinstance(item, ResultMessage):
+                    self._charge(session, item)
+
+        try:
+            await asyncio.wait_for(drain(), timeout=5)
+        except (TimeoutError, Exception):  # a stuck or already-finished assistant: carry on
+            pass
 
     def _keep(self, sid: str, message: str, answer: dict[str, Any]) -> None:
         session = self._sessions.get(sid)

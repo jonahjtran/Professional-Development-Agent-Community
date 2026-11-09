@@ -67,7 +67,21 @@ export function Layout() {
     typeof Notification !== "undefined" && Notification.permission === "default",
   );
   const project = useMatch("/p/:slug/*")?.params.slug;
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setOpenState] = useState(() => {
+    try {
+      return localStorage.getItem("studio.chat.open") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setChatOpen = (next: boolean) => {
+    setOpenState(next);
+    try {
+      localStorage.setItem("studio.chat.open", next ? "1" : "0");
+    } catch {
+      // the panel still opens and closes; it just is not remembered
+    }
+  };
   const [request, setRequest] = useState<ChatRequest | null>(null);
   const showChat = chatOpen && project !== undefined;
   const control = {
@@ -115,6 +129,11 @@ export function Layout() {
       <main className={showChat ? "with-chat" : undefined}>
         <Outlet />
       </main>
+      {project !== undefined && !showChat && (
+        <button type="button" className="chat-tab" aria-label="Open chat" onClick={control.toggle}>
+          Chat
+        </button>
+      )}
       {showChat && (
         <aside className="chat-side" aria-label="Chat">
           <ChatPanel key={project} project={project} request={request} onClose={control.close} />

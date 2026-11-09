@@ -166,3 +166,89 @@ def test_a_resumed_chat_keeps_its_cost_against_the_cap(
     events = run(service(runs, studio, tmp_path), "more", session_id="a" * 12)
 
     assert events[0]["type"] == "error" and "cap" in events[0]["message"]
+
+
+# --- stopping an answer -----------------------------------------------------------------------
+
+
+def writing(_c: FakeClient) -> list[Any]:
+    from tests.test_chat import HANG, stream
+
+    return [stream("Hel"), stream("lo wor"), HANG]
+
+
+async def stop_after_two_chunks(chat: ChatService, message: str, **kw: Any) -> list[dict[str, Any]]:
+    import asyncio
+
+    seen: list[dict[str, Any]] = []
+    got_text = asyncio.Event()
+
+    async def read() -> None:
+        async for event in chat.turn(
+            message, session_id=kw.get("session_id"), repo="studio", tier="strong",
+            context=None, project="demo",
+        ):  # fmt: skip
+            seen.append(event)
+            if sum(1 for e in seen if e["type"] == "text") == 2:
+                got_text.set()
+
+    task = asyncio.create_task(read())
+    await asyncio.wait_for(got_text.wait(), 5)
+    task.cancel()  # the person pressed Stop: the browser closed the stream
+    await asyncio.gather(task, return_exceptions=True)
+    return seen
+
+
+def test_stopping_an_answer_interrupts_the_assistant_and_keeps_what_it_had_written(
+    runs: Path, studio: Path, tmp_path: Path
+) -> None:
+    import asyncio
+
+    FakeClient.script = [writing]
+    chat = service(runs, studio, tmp_path)
+
+    seen = asyncio.run(stop_after_two_chunks(chat, "Explain the budget"))
+
+    assert FakeClient.instances[0].interrupted
+    stored = chat_history.load_chat(runs, seen[0]["id"])
+    assert stored is not None
+    answer = stored["turns"][-1]
+    assert answer["text"] == "Hello wor" and answer["stopped"] is True
+    assert "Hello wor" in answer["html"]
+    assert stored["turns"][0]["text"] == "Explain the budget"
+
+
+def test_the_chat_keeps_working_after_a_stop_in_the_same_session(
+    runs: Path, studio: Path, tmp_path: Path
+) -> None:
+    import asyncio
+
+    FakeClient.script = [writing, hello]
+    chat = service(runs, studio, tmp_path)
+
+    async def both() -> list[dict[str, Any]]:
+        seen = await stop_after_two_chunks(chat, "first")
+        return [e async for e in chat.turn(
+            "second", session_id=seen[0]["id"], repo="studio", tier="strong",
+            context=None, project="demo",
+        )]  # fmt: skip
+
+    events = asyncio.run(both())
+
+    assert events[-1]["type"] == "done"
+    assert len(FakeClient.instances) == 1  # the same assistant session carried on
+
+
+def test_the_cost_of_a_stopped_answer_still_counts(
+    runs: Path, studio: Path, tmp_path: Path
+) -> None:
+    import asyncio
+
+    from orchestrator.assistant_cost import assistant_totals
+
+    FakeClient.script = [writing]
+    chat = service(runs, studio, tmp_path)
+
+    asyncio.run(stop_after_two_chunks(chat, "hi"))
+
+    assert assistant_totals(runs, "_studio")["chat_usd"] == pytest.approx(0.01)

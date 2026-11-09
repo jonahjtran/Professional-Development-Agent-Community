@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { useChat } from "./ChatContext";
 import { Layout } from "./Layout";
 import { mockApi } from "../test/mockApi";
@@ -92,6 +92,8 @@ function inProject(path = "/p/demo", routes: Record<string, unknown> = {}) {
   return api;
 }
 
+beforeEach(() => localStorage.clear());
+
 describe("the chat sidebar in the layout", () => {
   it("has no Chat entry in the main bar and no button outside a project", async () => {
     inProject("/");
@@ -130,5 +132,42 @@ describe("the chat sidebar in the layout", () => {
 
     expect(await screen.findByRole("complementary", { name: "Chat" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Message")).toHaveValue("Why is demo paused?");
+  });
+
+  it("leaves a tab on the edge to open it again when it is collapsed", async () => {
+    inProject();
+    await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
+    await screen.findByRole("complementary", { name: "Chat" });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Collapse chat" }));
+    expect(screen.queryByRole("complementary", { name: "Chat" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open chat" }));
+
+    expect(await screen.findByRole("complementary", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+  });
+
+  it("has no edge tab outside a project", async () => {
+    inProject("/");
+    await screen.findByText("the list");
+
+    expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
+  });
+
+  it("remembers whether it was open or collapsed", async () => {
+    inProject();
+    await userEvent.click(await screen.findByRole("button", { name: "Chat" }));
+    await screen.findByRole("complementary", { name: "Chat" });
+    expect(localStorage.getItem("studio.chat.open")).toBe("1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Collapse chat" }));
+    expect(localStorage.getItem("studio.chat.open")).toBe("0");
+  });
+
+  it("starts open when it was left open", async () => {
+    localStorage.setItem("studio.chat.open", "1");
+    inProject();
+
+    expect(await screen.findByRole("complementary", { name: "Chat" })).toBeInTheDocument();
   });
 });

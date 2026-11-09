@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockApi } from "../test/mockApi";
 import { ChatPanel } from "./ChatPanel";
 
@@ -49,6 +49,8 @@ async function send(text: string) {
   await userEvent.type(await screen.findByLabelText("Message"), text);
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
 }
+
+beforeEach(() => localStorage.clear());
 
 describe("the chat sidebar", () => {
   it("sends a message and shows the streamed answer, its steps and the cost", async () => {
@@ -174,10 +176,10 @@ describe("the chat sidebar", () => {
     expect(await screen.findByLabelText("Ask about")).toHaveValue("studio");
   });
 
-  it("closes from its own button", async () => {
+  it("collapses from its own button", async () => {
     const { onClose } = open();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Close chat" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Collapse chat" }));
 
     expect(onClose).toHaveBeenCalled();
   });
@@ -259,5 +261,141 @@ describe("chat history", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Open chat: Why did QA fail/ }));
 
     expect(await screen.findByText("there is no such chat")).toBeInTheDocument();
+  });
+});
+
+
+/** A chat answer that is still being written until the page aborts the request (Stop). */
+function writingAnswer() {
+  const base = globalThis.fetch;
+  const aborted = vi.fn();
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url !== "/api/chat") return base(url, init);
+    const encoder = new TextEncoder();
+    const events = [{ type: "session", id: "s9" }, { type: "text", delta: "Working on" }];
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const e of events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
+        init?.signal?.addEventListener("abort", () => {
+          aborted();
+          controller.error(new DOMException("aborted", "AbortError"));
+        });
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  });
+  return aborted;
+}
+
+describe("stopping and typing while it answers", () => {
+  it("turns Send into Stop while an answer is being written, and Stop ends it keeping what was written", async () => {
+    const api = open();
+    const aborted = writingAnswer();
+    await send("explain the budget");
+
+    expect(await screen.findByText(/Working on/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(aborted).toHaveBeenCalled());
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
+    expect(screen.getByText(/Working on/)).toBeInTheDocument(); // the partial answer stays
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    expect(screen.queryByText(/Something went wrong|AbortError|aborted/i)).not.toBeInTheDocument();
+    expect(api.posts()).toEqual([]); // nothing but the chat request itself
+  });
+
+  it("lets you keep typing while the answer is written, and keeps the draft", async () => {
+    open();
+    writingAnswer();
+    await send("first question");
+    await screen.findByText(/Working on/);
+
+    const box = screen.getByLabelText("Message");
+    expect(box).toBeEnabled();
+    await userEvent.type(box, "and a second thing");
+    await userEvent.keyboard("{Enter}"); // Enter does not send while it is still answering
+
+    expect(box).toHaveValue("and a second thing");
+    expect(screen.getAllByText(/first question/)).toHaveLength(1);
+  });
+
+  it("after a stop you can send the next message in the same chat", async () => {
+    const api = open();
+    writingAnswer();
+    await send("first");
+    await screen.findByText(/Working on/);
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await screen.findByText("Stopped");
+
+    vi.unstubAllGlobals();
+    mockApi({ "GET /api/chat/repos": repos, "GET /api/chats?project=demo": { chats: [] }, "POST /api/chat": { stream: reply } });
+    await send("second");
+
+    await waitFor(() => expect(screen.getByText("second")).toBeInTheDocument());
+    expect(api.calls.length).toBeGreaterThan(0);
+  });
+
+  it("shows a stopped answer as stopped when the chat is opened later", async () => {
+    const stoppedChat = {
+      ...stored,
+      turns: [
+        { role: "you", text: "Explain the budget" },
+        { role: "assistant", text: "Hello wor", html: "<p>Hello wor</p>", steps: [], proposals: [], stopped: true },
+      ],
+    };
+    open({ "GET /api/chats?project=demo": { chats: past }, "GET /api/chats/c1": stoppedChat });
+    await userEvent.click(await screen.findByRole("button", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: /Open chat: Why did QA fail/ }));
+
+    expect(await screen.findByText("Hello wor")).toBeInTheDocument();
+    expect(screen.getByText("Stopped")).toBeInTheDocument();
+  });
+});
+
+describe("chat memory", () => {
+  it("remembers the chat you were in and reopens it when you come back to the project", async () => {
+    localStorage.setItem("studio.chat.last.demo", "c1");
+    open({ "GET /api/chats/c1": stored });
+
+    expect(await screen.findByText("gitleaks")).toBeInTheDocument();
+    expect(screen.getByText("Why did QA fail?")).toBeInTheDocument();
+  });
+
+  it("remembers a new chat as soon as it starts", async () => {
+    open();
+
+    await send("hello");
+    await screen.findByText("what");
+
+    expect(localStorage.getItem("studio.chat.last.demo")).toBe("s1");
+  });
+
+  it("forgets a remembered chat that no longer exists and starts fresh", async () => {
+    localStorage.setItem("studio.chat.last.demo", "gone");
+    open({ "GET /api/chats/gone": { status: 404, body: { error: "there is no such chat" } } });
+
+    expect(await screen.findByLabelText("Message")).toBeInTheDocument();
+    await waitFor(() => expect(localStorage.getItem("studio.chat.last.demo")).toBeNull());
+    expect(screen.queryByText("there is no such chat")).not.toBeInTheDocument();
+  });
+
+  it("New chat forgets the remembered one", async () => {
+    localStorage.setItem("studio.chat.last.demo", "c1");
+    open({ "GET /api/chats/c1": stored });
+    await screen.findByText("gitleaks");
+
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    expect(localStorage.getItem("studio.chat.last.demo")).toBeNull();
+    expect(screen.queryByText("gitleaks")).toBeNull();
+  });
+
+  it("a question you asked about opens a fresh chat instead of the remembered one", async () => {
+    localStorage.setItem("studio.chat.last.demo", "c1");
+    open({ "GET /api/chats/c1": stored }, { prompt: "What is this asking?", question: "q1" });
+
+    expect(await screen.findByLabelText("Message")).toHaveValue("What is this asking?");
+    expect(screen.queryByText("gitleaks")).toBeNull();
   });
 });

@@ -369,6 +369,15 @@ yet") with Confirm and Dismiss. **New chat** starts over; **History** lists this
 (newest first) to open and keep talking in, or delete. "Ask the assistant about this" on a question
 or a paused project opens the sidebar with that question as context.
 
+**Using the chat sidebar.** It opens from the **Chat** button in the top bar or the tab on the right
+edge, and collapses with **»** (the tab stays, so it is one click to bring back); open or collapsed
+is remembered. Like Claude's chat: **Stop** replaces Send while an answer is being written (it
+interrupts the assistant, keeps what was written marked "Stopped", and still counts its cost), you can
+keep typing your next message meanwhile (Enter waits until it has finished or you stop it), and the
+chat you were last in is reopened when you come back to the project (`localStorage`, per project).
+Stopping works by the browser closing the stream: the server interrupts the assistant and saves the
+partial answer.
+
 **Chat history** (`orchestrator/ui/chat_history.py`, `GET /api/chats?project=`, `GET /api/chats/<id>`,
 `POST /api/chats/<id>/delete`). Every finished turn is kept in `runs/_studio/chats/<id>.json`: the
 repository and model, the project it was opened from, its cost, and each turn (your text, the
