@@ -94,7 +94,7 @@ from orchestrator.task_control import (
 )
 from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
 from orchestrator.trace import EventType
-from orchestrator.ui import data, serialize
+from orchestrator.ui import chat_history, data, serialize
 from orchestrator.ui import health as health_checks
 from orchestrator.ui.chat import ChatService
 from orchestrator.ui.decisions import FormError, payload_from_form
@@ -147,6 +147,7 @@ class Chatting(Protocol):
         repo: str,
         tier: str,
         context: dict[str, Any] | None,
+        project: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]: ...
 
     async def close(self) -> None: ...
@@ -853,6 +854,9 @@ def create_app(
         tier = body.get("tier", "strong")
         context = body.get("context")
         session_id = body.get("session_id")
+        project = body.get("project")
+        if project is not None and not (isinstance(project, str) and _NAME.match(project)):
+            raise HTTPException(400, "project must be a project name")
         if not isinstance(message, str) or not 1 <= len(message.strip()) <= 4000:
             raise HTTPException(400, "write a message of 1 to 4000 characters")
         if not isinstance(repo, str) or tier not in ("strong", "fast"):
@@ -864,11 +868,40 @@ def create_app(
 
         async def events() -> AsyncIterator[str]:
             async for event in chatting.turn(
-                message.strip(), session_id=session_id, repo=repo, tier=tier, context=context
+                message.strip(),
+                session_id=session_id,
+                repo=repo,
+                tier=tier,
+                context=context,
+                project=project,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream")
+
+    @app.get("/api/chats")
+    def past_chats(project: str | None = None) -> dict[str, Any]:
+        return {"chats": chat_history.list_chats(runs_dir, project=project)}
+
+    @app.get("/api/chats/{chat_id}")
+    def past_chat(chat_id: str) -> dict[str, Any]:
+        chat = chat_history.load_chat(runs_dir, chat_id)
+        if chat is None:
+            raise HTTPException(404, "there is no such chat")
+        decided = {p.id: p for p in list_proposals(runs_dir)}
+        for turn in chat["turns"]:
+            for card in turn.get("proposals", []):  # show what became of it since
+                now = decided.get(card.get("id"))
+                if now is not None:
+                    card.update(status=now.status, result=now.result)
+        return chat
+
+    @app.post("/api/chats/{chat_id}/delete")
+    async def delete_past_chat(request: Request, chat_id: str) -> JSONResponse:
+        await checked_body(request)
+        if not chat_history.delete_chat(runs_dir, chat_id):
+            return fail(404, "there is no such chat")
+        return JSONResponse({"ok": True})
 
     # --- proposals from the chat -----------------------------------------------------------
 

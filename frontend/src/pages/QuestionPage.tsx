@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, post } from "../api";
+import { useChat } from "../components/ChatContext";
 import { Workbench } from "../components/Workbench";
 import { Banner, Button, Card, Group, Loading, Rendered, Section, Segmented, SwitchRow } from "../components/ui";
 import { useLoad } from "../hooks";
@@ -61,14 +62,20 @@ export function QuestionPage() {
 
 function Body({ q }: { q: OpenQuestion }) {
   const { submit, error, busy } = useSubmit(q.project, q.id);
+  const chat = useChat();
   return (
     <>
       <p className="back"><Link to="/inbox">‹ Inbox</Link> · <Link to={`/p/${q.project}`}>{q.project}</Link></p>
       <h1>{q.title}</h1>
       <p className="hint">
-        <Link to={`/chat?project=${q.project}&question=${q.id}&prompt=${encodeURIComponent("What is this asking me to decide, and what should I check before I do?")}`}>
+        <Button
+          tone="secondary"
+          onClick={() =>
+            chat.open({ prompt: "What is this asking me to decide, and what should I check before I do?", question: q.id })
+          }
+        >
           Ask the assistant about this
-        </Link>
+        </Button>
       </p>
       {q.refused && <Banner>Your last answer was refused: {q.refused}. Please answer again.</Banner>}
       {error && <Banner>{error}</Banner>}

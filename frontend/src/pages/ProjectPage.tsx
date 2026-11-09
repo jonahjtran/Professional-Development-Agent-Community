@@ -16,12 +16,14 @@ import {
   Steps,
   StatusPill,
 } from "../components/ui";
+import { useChat } from "../components/ChatContext";
 import { TodoRow } from "../components/TodoRow";
 import { useLoad } from "../hooks";
 import type { Billing, Project, StartingProject } from "../types";
 
 export function ProjectPage() {
   const { slug = "" } = useParams();
+  const chat = useChat();
   const { data, error, reload } = useLoad<Project | StartingProject>(`/api/projects/${slug}`, 3000);
   const [problem, setProblem] = useState<string | null>(null);
   const [sendTo, setSendTo] = useState("");
@@ -159,9 +161,9 @@ export function ProjectPage() {
       {summary.status === "halted" && (
         <Banner>
           Paused. Nothing is using credits. <Button onClick={() => void act("resume")}>Resume</Button>{" "}
-          <Link to={`/chat?project=${slug}&prompt=${encodeURIComponent(`Why is ${slug} paused, and what should I do next?`)}`}>
+          <Button tone="secondary" onClick={() => chat.open({ prompt: `Why is ${slug} paused, and what should I do next?` })}>
             Ask the assistant about this
-          </Link>
+          </Button>
         </Banner>
       )}
       {active && !summary.alive && (

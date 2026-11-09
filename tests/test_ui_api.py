@@ -835,6 +835,75 @@ def test_a_malformed_chat_request_is_refused(
     assert post(chatting_client, "/api/chat", body).status_code == 400
 
 
+def test_the_project_a_chat_was_opened_from_is_passed_on(
+    chatting_client: TestClient, chat: FakeChat
+) -> None:
+    post(chatting_client, "/api/chat", {"message": "?", "repo": "studio", "project": "demo"})
+    post(chatting_client, "/api/chat", {"message": "?", "repo": "studio"})
+
+    assert [t["project"] for t in chat.turns] == ["demo", None]
+    assert (
+        post(
+            chatting_client, "/api/chat", {"message": "?", "repo": "studio", "project": "../x"}
+        ).status_code
+        == 400
+    )
+
+
+def keep_chat(runs: Path, sid: str = "a" * 12, project: str = "demo", **answer: Any) -> None:
+    from orchestrator.ui import chat_history
+
+    chat_history.remember(
+        runs, sid, repo="studio", tier="strong", project=project, cost=0.03, you="Why paused?",
+        assistant={"text": "Because", "html": "<p>B</p>", "steps": [], "proposals": [], **answer},
+    )  # fmt: skip
+
+
+def test_past_chats_are_listed_for_a_project(chatting_client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+    keep_chat(runs)
+    keep_chat(runs, "b" * 12, project="other")
+
+    chats = chatting_client.get("/api/chats?project=demo").json()["chats"]
+
+    assert [(c["id"], c["title"], c["turns"]) for c in chats] == [("a" * 12, "Why paused?", 2)]
+    assert len(chatting_client.get("/api/chats").json()["chats"]) == 2
+
+
+def test_a_past_chat_opens_with_its_turns_and_the_current_state_of_its_proposals(
+    chatting_client: TestClient, runs: Path
+) -> None:
+    from orchestrator.proposals import create_proposal, set_status
+
+    project_with_tasks(runs, status=Status.HALTED)
+    made = create_proposal(runs, "demo", "resume_project", {}, "Resume demo")
+    card = {"id": made.id, "project": "demo", "summary": "Resume demo", "status": "pending"}
+    keep_chat(runs, proposals=[card])
+    set_status(runs, "demo", made.id, "dismissed", "Dismissed.")
+
+    chat = chatting_client.get(f"/api/chats/{'a' * 12}").json()
+
+    assert [t["role"] for t in chat["turns"]] == ["you", "assistant"]
+    assert chat["turns"][1]["proposals"][0]["status"] == "dismissed"
+    assert chat["tier"] == "strong" and chat["repo"] == "studio"
+
+
+def test_an_unknown_chat_is_not_found(chatting_client: TestClient) -> None:
+    assert chatting_client.get(f"/api/chats/{'0' * 12}").status_code == 404
+    assert chatting_client.get("/api/chats/not-an-id").status_code == 404
+
+
+def test_a_chat_can_be_deleted_only_with_the_session_token(
+    chatting_client: TestClient, runs: Path
+) -> None:
+    keep_chat(runs)
+
+    assert chatting_client.post(f"/api/chats/{'a' * 12}/delete", json={}).status_code == 403
+    assert post(chatting_client, f"/api/chats/{'a' * 12}/delete").status_code == 200
+    assert chatting_client.get("/api/chats").json()["chats"] == []
+    assert post(chatting_client, f"/api/chats/{'a' * 12}/delete").status_code == 404
+
+
 def test_the_chat_needs_the_session_token_and_a_local_origin(chatting_client: TestClient) -> None:
     body = {"message": "hi", "repo": "studio"}
 
