@@ -2,15 +2,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
+import { ProjectsPage } from "../pages/ProjectsPage";
 import { mockApi } from "../test/mockApi";
-import { NewProjectPage } from "./NewProjectPage";
 
 function setup(routes: Record<string, unknown>) {
-  const api = mockApi(routes);
+  const api = mockApi({ "GET /api/projects": [], ...routes });
   render(
-    <MemoryRouter initialEntries={["/new"]}>
+    <MemoryRouter initialEntries={["/"]}>
       <Routes>
-        <Route path="/new" element={<NewProjectPage />} />
+        <Route path="/" element={<ProjectsPage />} />
         <Route path="/p/:slug" element={<div>the project page</div>} />
       </Routes>
     </MemoryRouter>,
@@ -19,6 +19,7 @@ function setup(routes: Record<string, unknown>) {
 }
 
 async function fill() {
+  await userEvent.click(await screen.findByRole("button", { name: "New project" }));
   await userEvent.type(screen.getByLabelText(/^Name/), "my-project");
   await userEvent.type(screen.getByLabelText(/The idea/), "A tool that tracks student org events.");
 }
@@ -27,6 +28,46 @@ const preview = (agent: string) => ({
   ok: true,
   clone: "/home/me/clones/my-project",
   fields: { name: "my-project", idea: "A tool that tracks student org events.", track: "engineering", agent, visibility: "private" },
+});
+
+describe("the new project popup", () => {
+  it("is closed until the plus button is pressed, and the plus says it is expanded", async () => {
+    setup({});
+    const plus = await screen.findByRole("button", { name: "New project" });
+    expect(plus).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await userEvent.click(plus);
+
+    expect(screen.getByRole("dialog", { name: "New project" })).toBeInTheDocument();
+    expect(plus).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("closes with Cancel, with Escape and by pressing the plus again, and keeps the list behind it", async () => {
+    setup({ "GET /api/projects": [] });
+    const plus = await screen.findByRole("button", { name: "New project" });
+
+    await userEvent.click(plus);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await userEvent.click(plus);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await userEvent.click(plus);
+    await userEvent.click(plus);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument();
+  });
+
+  it("the empty list offers to start one in the same popup", async () => {
+    setup({});
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start one" }));
+
+    expect(screen.getByRole("dialog", { name: "New project" })).toBeInTheDocument();
+  });
 });
 
 describe("new project", () => {
