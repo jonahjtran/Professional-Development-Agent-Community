@@ -142,6 +142,10 @@ def _user_message(request: AgentRequest) -> str:
         parts.append(f"Approved input {name}:\n{text}")
     if request.previous_draft is not None:
         parts.append(f"Previous draft:\n{request.previous_draft}")
+    if request.routing_note:
+        parts.append(
+            f"A note from the orchestrator, who chose you for this:\n{request.routing_note}"
+        )
     if request.comments:
         parts.append(f"Feedback to address:\n{request.comments}")
     return "\n\n".join(parts)

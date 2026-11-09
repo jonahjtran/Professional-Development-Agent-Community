@@ -175,7 +175,12 @@ def test_a_project_has_its_timeline_spend_decisions_documents_and_open_questions
     qa = project["stages"][3]
     assert (qa["label"], qa["spent"], qa["cap"]) == ("QA", 1.0, 2.5)
     assert project["warn_fraction"] == 0.8
-    assert project["helper"] == {"explain_usd": 0.0, "chat_usd": 0.0, "coordinator_usd": 0.0}
+    assert project["helper"] == {
+        "explain_usd": 0.0,
+        "chat_usd": 0.0,
+        "coordinator_usd": 0.0,
+        "director_usd": 0.0,
+    }
     assert [g["comments"] for g in project["gates"]] == ["second", "first"]
     assert project["artifacts"] == ["prd.md"]
     [waiting] = project["pending"]

@@ -25,8 +25,26 @@ in CI. Run them on purpose with `ANTHROPIC_API_KEY=... uv run pytest tests/live 
 
 ## The journey is not a straight line
 
-The orchestrator is a deterministic state machine, but it can move back as well as forward
-(`orchestrator/journey.py`): forward only to the next agent, and back to **any earlier agent**
+**The orchestrator chooses the agents.** The five agents are what the orchestrator has available;
+it decides which are needed, what each is told and given, and whether any runs again. There is
+no required order and no required loop. After each agent finishes (and at the start), the
+**Director** (`orchestrator/director.py`, prompt `agents/prompts/director.v1.md`, one call on the
+strong tier, cost in the helper ledger as `director_usd`, not in any agent's cap) reads the idea, the
+journey so far and what exists, and answers with a `NextStep`: run any agent (skipping ahead, or
+repeating one for a stated reason) or finish; a `reason` shown in the journey; a `note` for the next
+agent ("the Product Owner was skipped, keep it small"); and the approved `documents` to hand it. Code
+checks the answer against rules the model cannot override: not the agent that just finished; the
+Developer needs the approved task list; QA needs the tasks built; the Career coach needs QA's report
+when QA runs real tools; a project cannot finish with tasks open; only approved documents can be handed
+on; and after `limits.max_moves` (40) visits it stops choosing. If the call fails or an answer breaks a
+rule, the usual order (PO, Architect, Developer, QA, Career coach) is followed and the trace says why.
+Your approval of each agent's work still gates it. Echo (practice) runs use the usual order. An agent
+that was skipped leaves its documents missing, so the Architect and Career coach take only the
+documents that exist, and the design record leaves the PRD out. Live check (cents):
+`ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k director`.
+
+The orchestrator can move back as well as forward
+(`orchestrator/journey.py`): to **any agent the Director chooses**, and back to **any earlier agent**
 (QA to the Architect, the Developer to the Architect, and so on; never back to intake). Every move
 goes through one function (`_goto` in `pipeline.py`), which refuses an illegal move, saves the move
 in `state.path` (each entry: the agent, why, when, and where it came from) and traces it with its
@@ -71,7 +89,8 @@ the run again, so it spends credits. The chat can propose the same (`propose_sen
 happens when you confirm; the coordinator chooses then. Live check (cents):
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k coordinator`.
 
-**Who decides to go back.** Never a model: the orchestrator follows rules and signals.
+**Going back after a failure.** The rules below are still code, not a model's choice; the Director
+decides the ordinary moves (above).
 
 - QA fails and the failure is in the code: back to the **Architect** for a fix plan (above).
 - The **Developer** reports a problem with the design or task list it cannot solve inside a task

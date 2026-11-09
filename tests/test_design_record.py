@@ -185,8 +185,19 @@ def test_documents_that_are_not_approved_are_never_committed(repo: Path, tmp_pat
     assert "agent/plan" not in git(repo, "branch", "--format=%(refname:short)").split()
 
 
+def test_a_project_without_a_prd_still_gets_its_design_record(repo: Path, tmp_path: Path) -> None:
+    """The orchestrator may decide a project needs no Product Owner."""
+    state = approved_state(tmp_path)
+    without = state.evolve(artifacts={n: a for n, a in state.artifacts.items() if "prd" not in n})
+
+    publish_design_record(without, repo=repo, runs_dir=tmp_path, publisher=FakePublisher())
+
+    files = git(repo, "ls-tree", "-r", "--name-only", "agent/plan").splitlines()
+    assert "docs/architecture.md" in files and "docs/prd.md" not in files
+
+
 def test_a_missing_document_is_refused(repo: Path, tmp_path: Path) -> None:
-    with pytest.raises(DesignRecordError, match="prd.md"):
+    with pytest.raises(DesignRecordError, match="architecture.md"):
         publish_design_record(
             new_state(),
             repo=repo,

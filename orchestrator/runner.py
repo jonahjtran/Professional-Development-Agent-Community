@@ -105,6 +105,10 @@ def _prompt(request: AgentRequest) -> str:
     parts = [f"Project idea:\n{request.idea}"]
     if request.previous_draft is not None:
         parts.append(f"Previous draft:\n{request.previous_draft}")
+    if request.routing_note:
+        parts.append(
+            f"A note from the orchestrator, who chose you for this:\n{request.routing_note}"
+        )
     if request.comments:
         parts.append(f"Feedback to address:\n{request.comments}")
     return "\n\n".join(parts)

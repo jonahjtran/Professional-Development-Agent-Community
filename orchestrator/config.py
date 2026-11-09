@@ -45,6 +45,9 @@ class Limits(_Strict):
     max_qa_loops: int = Field(ge=0)
     # Times the Developer may send the project back to the Architect about a design problem.
     max_replans: int = Field(default=2, ge=0)
+    # Agent visits in one project after which the orchestrator stops choosing and follows the usual
+    # order, so a project cannot loop forever.
+    max_moves: int = Field(default=40, ge=1)
     max_task_usd: float = Field(gt=0)  # spend limit for one Developer task (SDK-enforced)
     max_web_searches: int = Field(ge=0)  # per agent call, for agents allowed to search the web
     max_turns: StageValues[Annotated[int, Field(ge=1)]]

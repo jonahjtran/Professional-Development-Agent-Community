@@ -59,8 +59,12 @@ def prd_stage() -> StageSpec:
 
 
 def _build_architect(output: ArchitectOutput, inputs: dict[str, str]) -> dict[str, str]:
-    prd = PRD.model_validate_json(inputs["prd.json"])
-    unmapped = unmapped_metrics(prd, output.task_list)
+    # Without a PRD (the orchestrator skipped the Product Owner) there are no metrics to map.
+    unmapped = (
+        unmapped_metrics(PRD.model_validate_json(inputs["prd.json"]), output.task_list)
+        if "prd.json" in inputs
+        else []
+    )
     artifacts = {
         "architecture.json": output.model_dump_json(indent=2),
         "architecture.md": render_architecture(output, unmapped),

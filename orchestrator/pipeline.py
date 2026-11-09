@@ -1,10 +1,12 @@
 """The orchestrator: a deterministic state machine that moves a project through its stages.
 
-It never asks an LLM what to do next. Each call to `advance` does one unit of progress and saves
-the state, so a crash at any point resumes from the last saved step.
-
-Stage order:  intake -> product_owner -> architect -> developer -> qa -> career_coach -> done.
-It can also go back to any earlier agent (see `journey.py`); every move is recorded by `_goto`.
+Each call to `advance` does one unit of progress and saves the state, so a crash at any point
+resumes from the last saved step. When an agent finishes, the Director (`director.py`) chooses
+what happens next: any agent, including skipping ahead or repeating one, or finish. Code checks the
+choice against hard rules and falls back to the usual order (intake, product_owner, architect,
+developer, qa, career_coach, done) when there is no director or its answer is not allowed. The rules
+for going back after a failure (QA to the Architect, the Developer to the Architect) are still code.
+Every move is recorded by `_goto` (see `journey.py`).
 Gates (human decisions) follow product_owner, architect, qa and career_coach. With the dummy QA
 agent, a failing QA sends the work back to the developer up to `limits.max_qa_loops` times. With the
 real QA tools (`ctx.qa`) and a fix planner (`ctx.fixer`), a failing report goes to the Architect,
@@ -27,6 +29,7 @@ from orchestrator.artifacts import (
     STAGE_INPUTS,
     ArtifactStore,
     approve_artifacts,
+    lenient_inputs,
     record_artifacts,
     stage_inputs,
 )
@@ -42,6 +45,7 @@ from orchestrator.career_publish import CareerPublisher
 from orchestrator.career_stage import CareerError, CareerPreparer, gate_items, human_evidence
 from orchestrator.config import Config
 from orchestrator.designrecord import DesignRecordError, publish_design_record
+from orchestrator.director import Directing, Facts, check, fallback_step
 from orchestrator.evidence import build_evidence
 from orchestrator.fix_types import FixPlanner, FixRequest, render_plan
 from orchestrator.gates import (
@@ -112,6 +116,8 @@ class AgentRequest(BaseModel):
     task_id: str | None = None  # the Developer builds one task per run
     attempt: int = 0  # 0 for the first try at a task; 1, 2, ... after each rejection
     inputs: dict[str, str] = Field(default_factory=dict)  # approved artifacts, by name
+    # What the orchestrator wants this agent to know when it chose it (given once).
+    routing_note: str | None = None
 
     model_config = ConfigDict(frozen=True)
 
@@ -205,6 +211,9 @@ class PipelineContext:
     fixer: FixPlanner | None = None
     # When set, approved career items are published as pull requests (see career_publish).
     career_publisher: CareerPublisher | None = None
+    # When set, the orchestrator chooses which agent runs after each one finishes. When None, the
+    # usual order is followed.
+    director: Directing | None = None
 
 
 def run_pipeline(state: ProjectState, ctx: PipelineContext) -> ProjectState:
@@ -257,7 +266,7 @@ def _run_stage(
     state: ProjectState, ctx: PipelineContext, *, budget_checked: bool = False
 ) -> ProjectState:
     if state.stage == Stage.INTAKE:
-        return _move(state, ctx, Stage.PRODUCT_OWNER)
+        return _route(state, ctx, Stage.INTAKE)
 
     if state.handoff is not None and state.handoff.purpose == "human_design" and ctx.fixer is None:
         # No fix planner in this run (an api-only project): the Architect simply revises its own
@@ -279,7 +288,7 @@ def _run_stage(
     if loop:
         task = _next_task(state, ctx)
         if task is None:  # every task is built and approved
-            return _move(state, ctx, Stage.QA)
+            return _route(state, ctx, Stage.DEVELOPER)
         state = state.evolve(current_task_id=task.id)
 
     if not budget_checked:
@@ -320,6 +329,8 @@ def _run_stage(
         _raise_pause_todo(ctx, state, str(error))
         return billed.evolve(status=Status.HALTED)
     state = record_cost(state, stage, result.cost_usd)
+    if state.handoff is not None and state.handoff.purpose == "routed":
+        state = state.evolve(handoff=None)  # the orchestrator's note was given; it is not repeated
     spec = ctx.stages.get(stage)
     summary: str | None = None
     details: dict[str, object] = {}
@@ -391,7 +402,7 @@ def _run_stage(
     _write_draft(ctx, state, output)
 
     if stage not in _GATED and not loop:
-        return _move(state, ctx, _next_stage(stage))
+        return _route(state, ctx, stage)
 
     waiting = open_gate(state, title=f"Review the {stage.value} output")
     _save(waiting, ctx)  # save before asking, so a crash resumes at this gate
@@ -430,6 +441,14 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
             previous, comments = draft, last.comments
         elif last.outcome == GateOutcome.REJECT:
             comments = last.comments or None
+    routed = state.handoff if state.handoff and state.handoff.purpose == "routed" else None
+    inputs: dict[str, str] = {}
+    if (spec or loop) and stage in STAGE_INPUTS:
+        inputs = (
+            lenient_inputs(state, stage, store, routed.documents if routed else ())
+            if ctx.director is not None
+            else stage_inputs(state, stage, store)
+        )
     return AgentRequest(
         stage=stage,
         project=state.project_slug,
@@ -438,9 +457,8 @@ def _build_request(state: ProjectState, ctx: PipelineContext) -> AgentRequest:
         comments=comments,
         revision=state.revisions.get(stage, 0),
         track=state.track.value,
-        inputs=stage_inputs(state, stage, store)
-        if (spec or loop) and stage in STAGE_INPUTS
-        else {},
+        inputs=inputs,
+        routing_note=(routed.note or None) if routed else None,
         task_id=state.current_task_id if loop else None,
         attempt=_attempt(state) if loop else 0,
     )
@@ -581,7 +599,7 @@ def _settle(state: ProjectState, ctx: PipelineContext) -> ProjectState:
                 Stage.ARCHITECT,
                 "requirements changed: planning the new tasks",
             )
-    return _move(state.evolve(qa_loops=0), ctx, _next_stage(state.stage))
+    return _route(state.evolve(qa_loops=0), ctx, state.stage)
 
 
 def _prd_change_note(state: ProjectState, ctx: PipelineContext, comment: str) -> str:
@@ -606,7 +624,13 @@ def _store_artifacts(
     """
     model = spec.schema.model_validate_json(output)
     store = ArtifactStore(ctx.runs_dir, state.project_slug)
-    inputs = stage_inputs(state, state.stage, store) if state.stage in STAGE_INPUTS else {}
+    inputs: dict[str, str] = {}
+    if state.stage in STAGE_INPUTS:
+        inputs = (
+            lenient_inputs(state, state.stage, store)
+            if ctx.director is not None
+            else stage_inputs(state, state.stage, store)
+        )
     previous_md = (
         store.read(state.artifacts[spec.md_name]) if spec.md_name in state.artifacts else None
     )
@@ -774,14 +798,83 @@ def _next_stage(stage: Stage) -> Stage:
     return _ORDER[_ORDER.index(stage) + 1]
 
 
-def _goto(state: ProjectState, ctx: PipelineContext, to: Stage, reason: str) -> ProjectState:
+def _facts(state: ProjectState, ctx: PipelineContext, finished: Stage) -> Facts:
+    """What the Director is told and what its choice is checked against."""
+    tasks_planned = "tasks.json" in state.artifacts and (
+        state.artifacts["tasks.json"].approved_at is not None
+    )
+    tasks_open = False
+    if tasks_planned and ctx.publisher is not None:
+        store = ArtifactStore(ctx.runs_dir, state.project_slug)
+        plan = TaskList.model_validate_json(store.read(state.artifacts["tasks.json"]))
+        tasks_open = any(t.id not in state.completed_tasks for t in plan.tasks)
+    return Facts(
+        current=finished,
+        tasks_planned=tasks_planned,
+        tasks_open=tasks_open,
+        qa_report="test_report.json" in state.artifacts,
+        approved=frozenset(n for n, a in state.artifacts.items() if a.approved_at is not None),
+        moves=len(state.path),
+        max_moves=ctx.config.limits.max_moves,
+        needs_task_list=ctx.publisher is not None,
+        needs_qa_report=ctx.qa is not None,
+    )
+
+
+def _route(state: ProjectState, ctx: PipelineContext, finished: Stage) -> ProjectState:
+    """Choose what happens after `finished`: the Director's choice if allowed, else the usual."""
+    step = fallback_step(finished)
+    why = ""
+    if ctx.director is not None:
+        facts = _facts(state, ctx, finished)
+        if facts.moves >= facts.max_moves:
+            why = f"it has made {facts.moves} moves, the limit"
+        else:
+            chosen = ctx.director.decide(state, finished, facts)
+            problem = "it gave no usable answer" if chosen is None else check(chosen, facts)
+            if chosen is not None and problem is None:
+                step, why = chosen, ""
+                _trace(
+                    ctx,
+                    state,
+                    EventType.TRANSITION,
+                    details={"director": step.model_dump(), "from": finished.value},
+                )
+                if step.action == "finish":
+                    return state.evolve(status=Status.DONE, rework=None, handoff=None)
+                handoff = Handoff(
+                    purpose="routed", note=step.note.strip(), documents=step.documents
+                )
+                assert step.agent is not None
+                return _goto(
+                    state.evolve(handoff=handoff), ctx, Stage(step.agent), step.reason, routed=True
+                )
+            why = problem or ""
+    if why:
+        _trace(
+            ctx,
+            state,
+            EventType.TRANSITION,
+            details={"director_fallback": why, "note": "the usual order was followed"},
+        )
+    if step.action == "finish":
+        return state.evolve(status=Status.DONE, rework=None, handoff=None)
+    assert step.agent is not None
+    return _move(state, ctx, Stage(step.agent))
+
+
+def _goto(
+    state: ProjectState, ctx: PipelineContext, to: Stage, reason: str, *, routed: bool = False
+) -> ProjectState:
     """Move to another agent, forward or back, and record the move and why.
 
     The orchestrator is not a straight line: it may go back to any earlier agent. Every move is
     saved in the project's path and traced with its direction, so the UI can show where the
     project has been and why, and no agent is ever simply "done".
     """
-    if not (can_move(state.stage, to) or _is_return(state, to)):
+    if not (routed and to != state.stage) and not (
+        can_move(state.stage, to) or _is_return(state, to)
+    ):
         raise ValueError(f"cannot move from {state.stage.value} to {to.value}")
     way = direction(state.stage, to)
     _trace(

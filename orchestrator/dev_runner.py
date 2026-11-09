@@ -346,6 +346,10 @@ class DevRunner:
                 "Notes from the person who runs this project (their own instructions, follow "
                 "them unless they conflict with your rules):\n" + "\n".join(f"- {n}" for n in notes)
             )
+        if request.routing_note:
+            parts.append(
+                f"A note from the orchestrator, who chose you for this:\n{request.routing_note}"
+            )
         if request.previous_draft is not None:
             parts.append(f"Your previous report:\n{request.previous_draft}")
         if request.comments:
