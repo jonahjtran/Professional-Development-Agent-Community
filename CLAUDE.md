@@ -188,6 +188,9 @@ for other people to use API keys, so keep this to your own projects. Live check 
 from your plan, a fake key in the environment on purpose):
 `ANTHROPIC_API_KEY=sk-ant-fake uv run pytest tests/live --live -s -k subscription`.
 
+**New project.** There is no New project page. The **+** beside the Projects title expands a form
+beneath it (Review, then Create and start); Cancel or Escape closes it.
+
 **Settings menu.** Models (`/models`) and Rules (`/rules`) are reached from the profile button at the
 right of the top bar, not the main bar. There is no sign-in (the UI listens on this computer only),
 so the menu has no logout.
@@ -283,18 +286,18 @@ and a speech bubble (animated when working, pulsing when waiting for you; click 
 notes, agenda and latest steps), and a board of the Developer's tasks (To do, Working, In review,
 Done, with pull request links).
 
-**Tasks page** (`/tasks`, `GET /api/tasks`, `orchestrator/task_control.py`). Every unfinished
-project, with its current agent and its Developer tasks (working, next up, waiting, in review; done
-ones are only counted), and cancelled tasks below. A project runs one agent at a time, so **Pause**
-(on the project, not on a task) pauses the project and keeps everything, as on the project page.
-**Kill** cancels a task: it is removed from the task list, its folder and branch are discarded if
-the branch holds no commits (a branch with commits is never touched), and it is recorded in
-`runs/<project>/cancelled_tasks.json`. A task cannot be killed when it is finished, waiting for your
-review (reject it there), or needed by another unfinished task (the message names which). The run
-owns the saved state, so a kill asked of a live run stops the run (a halt) and is queued in
+**Project tasks** (the Tasks section of each project page, `GET /api/projects/<p>/tasks`,
+`orchestrator/task_control.py`). Each project lists only its own agent and Developer tasks (working,
+next up, waiting, in review; done ones are only counted); there is no list across projects. A project
+runs one agent at a time, so **Pause** (on the task that is running, or on the agent when no task
+is) pauses the project and keeps everything; **Resume** continues the same task. **Stop** removes a
+task: it is dropped from the task list, its folder and branch are discarded if the branch holds no
+commits (a branch with commits is never touched), and it is no longer shown anywhere (a record stays
+in `runs/<project>/cancelled_tasks.json`). A task cannot be stopped when it is finished, waiting for
+your review (reject it there), or needed by another unfinished task (the message names which). The
+run owns the saved state, so a stop asked of a live run stops the run (a halt) and is queued in
 `cancel_requests.json`; the run applies it as it stops, and a paused project is changed at once. The
-Architect owns the plan, so nobody can add, edit or reorder tasks here, and the Architect's own row
-has only Pause.
+Architect owns the plan, so nobody can add, edit or reorder tasks here.
 
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).

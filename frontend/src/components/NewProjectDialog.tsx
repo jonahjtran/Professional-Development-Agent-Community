@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { ApiError, post } from "../api";
-import { Banner, Button, Card, Section, Segmented } from "../components/ui";
+import { Banner, Button, Card, Section, Segmented } from "./ui";
 import type { NewProjectFields } from "../types";
 
 const blank: NewProjectFields = {
@@ -12,14 +13,30 @@ const blank: NewProjectFields = {
   visibility: "private",
 };
 
+function Panel({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="popup" role="dialog" aria-label="New project">
+      {children}
+    </section>
+  );
+}
+
 interface Preview { clone: string; fields: NewProjectFields }
 
-export function NewProjectPage() {
+/** The new-project form, expanding under the Projects header. Closes with Cancel or Escape. */
+export function NewProjectDialog({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const [fields, setFields] = useState<NewProjectFields>(blank);
   const [problems, setProblems] = useState<string[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [onClose]);
   const set = <K extends keyof NewProjectFields>(key: K, value: NewProjectFields[K]) =>
     setFields({ ...fields, [key]: value });
 
@@ -50,8 +67,8 @@ export function NewProjectPage() {
   if (preview) {
     const f = preview.fields;
     return (
-      <>
-        <h1>Confirm</h1>
+      <Panel>
+        <h2>Confirm</h2>
         <Card>
           <h3>{f.name}</h3>
           <p>{f.idea}</p>
@@ -83,13 +100,13 @@ export function NewProjectPage() {
           <Button disabled={busy} onClick={() => void start()}>Create and start</Button>
           <Button tone="secondary" onClick={() => setPreview(null)}>Back</Button>
         </div>
-      </>
+      </Panel>
     );
   }
 
   return (
-    <>
-      <h1>New project</h1>
+    <Panel>
+      <h2>New project</h2>
       {problems.map((p) => <Banner key={p}>{p}</Banner>)}
       <label className="field">
         Name (also the repository name)
@@ -141,8 +158,8 @@ export function NewProjectPage() {
 
       <div className="actions">
         <Button disabled={busy} onClick={() => void review()}>Review</Button>
-        <Link to="/">Cancel</Link>
+        <Button tone="secondary" onClick={onClose}>Cancel</Button>
       </div>
-    </>
+    </Panel>
   );
 }

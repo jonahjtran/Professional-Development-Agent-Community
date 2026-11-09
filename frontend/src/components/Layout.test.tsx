@@ -17,7 +17,8 @@ describe("the profile menu", () => {
 
     expect(within(main).queryByRole("link", { name: "Models" })).toBeNull();
     expect(within(main).queryByRole("link", { name: "Rules" })).toBeNull();
-    expect(within(main).getByRole("link", { name: "Tasks" })).toBeInTheDocument();
+    expect(within(main).queryByRole("link", { name: "Tasks" })).toBeNull(); // tasks live in each project
+    expect(within(main).getByRole("link", { name: "Projects" })).toBeInTheDocument();
   });
 
   it("opens from the profile button and lists Models and Rules, and nothing that does not exist", async () => {

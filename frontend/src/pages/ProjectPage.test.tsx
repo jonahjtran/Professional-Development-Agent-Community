@@ -391,4 +391,18 @@ describe("the project page", () => {
       expect(api.posts()).toEqual([]);
     });
   });
+
+  it("shows this project's own tasks with Pause and Stop", async () => {
+    const tasks = {
+      slug: "demo", status: "running", alive: true, can_pause: true, can_resume: false,
+      agent: { stage: "developer", label: "Developer", state: "running" },
+      tasks: [{ id: "T2", title: "Add the API", state: "working", waiting_on: [], pr_url: null, can_kill: true, kill_blocked: null }],
+    };
+    open(project(), { "GET /api/projects/demo/tasks": tasks });
+
+    const row = (await screen.findByText("Add the API")).closest("li") as HTMLElement;
+
+    expect(within(row).getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Stop" })).toBeInTheDocument();
+  });
 });

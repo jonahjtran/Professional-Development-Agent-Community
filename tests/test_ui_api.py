@@ -1836,39 +1836,57 @@ def project_with_tasks(runs: Path, **fields: Any) -> Any:
     return state
 
 
-def test_the_task_list_covers_every_unfinished_project(client: TestClient, runs: Path) -> None:
+def test_a_projects_task_list_has_only_its_own_tasks(client: TestClient, runs: Path) -> None:
     project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
-    make_project(runs, "finished", stage=Stage.CAREER_COACH, status=Status.DONE)
+    make_project(runs, "other", stage=Stage.DEVELOPER)
 
-    body = client.get("/api/tasks").json()
+    project = client.get("/api/projects/demo/tasks").json()
 
-    assert [p["slug"] for p in body["projects"]] == ["demo"]
-    project = body["projects"][0]
+    assert project["slug"] == "demo"
     assert project["agent"] == {"stage": "developer", "label": "Developer", "state": "running"}
     assert [t["id"] for t in project["tasks"]] == ["T1", "T2"]
     assert project["tasks"][0]["state"] == "working" and project["tasks"][0]["can_kill"] is False
     assert project["tasks"][1]["state"] == "waiting" and project["tasks"][1]["can_kill"] is True
     assert project["can_pause"] is False  # no live run to pause
+    assert client.get("/api/projects/nope/tasks").status_code == 404
 
 
-def test_a_live_run_can_be_paused_from_the_task_list(client: TestClient, runs: Path) -> None:
+def test_there_is_no_list_of_every_projects_tasks(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert client.get("/api/tasks").status_code in (404, 405)
+
+
+def test_a_live_run_can_be_paused_from_its_task_list(client: TestClient, runs: Path) -> None:
     project_with_tasks(runs, status=Status.RUNNING, current_task_id="T1")
 
     with run_marker(runs, "demo", beat_seconds=60):
-        project = client.get("/api/tasks").json()["projects"][0]
+        project = client.get("/api/projects/demo/tasks").json()
 
-    assert project["alive"] is True and project["can_pause"] is True
+    assert project["alive"] is True and project["can_pause"] is True and not project["can_resume"]
 
 
-def test_cancelled_tasks_are_listed_with_their_projects(client: TestClient, runs: Path) -> None:
+def test_a_paused_project_can_be_resumed_from_its_task_list(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    project = client.get("/api/projects/demo/tasks").json()
+
+    assert project["can_resume"] is True and project["can_pause"] is False
+
+
+def test_a_stopped_task_leaves_the_list_and_is_not_shown_anywhere(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.state import save_state
     from orchestrator.task_control import cancel_task
 
     state = project_with_tasks(runs, status=Status.HALTED)
-    cancel_task(runs, state, "T2", repo=None)
+    save_state(runs, cancel_task(runs, state, "T2", repo=None))
 
-    cancelled = client.get("/api/tasks").json()["projects"][0]["cancelled"]
+    project = client.get("/api/projects/demo/tasks").json()
 
-    assert [c["id"] for c in cancelled] == ["T2"]
+    assert [t["id"] for t in project["tasks"]] == ["T1"]
+    assert "cancelled" not in project
 
 
 def kill(client: TestClient, task_id: str = "T2") -> Any:
@@ -1885,7 +1903,7 @@ def test_killing_a_task_of_a_paused_project_cancels_it_at_once(
     response = kill(client)
 
     assert response.status_code == 200 and response.json()["state"] == "cancelled"
-    assert [t["id"] for t in client.get("/api/tasks").json()["projects"][0]["tasks"]] == ["T1"]
+    assert [t["id"] for t in client.get("/api/projects/demo/tasks").json()["tasks"]] == ["T1"]
     assert load_state(runs, "demo").status == Status.HALTED
 
 
@@ -1902,7 +1920,7 @@ def test_killing_a_task_while_the_run_is_going_stops_the_run_and_queues_it(
 
     assert response.status_code == 200 and response.json()["state"] == "stopping"
     assert halt_requested(runs, "demo") and pending_cancels(runs, "demo") == ["T2"]
-    assert [t["id"] for t in client.get("/api/tasks").json()["projects"][0]["tasks"]] == [
+    assert [t["id"] for t in client.get("/api/projects/demo/tasks").json()["tasks"]] == [
         "T1",
         "T2",
     ]

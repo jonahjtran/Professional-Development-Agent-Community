@@ -5,13 +5,11 @@ import { ChatPage } from "./pages/ChatPage";
 import { HealthPage } from "./pages/HealthPage";
 import { InboxPage } from "./pages/InboxPage";
 import { ModelsPage } from "./pages/ModelsPage";
-import { NewProjectPage } from "./pages/NewProjectPage";
 import { NotFound } from "./pages/NotFound";
 import { ProjectPage } from "./pages/ProjectPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { QuestionPage } from "./pages/QuestionPage";
 import { RulesPage } from "./pages/RulesPage";
-import { TasksPage } from "./pages/TasksPage";
 import { TeamPage } from "./pages/TeamPage";
 import { TracePage } from "./pages/TracePage";
 
@@ -25,10 +23,8 @@ export function App() {
         <Route path="p/:slug/team" element={<TeamPage />} />
         <Route path="p/:slug/trace" element={<TracePage />} />
         <Route path="p/:slug/q/:id" element={<QuestionPage />} />
-        <Route path="tasks" element={<TasksPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="inbox" element={<InboxPage />} />
-        <Route path="new" element={<NewProjectPage />} />
         <Route path="models" element={<ModelsPage />} />
         <Route path="rules" element={<RulesPage />} />
         <Route path="health" element={<HealthPage />} />
