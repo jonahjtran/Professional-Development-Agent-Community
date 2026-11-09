@@ -505,8 +505,9 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
 
     @register(
         "propose_developer_backend",
-        "Propose which model runs the Developer for one project: claude (Sonnet 5.5) or local "
-        "(the open-source model on this computer). It applies from the next task.",
+        "Propose which model runs the Developer for EVERY project (one setting for all): claude "
+        "(Sonnet 5.5) or local (the open-source model on this computer). It applies from the next "
+        "task.",
         _schema({"project": "string", "backend": "string"}),
     )
     def _developer_backend(args: dict[str, Any]) -> str:
@@ -518,7 +519,7 @@ def build_studio_tools(ctx: StudioContext) -> list[SdkMcpTool[Any]]:
             args["project"],
             "set_developer_backend",
             {"backend": args["backend"]},
-            f"Run {args['project']}'s Developer on the {args['backend']} model ({what}), "
+            f"Run every project's Developer on the {args['backend']} model ({what}), "
             "from the next task",
         )
 

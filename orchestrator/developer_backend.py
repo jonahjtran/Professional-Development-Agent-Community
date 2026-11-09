@@ -19,7 +19,7 @@ from typing import Any
 
 from orchestrator.config import Config, LocalConfig
 from orchestrator.envsafe import hidden_env
-from orchestrator.project_settings import project_settings_path, read_settings, update_settings
+from orchestrator.project_settings import read_settings, update_settings
 from orchestrator.rules import home_dir
 from orchestrator.state import atomic_write
 
@@ -39,13 +39,12 @@ def _global_path() -> Path:
 
 
 def get_developer_backend(runs_dir: Path, project: str) -> BackendChoice:
-    mine = read_settings(project_settings_path(runs_dir, project)).get(_KEY)
-    if mine in BACKENDS:
-        return BackendChoice(mine, "project")
-    everywhere = read_settings(_global_path()).get(_KEY)
-    if everywhere in BACKENDS:
-        return BackendChoice(everywhere, "global")
-    return BackendChoice("claude", "default")
+    """Which model runs the Developer. One choice for every project: the global one, else Claude.
+
+    A per-project setting used to exist; one left in a project's settings file is ignored, so it
+    cannot disagree with what the Models page says.
+    """
+    return get_default_backend()
 
 
 def get_default_backend() -> BackendChoice:
@@ -64,12 +63,6 @@ def _check(backend: str | None) -> None:
 def set_global_backend(backend: str) -> None:
     _check(backend)
     update_settings(_global_path(), **{_KEY: backend})
-
-
-def set_project_backend(runs_dir: Path, project: str, backend: str | None) -> None:
-    """Choose for one project, or None to follow the global choice."""
-    _check(backend)
-    update_settings(project_settings_path(runs_dir, project), **{_KEY: backend})
 
 
 def developer_model(backend: str, config: Config) -> str:

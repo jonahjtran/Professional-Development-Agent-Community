@@ -186,34 +186,6 @@ describe("the project page", () => {
     expect(screen.getByText("prd.md")).toBeInTheDocument();
   });
 
-  it("says who pays for the Developer and lets you switch it for this project", async () => {
-    const api = open(project(), { "POST /api/projects/demo/developer-billing": { ok: true } });
-
-    expect(await screen.findByLabelText("Default billing")).toBeChecked();
-    await userEvent.click(screen.getByLabelText("My subscription"));
-
-    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ billing: "subscription" }]));
-  });
-
-  it("shows when the project uses your subscription, and can go back to the default", async () => {
-    const api = open(
-      project({ developer: { backend: "claude", source: "default", model: "claude-sonnet-5-5", billing: "subscription", billing_source: "project" } }),
-      { "POST /api/projects/demo/developer-billing": { ok: true } },
-    );
-
-    expect(await screen.findByText(/paid from your subscription/i)).toBeInTheDocument();
-    expect(screen.getByLabelText("My subscription")).toBeChecked();
-    await userEvent.click(screen.getByLabelText("Default billing"));
-
-    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ billing: "default" }]));
-  });
-
-  it("says billing does not apply to the local model", async () => {
-    open(project({ developer: { backend: "local", source: "project", model: "qwen3-coder:30b", billing: "api", billing_source: "default" } }));
-
-    expect(await screen.findByText(/does not use your Claude account or API credits/i)).toBeInTheDocument();
-  });
-
   it("lets you send a finished project back to an agent with an instruction", async () => {
     const done = project(
       {
@@ -288,33 +260,14 @@ describe("the project page", () => {
     expect(await screen.findByText("demo is already running. Pause it first.")).toBeInTheDocument();
   });
 
-  it("shows which model the Developer uses, and why", async () => {
+  it("has no Developer model or billing controls: those are set once, in Models", async () => {
     open(project());
+    await screen.findByText("An idea");
 
-    expect(await screen.findByText("claude-sonnet-5-5")).toBeInTheDocument();
-    expect(screen.getByText(/Claude, the default/)).toBeInTheDocument();
-  });
-
-  it("switches this project's Developer to the local model", async () => {
-    const api = open(project(), { "POST /api/projects/demo/developer-backend": { ok: true } });
-    await screen.findByText("claude-sonnet-5-5");
-
-    await userEvent.click(screen.getByLabelText("Local model"));
-
-    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ backend: "local" }]));
-  });
-
-  it("can go back to following the default", async () => {
-    const api = open(
-      project({ developer: { backend: "local", source: "project", model: "qwen3-coder:27b", billing: "api", billing_source: "default" } }),
-      { "POST /api/projects/demo/developer-backend": { ok: true } },
-    );
-    expect(await screen.findByText("qwen3-coder:27b")).toBeInTheDocument();
-    expect(screen.getByLabelText("Local model")).toBeChecked();
-
-    await userEvent.click(screen.getByLabelText("Follow the default"));
-
-    await waitFor(() => expect(api.posts().map((p) => p.body)).toEqual([{ backend: "default" }]));
+    expect(screen.queryByText("Developer model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Local model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("My subscription")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Follow the default")).not.toBeInTheDocument();
   });
 
   it("links to the team page", async () => {

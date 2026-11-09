@@ -34,7 +34,6 @@ from orchestrator.developer_backend import (
     get_default_backend,
     get_developer_backend,
     set_global_backend,
-    set_project_backend,
 )
 from orchestrator.developer_billing import (
     SubscriptionStatus,
@@ -42,7 +41,6 @@ from orchestrator.developer_billing import (
     get_default_billing,
     get_developer_billing,
     set_global_billing,
-    set_project_billing,
 )
 from orchestrator.explain import Explainer, ExplainInput, ExplainResult
 from orchestrator.halt import clear_halt, request_halt
@@ -563,28 +561,6 @@ def create_app(
             return fail(400, str(error))
         return JSONResponse({"ok": True})
 
-    @app.post("/api/projects/{slug}/developer-billing")
-    async def set_project_developer_billing(request: Request, slug: str) -> JSONResponse:
-        body = await checked_body(request)
-        view_or_404(slug)
-        choice = str(body.get("billing", ""))
-        try:
-            set_project_billing(runs_dir, slug, None if choice == "default" else choice)
-        except ValueError as error:
-            return fail(400, str(error))
-        return JSONResponse({"ok": True})
-
-    @app.post("/api/projects/{slug}/developer-backend")
-    async def set_project_developer(request: Request, slug: str) -> JSONResponse:
-        body = await checked_body(request)
-        view_or_404(slug)
-        choice = str(body.get("backend", ""))
-        try:
-            set_project_backend(runs_dir, slug, None if choice == "default" else choice)
-        except ValueError as error:
-            return fail(400, str(error))
-        return JSONResponse({"ok": True})
-
     def todo_view(todo: Todo) -> dict[str, Any]:
         return {
             "id": todo.id,
@@ -908,10 +884,11 @@ def create_app(
             return 200, f"Autonomy set to {level}."
         if p.action == "set_developer_backend":
             try:
-                set_project_backend(runs_dir, p.project, str(p.args.get("backend", "")))
+                set_global_backend(str(p.args.get("backend", "")))
             except ValueError as error:
                 return 400, str(error)
-            return 200, f"The Developer uses the {p.args.get('backend')} model from the next task."
+            backend = p.args.get("backend")
+            return 200, f"Every project's Developer uses the {backend} model from the next task."
         if p.action == "send_back":
             code, problem, decision = do_send_back(
                 p.project, str(p.args.get("to", "")), str(p.args.get("comment", ""))

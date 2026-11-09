@@ -56,8 +56,8 @@ export function ModelsPage() {
             ]}
           />
           <p className="hint">
-            A project can override this on its own page. A switch applies from the next task; a task already
-            running finishes on the model it started with.
+            This applies to every project. A switch applies from the next task; a task already running
+            finishes on the model it started with.
           </p>
           {changed && <p className="hint">Saved. It applies from the next task.</p>}
         </Card>
@@ -93,8 +93,8 @@ export function ModelsPage() {
           </p>
           <p className="hint">
             Only the Developer can use a subscription. The planning agents (Product Owner, Architect,
-            QA, Career coach) and the helpers still call the API with your key. A project can override
-            this on its own page; a switch applies from the next task.
+            QA, Career coach) and the helpers still call the API with your key. This applies to every
+            project; a switch applies from the next task.
           </p>
         </Card>
       </Section>

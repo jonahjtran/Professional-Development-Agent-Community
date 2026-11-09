@@ -339,7 +339,8 @@ def test_switching_the_developer_model_is_a_proposal(tools: dict[str, Any], runs
     assert not error and "awaiting" in text.lower()
     [proposal] = list_proposals(runs)
     assert proposal.action == "set_developer_backend" and proposal.args == {"backend": "local"}
-    assert "local" in proposal.summary.lower() and "next task" in proposal.summary.lower()
+    assert "local" in proposal.summary.lower() and "every project" in proposal.summary.lower()
+    assert "next task" in proposal.summary.lower()
     assert get_developer_backend(runs, "demo").source == "default"  # nothing changed yet
 
 

@@ -164,8 +164,8 @@ Three details that decide how many approvals you see:
 ## The Developer's model
 
 The Developer runs inside Claude Code's harness whichever model drives it, so its tools, permission
-policy and sandbox are identical. Two backends, chosen **per project** (overrides) or **globally**,
-and read at the start of every task, so a switch applies from the next task on:
+policy and sandbox are identical. Two backends, chosen **once for every project** (Models page, in the
+settings menu) and read at the start of every task, so a switch applies from the next task on:
 
 - **Claude** (default): `models.developer` in `config.yaml`, currently `claude-sonnet-5-5` (the
   planning agents, QA, the career coach and the chat stay on `models.strong`, Opus 5.5).
@@ -181,7 +181,7 @@ and read at the start of every task, so a switch applies from the next task on:
 runs: *API credits* (default; the Developer's Claude Code is given your `ANTHROPIC_API_KEY`) or *My
 subscription*, where that key is blanked for the Developer's process only, so Claude Code uses the
 Claude account you signed in with (`claude auth login`, or a token from `claude setup-token` in
-`CLAUDE_CODE_OAUTH_TOKEN`). Per project (overrides) or global, read at every task start, like the
+`CLAUDE_CODE_OAUTH_TOKEN`). One setting for every project (Models page), read at every task start, like the
 model switch. Before each subscription task Studio runs `claude auth status` with the key blanked
 (it keeps only signed-in and the method, never the account details) and pauses with the exact fix
 if you are not signed in or Claude Code would still use an API key; if the check cannot run it
@@ -202,14 +202,14 @@ beneath it (Review, then Create and start); Cancel or Escape closes it.
 right of the top bar, not the main bar. There is no sign-in (the UI listens on this computer only),
 so the menu has no logout.
 
-The **Models** page (`/models`) shows every agent's exact model id, switches the default Developer
-backend, and shows whether Ollama is ready (with the fix when it is not). Each project page shows
-which model its Developer uses and why, with a switch (follow the default, Claude, or the local
-model). Health lists the local model only when something is set to use it.
+The **Models** page (`/models`) shows every agent's exact model id, switches the Developer's model
+and who pays for it (one setting for every project; there is no per-project switch, and a
+per-project setting left over from before is ignored), and shows whether Ollama is ready (with the
+fix when it is not). Health lists the local model only when something is set to use it.
 The Team page shows each agent's exact model id under its name, marked local when it is the
 open-source model and "running now" (the Developer's current task), "used last" (what the API
-reported) or "will use" (configured, not yet used). The chat can propose switching a project's
-Developer model; it applies once you confirm, from the next task.
+reported) or "will use" (configured, not yet used). The chat can propose switching the Developer
+model (for every project); it applies once you confirm, from the next task.
 
 ## Skills the Developer follows
 

@@ -10,7 +10,6 @@ from orchestrator.developer_backend import (
     developer_model,
     get_developer_backend,
     set_global_backend,
-    set_project_backend,
 )
 from orchestrator.project_settings import get_autonomy, set_autonomy
 from tests.factories import make_config
@@ -63,24 +62,21 @@ def test_the_global_choice_applies_to_every_project(tmp_path: Path) -> None:
     assert (choice.backend, choice.source) == ("local", "global")
 
 
-def test_a_project_choice_beats_the_global_one_and_can_be_cleared(tmp_path: Path) -> None:
+def test_a_leftover_project_setting_is_ignored_the_global_one_applies_everywhere(
+    tmp_path: Path,
+) -> None:
     runs = tmp_path / "runs"
     set_global_backend("local")
+    (runs / "demo").mkdir(parents=True)
+    (runs / "demo" / "settings.json").write_text('{"developer_backend": "claude"}')
 
-    set_project_backend(runs, "demo", "claude")
-    assert get_developer_backend(runs, "demo").backend == "claude"
-    assert get_developer_backend(runs, "demo").source == "project"
-    assert get_developer_backend(runs, "other").backend == "local"
-
-    set_project_backend(runs, "demo", None)
+    assert get_developer_backend(runs, "demo").backend == "local"
     assert get_developer_backend(runs, "demo").source == "global"
 
 
 def test_an_unknown_backend_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         set_global_backend("gpt")
-    with pytest.raises(ValueError):
-        set_project_backend(tmp_path, "demo", "gpt")
 
 
 def test_a_damaged_settings_file_falls_back_to_claude(tmp_path: Path) -> None:
@@ -92,7 +88,7 @@ def test_a_damaged_settings_file_falls_back_to_claude(tmp_path: Path) -> None:
 
 def test_the_two_settings_do_not_overwrite_each_other(tmp_path: Path) -> None:
     set_autonomy(tmp_path, "demo", "autonomous")
-    set_project_backend(tmp_path, "demo", "local")
+    set_global_backend("local")
 
     assert get_autonomy(tmp_path, "demo") == "autonomous"
     assert get_developer_backend(tmp_path, "demo").backend == "local"
