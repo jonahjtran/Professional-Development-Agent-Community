@@ -56,7 +56,19 @@ export function ProjectTasks({ slug }: { slug: string }) {
     }
   }
 
-  if (error || data === null || data.status === "done") return null;
+  async function stopGoal(title: string) {
+    if (!window.confirm(`Stop “${title}”? It is removed, and the project goes back to where it was before. Tasks already planned for it stay in your list, each one stoppable.`)) return;
+    setProblem(null);
+    try {
+      const reply = await post<{ state: string }>(`/api/projects/${slug}/goal/stop`);
+      setNotice(reply.state === "stopping" ? `“${title}” will be removed when the run stops.` : `“${title}” was stopped and removed.`);
+      reload();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
+  if (error || data === null || (data.status === "done" && !data.goal)) return null;
 
   const open = data.tasks.filter((t) => t.state !== "done");
   const done = data.tasks.length - open.length;
@@ -75,8 +87,14 @@ export function ProjectTasks({ slug }: { slug: string }) {
       <div className="board-agent">
         <span>
           {data.agent.label} <Pill tone={data.agent.state === "running" ? "running" : "waiting"}>{data.agent.state}</Pill>
+          {data.goal && <span className="muted"> · Working on: {data.goal.title}</span>}
         </span>
-        {running === null && control(null)}
+        <div className="actions">
+          {running === null && control(null)}
+          {data.goal?.can_stop && (
+            <Button tone="destructive" onClick={() => void stopGoal(data.goal?.title ?? "")}>Stop</Button>
+          )}
+        </div>
       </div>
       {open.length > 0 && (
         <ul className="board-tasks">

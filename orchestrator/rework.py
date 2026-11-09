@@ -63,7 +63,7 @@ def send_back(
         )
     when = now or datetime.now(UTC)
     if not dry_run:
-        _put_aside_open_questions(runs_dir, state.project_slug)
+        put_aside_open_questions(runs_dir, state.project_slug)
 
     changes: dict[str, object] = {
         "status": Status.RUNNING,
@@ -88,7 +88,7 @@ def send_back(
     return state.evolve(**changes, stage=to, path=[*state.path, visit])
 
 
-def _put_aside_open_questions(runs_dir: Path, slug: str) -> None:
+def put_aside_open_questions(runs_dir: Path, slug: str) -> None:
     """Questions the old run left open are no longer the question; keep them, do not answer them."""
     pending = runs_dir / slug / "pending"
     if not pending.is_dir():

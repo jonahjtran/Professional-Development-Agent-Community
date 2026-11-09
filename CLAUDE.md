@@ -306,6 +306,17 @@ run owns the saved state, so a stop asked of a live run stops the run (a halt) a
 `cancel_requests.json`; the run applies it as it stops, and a paused project is changed at once. The
 Architect owns the plan, so nobody can add, edit or reorder tasks here.
 
+**Stopping the goal** (`POST /api/projects/<p>/goal/stop`, `task_control.stop_goal`). Above the tasks is
+the goal the agent is working on: a change you asked for (Change something, the chat or the
+coordinator) while the agent you chose is still on it, or a plan the Architect is making after a
+failed QA or a design problem. The agent row of the Tasks section names it ("Working on: ...") with
+a **Stop** button. Stopping drops the goal and puts the project back where it was before it began:
+a finished project is finished again; a paused one returns to the agent it was at; a stopped QA fix
+plan brings the failed report to you; a stopped design review lets the Developer carry on. The
+project is left paused, the questions the goal left open are put aside, and the journey records
+"you stopped: ...". Tasks the Architect already planned for the goal stay, each stoppable on its own.
+A stop asked of a live run stops the run and is queued (`cancel_requests.json`, entry `@goal`).
+
 The frontend is a React app (TypeScript, Vite, react-router, styled after Apple's Human
 Interface Guidelines: system font, grouped lists, large titles, translucent bars, light and dark).
 It lives in `frontend/` and builds into `orchestrator/ui/static/app/` (git-ignored), which the

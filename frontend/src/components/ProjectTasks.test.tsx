@@ -10,7 +10,7 @@ const task = (over: Record<string, unknown>) => ({
 
 function board(over: Record<string, unknown> = {}) {
   return {
-    slug: "demo", status: "running", alive: true, can_pause: true, can_resume: false,
+    slug: "demo", status: "running", alive: true, can_pause: true, can_resume: false, goal: null,
     agent: { stage: "developer", label: "Developer", state: "running" },
     tasks: [
       task({ id: "T1", title: "Create the table", state: "done", can_kill: false, kill_blocked: "it is finished" }),
@@ -27,6 +27,7 @@ function open(reply: unknown = board(), extra: Record<string, unknown> = {}) {
     "GET /api/projects/demo/tasks": reply,
     "POST /api/projects/demo/pause": { ok: true },
     "POST /api/projects/demo/resume": { ok: true },
+    "POST /api/projects/demo/goal/stop": { ok: true, state: "stopped" },
     "POST /api/projects/demo/tasks/T2/kill": { ok: true, state: "cancelled" },
     "POST /api/projects/demo/tasks/T3/kill": { ok: true, state: "stopping" },
     ...extra,
@@ -154,5 +155,59 @@ describe("a project's tasks", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Stop" }));
 
     expect(await screen.findByText(/it is finished/)).toBeInTheDocument();
+  });
+
+  describe("the current goal", () => {
+    const planning = () =>
+      board({
+        status: "halted", alive: false, can_pause: false, can_resume: true,
+        agent: { stage: "architect", label: "Architect", state: "paused" },
+        tasks: [], goal: { title: "Add a dashboard for owners", can_stop: true },
+      });
+
+    it("names the goal the agent is working on and offers Stop beside Resume", async () => {
+      open(planning());
+
+      expect(await screen.findByText(/Add a dashboard for owners/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    });
+
+    it("stops the goal after asking, saying what happens", async () => {
+      const api = open(planning());
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Stop" }));
+
+      expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/Stop.*Add a dashboard.*removed/s));
+      await waitFor(() => expect(api.posts().map((p) => p.url)).toEqual(["/api/projects/demo/goal/stop"]));
+      expect(await screen.findByText(/was stopped and removed/)).toBeInTheDocument();
+    });
+
+    it("stops nothing if you cancel", async () => {
+      const api = open(planning());
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Stop" }));
+
+      expect(api.posts()).toHaveLength(0);
+    });
+
+    it("says when the stop waits for the run to halt", async () => {
+      open(planning(), { "POST /api/projects/demo/goal/stop": { ok: true, state: "stopping" } });
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Stop" }));
+
+      expect(await screen.findByText(/will be removed when the run stops/i)).toBeInTheDocument();
+    });
+
+    it("shows no goal and no goal Stop for an ordinary project", async () => {
+      open(board({ tasks: [], agent: { stage: "architect", label: "Architect", state: "running" } }));
+      await screen.findByText(/Architect/);
+
+      expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Working on/)).not.toBeInTheDocument();
+    });
   });
 });

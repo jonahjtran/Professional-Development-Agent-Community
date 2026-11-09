@@ -2153,3 +2153,83 @@ def test_changing_billing_needs_the_session_token(
     response = web.post("/api/models/developer-billing", json={"billing": "subscription"})
 
     assert response.status_code == 403
+
+
+# --- stopping the current goal -----------------------------------------------------------------
+
+
+def project_with_goal(runs: Path, **fields: Any) -> Any:
+    from orchestrator.rework import send_back
+    from orchestrator.state import save_state
+
+    base = project_with_tasks(runs, status=Status.HALTED).evolve(stage=Stage.QA)
+    state = send_back(runs, base, Stage.ARCHITECT, "Add a dashboard for owners").evolve(**fields)
+    save_state(runs, state)
+    return state
+
+
+def stop_goal_request(client: TestClient) -> Any:
+    return post(client, "/api/projects/demo/goal/stop")
+
+
+def test_the_task_list_names_the_goal_the_architect_is_working_on(
+    client: TestClient, runs: Path
+) -> None:
+    project_with_goal(runs, status=Status.HALTED)
+
+    project = client.get("/api/projects/demo/tasks").json()
+
+    assert project["goal"] == {"title": "Add a dashboard for owners", "can_stop": True}
+
+
+def test_a_project_with_no_goal_reports_none(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    assert client.get("/api/projects/demo/tasks").json()["goal"] is None
+
+
+def test_stopping_the_goal_of_a_paused_project_removes_it_at_once(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.state import load_state
+
+    project_with_goal(runs, status=Status.HALTED)
+
+    response = stop_goal_request(client)
+
+    assert response.status_code == 200 and response.json()["state"] == "stopped"
+    saved = load_state(runs, "demo")
+    assert saved.rework is None and saved.stage == Stage.QA and saved.status == Status.HALTED
+    assert client.get("/api/projects/demo/tasks").json()["goal"] is None
+
+
+def test_stopping_the_goal_while_the_run_is_going_stops_the_run_and_queues_it(
+    client: TestClient, runs: Path
+) -> None:
+    from orchestrator.halt import halt_requested
+    from orchestrator.task_control import GOAL, pending_cancels
+
+    project_with_goal(runs, status=Status.RUNNING)
+
+    with run_marker(runs, "demo", beat_seconds=60):
+        response = stop_goal_request(client)
+
+    assert response.status_code == 200 and response.json()["state"] == "stopping"
+    assert halt_requested(runs, "demo") and pending_cancels(runs, "demo") == [GOAL]
+
+
+def test_there_is_no_goal_to_stop_in_an_ordinary_project(client: TestClient, runs: Path) -> None:
+    project_with_tasks(runs, status=Status.HALTED)
+
+    response = stop_goal_request(client)
+
+    assert response.status_code == 409 and "nothing" in response.json()["error"]
+
+
+def test_stopping_a_goal_needs_the_session_token_and_a_project(
+    client: TestClient, runs: Path
+) -> None:
+    project_with_goal(runs, status=Status.HALTED)
+
+    assert client.post("/api/projects/demo/goal/stop", json={}).status_code == 403
+    assert post(client, "/api/projects/nope/goal/stop").status_code == 404
