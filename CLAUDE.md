@@ -50,13 +50,10 @@ goes through one function (`_goto` in `pipeline.py`), which refuses an illegal m
 in `state.path` (each entry: the agent, why, when, and where it came from) and traces it with its
 direction. Because an agent can be called back, **no agent is "done" until the project is**:
 
-- an agent that has finished shows as **finished**; the project's agents show **done** only when the
-  whole project is complete;
-- an agent that has been visited more than once shows **↻ round N**; one the project went back to
-  shows **↩ and the reason** ("QA failed: fix round 1"); an agent after the current one that has run
-  before shows **will run again**;
-- the project page shows the **journey** (every agent visited, moves back marked) and a notice while
-  the project is back at an earlier agent; the chat's `project_status` includes the same line.
+- the project page shows only the **active agent** ("Active agent: Developer", or that the project is
+  finished), not the journey. The journey is still recorded in `state.path` (visible in the trace and
+  the Director's reasons) and the chat's `project_status` includes the same line; the page does not
+  list the agents visited, moves back, rounds or "will run again".
 
 A project saved before this existed has no path; it is read as having passed each earlier agent once.
 
@@ -198,7 +195,7 @@ from your plan, a fake key in the environment on purpose):
 **New project.** There is no New project page. The **+** beside the Projects title expands a form
 beneath it (Review, then Create and start); Cancel or Escape closes it.
 
-**Settings menu.** Models (`/models`) and Rules (`/rules`) are reached from the profile button at the
+**Settings menu.** Models (`/models`), Rules (`/rules`) and Health (`/health`) are reached from the profile button at the
 right of the top bar, not the main bar. There is no sign-in (the UI listens on this computer only),
 so the menu has no logout.
 

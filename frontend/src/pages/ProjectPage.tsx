@@ -13,7 +13,6 @@ import {
   Section,
   CollapsibleSection,
   Segmented,
-  Steps,
   StatusPill,
 } from "../components/ui";
 import { ProjectTasks } from "../components/ProjectTasks";
@@ -157,26 +156,14 @@ export function ProjectPage() {
         </Banner>
       )}
 
-      {data.journey.going_back && (
-        <Banner>
-          Back at the <strong>{data.journey.going_back.label}</strong>: {data.journey.going_back.reason}
-          {data.journey.going_back.came_from && <> (from {data.journey.going_back.came_from})</>}. The agents after it
-          will run again.
-        </Banner>
-      )}
-      <Steps stages={stages} />
-      {data.journey.path.length > 0 && (
-        <Section title="Journey">
-          <ol className="journey" aria-label="Journey">
-            {data.journey.path.map((j, i) => (
-              <li key={`${j.stage}-${i}`} className={j.direction} title={j.reason}>
-                {j.direction === "back" ? "↩ " : ""}
-                {j.label}
-              </li>
-            ))}
-          </ol>
-        </Section>
-      )}
+      <p className="lede">
+        Active agent:{" "}
+        {summary.status === "done" ? (
+          "No agent is active: the project is finished"
+        ) : (
+          <strong>{stages.find((s) => s.stage === summary.stage)?.label ?? summary.stage}</strong>
+        )}
+      </p>
       {active && (
         <Button onClick={() => void act("pause")}>Pause</Button>
       )}

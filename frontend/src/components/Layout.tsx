@@ -7,6 +7,7 @@ import { ChatContext, type ChatRequest } from "./ChatContext";
 const SETTINGS = [
   { to: "/models", label: "Models" },
   { to: "/rules", label: "Rules" },
+  { to: "/health", label: "Health" },
 ];
 
 /** The profile button and its dropdown. There is no account here, so there is no sign-out. */
@@ -114,7 +115,6 @@ export function Layout() {
               Chat
             </button>
           )}
-          <NavLink className={link} to="/health">Health</NavLink>
           {askable && (
             <button
               id="notify"
