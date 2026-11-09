@@ -47,12 +47,21 @@ export async function post<T>(url: string, body: unknown = {}): Promise<T> {
   return parse<T>(response);
 }
 
-/** A change whose answer arrives as Server-Sent Events; `onEvent` is called for each one as it lands. */
-export async function postStream<T>(url: string, body: unknown, onEvent: (event: T) => void): Promise<void> {
+/**
+ * A change whose answer arrives as Server-Sent Events; `onEvent` is called for each one as it lands.
+ * Aborting the `signal` closes the stream, which stops the answer on the server.
+ */
+export async function postStream<T>(
+  url: string,
+  body: unknown,
+  onEvent: (event: T) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-csrf-token": await sessionToken() },
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok || response.body === null) {
     await parse<unknown>(response);

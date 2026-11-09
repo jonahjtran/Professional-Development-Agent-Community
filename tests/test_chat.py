@@ -52,6 +52,9 @@ def result(total: float = 0.01, **over: Any) -> ResultMessage:
     return ResultMessage(**{**fields, **over})
 
 
+HANG = object()
+
+
 class FakeClient:
     """Stands in for ClaudeSDKClient: replays scripted turns and records what it was asked."""
 
@@ -62,6 +65,7 @@ class FakeClient:
         self.options = options
         self.prompts: list[str] = []
         self.connected = False
+        self.interrupted = False
         self.disconnected = False
         self._pending: list[Any] = []
         FakeClient.instances.append(self)
@@ -77,8 +81,14 @@ class FakeClient:
         step = FakeClient.script.pop(0)
         self._pending = step(self)
 
+    async def interrupt(self) -> None:
+        self.interrupted = True
+        self._pending = [result(0.01)]  # what the SDK still sends after an interrupt
+
     async def receive_response(self) -> AsyncIterator[Any]:
         for message in self._pending:
+            if message is HANG:  # an answer that is still being written
+                await asyncio.Event().wait()
             yield message
 
 
