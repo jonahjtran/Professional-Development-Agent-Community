@@ -74,7 +74,6 @@ export function Layout() {
           <NavLink className={link} to="/inbox">
             Inbox{waiting > 0 && <span id="badge" className={todos.length > 0 ? "alert" : ""}> ({waiting})</span>}
           </NavLink>
-          <NavLink className={link} to="/tasks">Tasks</NavLink>
           <NavLink className={link} to="/chat">Chat</NavLink>
           <NavLink className={link} to="/new">New project</NavLink>
           <NavLink className={link} to="/health">Health</NavLink>

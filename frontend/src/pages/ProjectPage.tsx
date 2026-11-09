@@ -16,6 +16,7 @@ import {
   Steps,
   StatusPill,
 } from "../components/ui";
+import { ProjectTasks } from "../components/ProjectTasks";
 import { TodoRow } from "../components/TodoRow";
 import { useLoad } from "../hooks";
 import type { Billing, Project, StartingProject } from "../types";
@@ -294,6 +295,10 @@ export function ProjectPage() {
             lockfile already lists. None of them can allow what is always refused.
           </p>
         </Card>
+      </Section>
+
+      <Section title="Tasks">
+        <ProjectTasks slug={slug} />
       </Section>
 
       <Section title="Spend">
