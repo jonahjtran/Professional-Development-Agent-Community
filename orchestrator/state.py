@@ -87,10 +87,13 @@ class Handoff(BaseModel):
     design_review: the Architect is resolving a design problem the Developer raised.
     human_design: the Architect is turning a change you asked for into tasks.
     qa_gate: QA is being returned to, only to show you its failed report (nothing could be fixed).
+    routed: the orchestrator chose this agent next; `note` is what it wants the agent to know and
+        `documents` the approved documents it wants it to have (empty: the agent's usual ones).
     """
 
     purpose: str
     note: str = ""
+    documents: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

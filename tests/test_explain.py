@@ -151,4 +151,5 @@ def test_ledger_totals_add_up_by_kind(tmp_path: Path) -> None:
         "explain_usd": 0.0,
         "chat_usd": 0.0,
         "coordinator_usd": 0.0,
+        "director_usd": 0.0,
     }

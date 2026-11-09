@@ -82,5 +82,22 @@ def stage_inputs(state: ProjectState, stage: Stage, store: ArtifactStore) -> dic
     return inputs
 
 
+def lenient_inputs(
+    state: ProjectState, stage: Stage, store: ArtifactStore, documents: Iterable[str] = ()
+) -> dict[str, str]:
+    """The approved documents `stage` is given when the orchestrator, not a fixed order, chose it.
+
+    The orchestrator may name the documents (any approved ones); otherwise it gets the ones the
+    stage usually reads. A document that does not exist or is not approved is left out instead of
+    being an error, because the agent that writes it may have been skipped on purpose.
+    """
+    inputs: dict[str, str] = {}
+    for name in tuple(documents) or STAGE_INPUTS.get(stage, ()):
+        artifact = state.artifacts.get(name)
+        if artifact is not None and artifact.approved_at is not None:
+            inputs[name] = store.read(artifact)
+    return inputs
+
+
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()

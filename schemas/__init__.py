@@ -18,6 +18,7 @@ from schemas.career import (
 )
 from schemas.dev_result import DevReport, DevResult
 from schemas.fix_plan import FixPlan
+from schemas.next_step import NextStep
 from schemas.prd import PRD, SuccessMetric, Track
 from schemas.profile import Goals, ResumeData, ResumeEntry, ResumeSection, TrackGoal
 from schemas.route import Route
@@ -33,6 +34,7 @@ from schemas.test_report import (
 )
 
 __all__ = [
+    "NextStep",
     "ADR",
     "PRD",
     "Route",

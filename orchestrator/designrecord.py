@@ -53,7 +53,12 @@ def publish_design_record(
 ) -> str:
     """Commit the approved documents to `agent/plan`, open the PR, and return its address."""
     store = ArtifactStore(runs_dir, state.project_slug)
-    files = {dest: _approved_text(state, store, name) for name, dest in _DOCS.items()}
+    # The PRD is missing when the orchestrator decided the project needed no Product Owner.
+    files = {
+        dest: _approved_text(state, store, name)
+        for name, dest in _DOCS.items()
+        if name != "prd.md" or name in state.artifacts
+    }
     for name in sorted(n for n in state.artifacts if n.startswith("adr/")):
         files[f"docs/{name}"] = _approved_text(state, store, name)
 

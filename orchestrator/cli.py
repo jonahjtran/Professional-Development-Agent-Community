@@ -27,6 +27,7 @@ from orchestrator.default_specs import (
     default_stage_specs,
 )
 from orchestrator.dev_runner import DevRunner
+from orchestrator.director import ApiDirector
 from orchestrator.echo_agent import EchoAgent
 from orchestrator.fix_planner import ApiFixPlanner
 from orchestrator.halt import clear_halt, request_halt
@@ -254,6 +255,9 @@ def _context(
         career=career,
         career_publisher=career_publisher,
         fixer=ApiFixPlanner(config) if (agent == AgentKind.FULL and publisher) else None,
+        director=(
+            ApiDirector(config, runs_dir) if agent in (AgentKind.API, AgentKind.FULL) else None
+        ),
     )
 
 
