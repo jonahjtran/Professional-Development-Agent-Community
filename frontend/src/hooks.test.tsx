@@ -52,7 +52,7 @@ describe("attention", () => {
     show();
     const badge = await screen.findByText("(1)");
     expect(badge).not.toHaveClass("alert");
-    expect(document.title).toBe("(1) Agent Studio");
+    await waitFor(() => expect(document.title).toBe("(1) Agent Studio")); // set after the render
   });
 
   it("shows a red badge for an action item", async () => {
