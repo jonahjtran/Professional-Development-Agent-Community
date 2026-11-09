@@ -1,7 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { ArtifactPage } from "./pages/ArtifactPage";
-import { ChatPage } from "./pages/ChatPage";
 import { HealthPage } from "./pages/HealthPage";
 import { InboxPage } from "./pages/InboxPage";
 import { ModelsPage } from "./pages/ModelsPage";
@@ -23,7 +22,6 @@ export function App() {
         <Route path="p/:slug/team" element={<TeamPage />} />
         <Route path="p/:slug/trace" element={<TracePage />} />
         <Route path="p/:slug/q/:id" element={<QuestionPage />} />
-        <Route path="chat" element={<ChatPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="models" element={<ModelsPage />} />
         <Route path="rules" element={<RulesPage />} />

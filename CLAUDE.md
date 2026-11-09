@@ -360,11 +360,22 @@ app). The reply streams as escaped text and is replaced by server-rendered Markd
 ends; proposals made during the turn come back in the `done` event. Live check (a few cents):
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k chat`.
 
-**Chat page.** `/chat`: pick what to ask about (this app or a project), a Strong or Fast model, and
-see this chat's cost against its cap. Answers stream in as plain text with the steps taken, then are
-replaced by the server's rendered Markdown. A proposal appears as a card ("Waiting for you: nothing
-has happened yet") with Confirm and Dismiss. "Ask the assistant about this" on a question or a
-paused project opens the chat with that question as context.
+**Chat sidebar.** There is no Chat page. Inside a project (any `/p/<slug>/...` page) the **Chat**
+button in the top bar opens a sidebar beside the page; it stays open as you move around the project.
+It asks about this project's clone (or this app), on a Strong or Fast model, with this chat's cost
+against its cap. Answers stream in as plain text with the steps taken, then are replaced by the
+server's rendered Markdown. A proposal appears as a card ("Waiting for you: nothing has happened
+yet") with Confirm and Dismiss. **New chat** starts over; **History** lists this project's past chats
+(newest first) to open and keep talking in, or delete. "Ask the assistant about this" on a question
+or a paused project opens the sidebar with that question as context.
+
+**Chat history** (`orchestrator/ui/chat_history.py`, `GET /api/chats?project=`, `GET /api/chats/<id>`,
+`POST /api/chats/<id>/delete`). Every finished turn is kept in `runs/_studio/chats/<id>.json`: the
+repository and model, the project it was opened from, its cost, and each turn (your text, the
+answer as safe HTML, the steps, the proposals; an opened chat shows what became of its proposals
+since). After a restart a past chat continues in a new assistant session that is given the earlier
+conversation once, as untrusted text; its cost so far still counts against the cap. A chat that cannot
+be written to disk still works.
 
 Rules that must keep holding: the server only binds to 127.0.0.1 and rejects any other Host
 header; every change needs the session token in `X-CSRF-Token`, a JSON body and a matching Origin;

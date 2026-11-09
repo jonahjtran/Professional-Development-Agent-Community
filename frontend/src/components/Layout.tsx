@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import { useAttention } from "../hooks";
+import { ChatPanel } from "./ChatPanel";
+import { ChatContext, type ChatRequest } from "./ChatContext";
 
 const SETTINGS = [
   { to: "/models", label: "Models" },
@@ -64,9 +66,23 @@ export function Layout() {
   const [askable, setAskable] = useState(
     typeof Notification !== "undefined" && Notification.permission === "default",
   );
+  const project = useMatch("/p/:slug/*")?.params.slug;
+  const [chatOpen, setChatOpen] = useState(false);
+  const [request, setRequest] = useState<ChatRequest | null>(null);
+  const showChat = chatOpen && project !== undefined;
+  const control = {
+    isOpen: showChat,
+    request,
+    open: (next?: ChatRequest) => {
+      setRequest(next ? { ...next } : null);
+      setChatOpen(true);
+    },
+    close: () => setChatOpen(false),
+    toggle: () => setChatOpen(!chatOpen),
+  };
   const link = ({ isActive }: { isActive: boolean }) => `nav${isActive ? " active" : ""}`;
   return (
-    <>
+    <ChatContext.Provider value={control}>
       <header className="bar">
         <nav className="bar-inner" aria-label="Main">
           <NavLink className="brand" to="/">Agent Studio</NavLink>
@@ -74,7 +90,16 @@ export function Layout() {
           <NavLink className={link} to="/inbox">
             Inbox{waiting > 0 && <span id="badge" className={todos.length > 0 ? "alert" : ""}> ({waiting})</span>}
           </NavLink>
-          <NavLink className={link} to="/chat">Chat</NavLink>
+          {project !== undefined && (
+            <button
+              type="button"
+              className={`nav${showChat ? " active" : ""}`}
+              aria-expanded={showChat}
+              onClick={control.toggle}
+            >
+              Chat
+            </button>
+          )}
           <NavLink className={link} to="/health">Health</NavLink>
           {askable && (
             <button
@@ -87,9 +112,14 @@ export function Layout() {
           <ProfileMenu />
         </nav>
       </header>
-      <main>
+      <main className={showChat ? "with-chat" : undefined}>
         <Outlet />
       </main>
-    </>
+      {showChat && (
+        <aside className="chat-side" aria-label="Chat">
+          <ChatPanel key={project} project={project} request={request} onClose={control.close} />
+        </aside>
+      )}
+    </ChatContext.Provider>
   );
 }
