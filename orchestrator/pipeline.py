@@ -83,6 +83,7 @@ from schemas import (
     CheckStatus,
     DevResult,
     EvidenceSet,
+    NextStep,
     QaReport,
     TaskList,
     Verdict,
@@ -367,9 +368,19 @@ def _run_stage(
                     source="qa",
                 )
 
+    asked_you = False
+    if stage == Stage.QA and result.passed is False and ctx.director is not None:
+        # The Director decides where a failure goes; the old rules below apply only if it cannot.
+        shown = summary if summary is not None else result.output
+        _write_draft(ctx, state, f"{shown}\n\n---\n{_qa_failed_note(state.qa_loops)}")
+        problem = _qa_problem(report, shown)
+        step = _decide(state, ctx, _facts(state, ctx, Stage.QA, event="qa_failed", problem=problem))
+        if step is not None and step.action == "run":
+            return _after_qa_failure(state, ctx, step, problem, report)
+        asked_you = step is not None  # "ask_person": the failed report goes to the gate
     if stage == Stage.QA and result.passed is False:
         # With real QA tools there is no task to send back, so a failure always goes to the human.
-        if ctx.qa is None and state.qa_loops < ctx.config.limits.max_qa_loops:
+        if ctx.qa is None and state.qa_loops < ctx.config.limits.max_qa_loops and not asked_you:
             _write_draft(ctx, state, result.output)
             return _move(
                 state.evolve(qa_loops=state.qa_loops + 1),
@@ -383,6 +394,7 @@ def _run_stage(
             and report is not None
             and state.qa_loops < ctx.config.limits.max_qa_loops
             and _fixable(report)
+            and not asked_you
         ):
             # Go back to the Architect for a fix plan. The failed report is kept as the draft,
             # so if nothing can be fixed we come straight back and show it to the human.
@@ -798,7 +810,14 @@ def _next_stage(stage: Stage) -> Stage:
     return _ORDER[_ORDER.index(stage) + 1]
 
 
-def _facts(state: ProjectState, ctx: PipelineContext, finished: Stage) -> Facts:
+def _facts(
+    state: ProjectState,
+    ctx: PipelineContext,
+    finished: Stage,
+    *,
+    event: str = "finished",
+    problem: str = "",
+) -> Facts:
     """What the Director is told and what its choice is checked against."""
     tasks_planned = "tasks.json" in state.artifacts and (
         state.artifacts["tasks.json"].approved_at is not None
@@ -818,49 +837,66 @@ def _facts(state: ProjectState, ctx: PipelineContext, finished: Stage) -> Facts:
         max_moves=ctx.config.limits.max_moves,
         needs_task_list=ctx.publisher is not None,
         needs_qa_report=ctx.qa is not None,
+        event=event,
+        problem=problem,
+        can_plan=ctx.fixer is not None,
     )
+
+
+def _decide(state: ProjectState, ctx: PipelineContext, facts: Facts) -> NextStep | None:
+    """The Director's choice when there is one and the rules allow it; otherwise None.
+
+    None means the caller follows the usual rule (and the trace says why), so a missing director,
+    a failed call, an unusable answer or the move limit never stops a project.
+    """
+    if ctx.director is None:
+        return None
+    why = ""
+    if facts.moves >= facts.max_moves:
+        why = f"it has made {facts.moves} moves, the limit"
+    else:
+        chosen = ctx.director.decide(state, facts.current, facts)
+        problem = "it gave no usable answer" if chosen is None else check(chosen, facts)
+        if chosen is not None and problem is None:
+            _trace(
+                ctx,
+                state,
+                EventType.TRANSITION,
+                details={"director": chosen.model_dump(), "event": facts.event},
+            )
+            return chosen
+        why = problem or ""
+    _trace(
+        ctx,
+        state,
+        EventType.TRANSITION,
+        details={"director_fallback": why, "event": facts.event, "note": "the usual rule applied"},
+    )
+    return None
+
+
+def _routed_move(
+    state: ProjectState, ctx: PipelineContext, step: NextStep, note: str = ""
+) -> ProjectState:
+    """Move to the agent the Director chose, handing on its note (and what went wrong)."""
+    assert step.agent is not None
+    text = "\n\n".join(part for part in (note, step.note.strip()) if part)
+    handoff = Handoff(purpose="routed", note=text, documents=step.documents)
+    return _goto(state.evolve(handoff=handoff), ctx, Stage(step.agent), step.reason, routed=True)
 
 
 def _route(state: ProjectState, ctx: PipelineContext, finished: Stage) -> ProjectState:
     """Choose what happens after `finished`: the Director's choice if allowed, else the usual."""
-    step = fallback_step(finished)
-    why = ""
-    if ctx.director is not None:
-        facts = _facts(state, ctx, finished)
-        if facts.moves >= facts.max_moves:
-            why = f"it has made {facts.moves} moves, the limit"
-        else:
-            chosen = ctx.director.decide(state, finished, facts)
-            problem = "it gave no usable answer" if chosen is None else check(chosen, facts)
-            if chosen is not None and problem is None:
-                step, why = chosen, ""
-                _trace(
-                    ctx,
-                    state,
-                    EventType.TRANSITION,
-                    details={"director": step.model_dump(), "from": finished.value},
-                )
-                if step.action == "finish":
-                    return state.evolve(status=Status.DONE, rework=None, handoff=None)
-                handoff = Handoff(
-                    purpose="routed", note=step.note.strip(), documents=step.documents
-                )
-                assert step.agent is not None
-                return _goto(
-                    state.evolve(handoff=handoff), ctx, Stage(step.agent), step.reason, routed=True
-                )
-            why = problem or ""
-    if why:
-        _trace(
-            ctx,
-            state,
-            EventType.TRANSITION,
-            details={"director_fallback": why, "note": "the usual order was followed"},
-        )
+    step = _decide(state, ctx, _facts(state, ctx, finished))
+    if step is None:
+        step = fallback_step(finished)
+        if step.action == "finish":
+            return state.evolve(status=Status.DONE, rework=None, handoff=None)
+        assert step.agent is not None
+        return _move(state, ctx, Stage(step.agent))
     if step.action == "finish":
         return state.evolve(status=Status.DONE, rework=None, handoff=None)
-    assert step.agent is not None
-    return _move(state, ctx, Stage(step.agent))
+    return _routed_move(state, ctx, step)
 
 
 def _goto(
@@ -945,6 +981,44 @@ def _qa_failed_note(retries: int) -> str:
     return "QA FAILED. Approve to accept the work as it is, or ask for QA to run again."
 
 
+def _qa_problem(report: QaReport | None, shown: str) -> str:
+    """What failed, in a few lines, for the Director and for the agent it sends the work to."""
+    if report is None:
+        return f"QA failed:\n{shown[:2000]}"
+    lines = [
+        f"- {c.name}: {c.status.value}"
+        for c in report.checks
+        if c.status in (CheckStatus.FAILED, CheckStatus.SKIPPED)
+    ]
+    lines += [
+        f"- criterion {v.criterion!r}: {v.verdict.value}"
+        for v in report.criteria
+        if v.verdict == Verdict.FAIL
+    ]
+    return "QA failed:\n" + ("\n".join(lines) or shown[:1500])
+
+
+def _after_qa_failure(
+    state: ProjectState,
+    ctx: PipelineContext,
+    step: NextStep,
+    problem: str,
+    report: QaReport | None,
+) -> ProjectState:
+    """Send a failed QA run where the Director chose. The Architect plans fixes when it can."""
+    assert step.agent is not None
+    if (
+        Stage(step.agent) == Stage.ARCHITECT
+        and ctx.fixer is not None
+        and report is not None
+        and "tasks.json" in state.artifacts
+        and _fixable(report)
+    ):
+        handoff = Handoff(purpose="qa_fix", note=step.note.strip())
+        return _goto(state.evolve(handoff=handoff), ctx, Stage.ARCHITECT, step.reason, routed=True)
+    return _routed_move(state, ctx, step, problem)
+
+
 def _fixable(report: QaReport) -> bool:
     """True if the failure is in the code: a tool failed or a criterion was judged failed.
 
@@ -985,6 +1059,29 @@ def _escalate_design_problems(
         return state
     if not problems:
         return state
+    step = _decide(
+        state,
+        ctx,
+        _facts(state, ctx, Stage.DEVELOPER, event="design_problem", problem="\n".join(problems)),
+    )
+    if step is not None:
+        detail = (
+            f"The Developer reported this while building {task_id}. Finished tasks so far: "
+            f"{', '.join(state.completed_tasks) or 'none'}.\n\n"
+            + "\n".join(f"- {p}" for p in problems)
+        )
+        if step.action == "ask_person":
+            _problems_to_human(state, ctx, task_id, problems, step.reason)
+            return state
+        assert step.agent is not None
+        if Stage(step.agent) == Stage.DEVELOPER:  # the design stands: the Developer carries on
+            add_note(ctx.runs_dir, state.project_slug, step.note.strip() or step.reason)
+            return state
+        reason = f"design problem raised on {task_id}: {step.reason}"
+        if Stage(step.agent) == Stage.ARCHITECT and ctx.fixer is not None:
+            handoff = Handoff(purpose="design_review", note=f"{detail}\n\n{step.note}".strip())
+            return _goto(state.evolve(handoff=handoff), ctx, Stage.ARCHITECT, reason, routed=True)
+        return _routed_move(state, ctx, step, detail)
     if ctx.fixer is None or _replan_rounds(state) >= ctx.config.limits.max_replans:
         _problems_to_human(state, ctx, task_id, problems, "")
         return state
@@ -1009,6 +1106,32 @@ def _stuck_task_to_architect(
     replans are used up. A task you added by sending the project back is replaced by the
     Architect's tasks, so the vague one cannot sit first in the list and block them.
     """
+    step = _decide(
+        state,
+        ctx,
+        _facts(
+            state,
+            ctx,
+            Stage.DEVELOPER,
+            event="task_stuck",
+            problem=f"{task.id} ({task.title}): " + "; ".join(error.problems),
+        ),
+    )
+    if step is not None:
+        if step.action == "ask_person":
+            return None  # the caller pauses and shows you what the Developer said
+        assert step.agent is not None
+        state = drop_human_task(ctx.runs_dir, state, task.id)
+        stuck = (
+            f"The Developer could not start {task.id} ({task.title}) and made no commits. "
+            f"The task said:\n{task.description}\n\n" + "\n".join(f"- {p}" for p in error.problems)
+        )
+        state = state.evolve(current_task_id=None)
+        reason = f"design problem raised on {task.id}: {step.reason}"
+        if Stage(step.agent) == Stage.ARCHITECT and ctx.fixer is not None:
+            handoff = Handoff(purpose="design_review", note=f"{stuck}\n\n{step.note}".strip())
+            return _goto(state.evolve(handoff=handoff), ctx, Stage.ARCHITECT, reason, routed=True)
+        return _routed_move(state, ctx, step, stuck)
     if ctx.fixer is None or _replan_rounds(state) >= ctx.config.limits.max_replans:
         return None
     state = drop_human_task(ctx.runs_dir, state, task.id)

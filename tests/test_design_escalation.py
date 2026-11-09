@@ -397,3 +397,106 @@ def test_without_an_architect_available_a_stuck_task_pauses(tmp_path: Path) -> N
     state = advance(at_developer(tmp_path), ctx)
 
     assert state.status == Status.HALTED
+
+
+# --- the director decides what a design problem or a stuck task leads to ----------------------
+
+
+def director_for(**by_event: Any) -> Any:
+    from tests.test_director import OnEvent
+
+    return OnEvent(**by_event)
+
+
+def with_director(ctx: PipelineContext, director: Any) -> PipelineContext:
+    from dataclasses import replace
+
+    return replace(ctx, director=director)
+
+
+def step(action: str, agent: str | None = None, **over: Any) -> Any:
+    from schemas import NextStep
+
+    return NextStep.model_validate(
+        {"action": action, "agent": agent, "reason": "because", "note": "", "documents": [], **over}
+    )
+
+
+def test_the_director_can_send_a_design_problem_to_the_architect_even_when_replans_are_used_up(
+    tmp_path: Path,
+) -> None:
+    planner = FakePlanner()
+    ctx = with_director(
+        ctx_for(tmp_path, Dev({"T1": [PROBLEM]}), planner, max_replans=0),
+        director_for(design_problem=step("run", "architect")),
+    )
+
+    state = run_developer(tmp_path, ctx)
+
+    assert len(planner.requests) == 1 and state.path[0].stage == Stage.ARCHITECT
+
+
+def test_the_director_can_decide_the_design_stands_and_the_developer_carries_on(
+    tmp_path: Path,
+) -> None:
+    planner = FakePlanner()
+    ctx = with_director(
+        ctx_for(tmp_path, Dev({"T1": [PROBLEM]}), planner),
+        director_for(design_problem=step("run", "developer", note="SQLite is fine at this size.")),
+    )
+
+    state = run_developer(tmp_path, ctx)
+
+    assert planner.requests == [] and Stage.ARCHITECT not in [v.stage for v in state.path]
+    assert open_todos(tmp_path, "demo") == []
+
+
+def test_the_director_can_bring_a_design_problem_to_you(tmp_path: Path) -> None:
+    planner = FakePlanner()
+    ctx = with_director(
+        ctx_for(tmp_path, Dev({"T1": [PROBLEM]}), planner),
+        director_for(design_problem=step("ask_person")),
+    )
+
+    run_developer(tmp_path, ctx)
+
+    assert planner.requests == []
+    assert any(PROBLEM in t.title for t in open_todos(tmp_path, "demo"))
+
+
+def test_with_no_answer_a_design_problem_follows_the_old_rule(tmp_path: Path) -> None:
+    planner = FakePlanner()
+    ctx = with_director(
+        ctx_for(tmp_path, Dev({"T1": [PROBLEM]}), planner), director_for(design_problem=None)
+    )
+
+    run_developer(tmp_path, ctx)
+
+    assert len(planner.requests) == 1
+
+
+def test_the_director_decides_where_a_stuck_task_goes(tmp_path: Path) -> None:
+    planner = FakePlanner()
+    ctx = with_director(
+        ctx_for(tmp_path, StuckDev("T1"), planner, max_replans=0),
+        director_for(task_stuck=step("run", "architect", note="Split it up.")),
+    )
+
+    state = advance(at_developer(tmp_path), ctx)
+
+    assert state.stage == Stage.ARCHITECT and state.handoff is not None
+    assert state.handoff.purpose == "design_review" and "Split it up." in state.handoff.note
+
+
+def test_the_director_can_bring_a_stuck_task_to_you_and_the_project_pauses(tmp_path: Path) -> None:
+    planner = FakePlanner()
+    ctx = with_director(
+        ctx_for(tmp_path, StuckDev("T1"), planner), director_for(task_stuck=step("ask_person"))
+    )
+
+    state = advance(at_developer(tmp_path), ctx)
+
+    assert state.status == Status.HALTED and planner.requests == []
+    assert any(
+        "no commits" in t.detail or "no commits" in t.title for t in open_todos(tmp_path, "demo")
+    )

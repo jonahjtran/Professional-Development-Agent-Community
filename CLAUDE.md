@@ -89,8 +89,15 @@ the run again, so it spends credits. The chat can propose the same (`propose_sen
 happens when you confirm; the coordinator chooses then. Live check (cents):
 `ANTHROPIC_API_KEY=... uv run pytest tests/live --live -s -k coordinator`.
 
-**Going back after a failure.** The rules below are still code, not a model's choice; the Director
-decides the ordinary moves (above).
+**Going back after a failure.** With a Director there are no fixed cycles: when QA fails, when the
+Developer reports a design problem, or when it cannot start a task, the Director is told what happened
+and the problem and decides: the Architect to plan fixes (the machinery below runs the planning), the
+Developer to carry on or retry, the Product Owner if the requirements are wrong, any other agent, or
+`ask_person` to bring it to you (a failed report goes to the QA gate; a design problem or stuck task
+becomes an action item). It may not finish while a problem is open or rerun QA unchanged. The
+`limits.max_qa_loops` and `max_replans` counts apply only to the fallback below; the Director is
+bounded by `limits.max_moves` and the budgets. Without a Director (practice runs) or when it gives no
+usable answer, the old rules apply, as described here:
 
 - QA fails and the failure is in the code: back to the **Architect** for a fix plan (above).
 - The **Developer** reports a problem with the design or task list it cannot solve inside a task
