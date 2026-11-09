@@ -169,6 +169,10 @@ for other people to use API keys, so keep this to your own projects. Live check 
 from your plan, a fake key in the environment on purpose):
 `ANTHROPIC_API_KEY=sk-ant-fake uv run pytest tests/live --live -s -k subscription`.
 
+**Settings menu.** Models (`/models`) and Rules (`/rules`) are reached from the profile button at the
+right of the top bar, not the main bar. There is no sign-in (the UI listens on this computer only),
+so the menu has no logout.
+
 The **Models** page (`/models`) shows every agent's exact model id, switches the default Developer
 backend, and shows whether Ollama is ready (with the fix when it is not). Each project page shows
 which model its Developer uses and why, with a switch (follow the default, Claude, or the local
