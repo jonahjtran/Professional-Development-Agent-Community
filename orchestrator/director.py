@@ -25,6 +25,13 @@ from orchestrator.prompts import DEFAULT_PROMPTS_DIR, Prompt, load_prompt
 from orchestrator.state import ProjectState, Stage
 from schemas import NextStep
 
+EVENTS = {
+    "finished": "an agent finished its work",
+    "qa_failed": "QA ran and FAILED",
+    "design_problem": "the Developer reported a problem with the design or the task list",
+    "task_stuck": "the Developer could not start a task and made no changes",
+}
+
 AGENTS = (
     Stage.PRODUCT_OWNER,
     Stage.ARCHITECT,
@@ -47,6 +54,11 @@ class Facts:
     max_moves: int
     needs_task_list: bool = False  # the Developer builds from a task list in this run
     needs_qa_report: bool = False  # the Career coach reads QA's report in this run
+    # What happened: "finished" (an agent finished), "qa_failed", "design_problem" (the Developer
+    # reported a problem with the design) or "task_stuck" (the Developer could not start a task).
+    event: str = "finished"
+    problem: str = ""  # what went wrong, for the three failure events
+    can_plan: bool = False  # the Architect can plan fixes for a failure
 
 
 class Directing(Protocol):
@@ -57,17 +69,24 @@ class Directing(Protocol):
 
 def check(step: NextStep, facts: Facts) -> str | None:
     """Why `step` may not be followed, or None when it may."""
-    if step.action == "finish":
+    failure = facts.event != "finished"
+    if step.action in ("finish", "ask_person"):
         if step.agent is not None:
-            return "a finish must not name an agent"
+            return f"a {step.action} must not name an agent"
+    if step.action == "ask_person":
+        return None if failure else "nothing went wrong, so there is nothing to ask you"
+    if step.action == "finish":
+        if failure:
+            return "the project cannot finish while a problem is open"
         if facts.tasks_planned and facts.tasks_open:
             return "the project cannot finish while tasks are still open"
         return None
     if step.agent is None:
         return "a run must name an agent"
     agent = Stage(step.agent)
-    if agent == facts.current:
-        return f"the {LABELS[agent]} just finished"
+    carry_on = facts.event == "design_problem" and agent == Stage.DEVELOPER
+    if agent == facts.current and not carry_on:
+        return f"the {LABELS[agent]} is the one that just ran, and nothing about it would change"
     if agent == Stage.DEVELOPER and facts.needs_task_list and not facts.tasks_planned:
         return "the Developer needs the Architect's task list first"
     if agent == Stage.QA and facts.needs_task_list and not facts.tasks_planned:
@@ -113,10 +132,14 @@ class ApiDirector:
             if state.rework
             else ""
         )
+        problem = f"The problem: {scrub_keep(facts.problem)[:2500]}\n" if facts.problem else ""
         message = (
             f"Project idea: {scrub_keep(state.idea)[:1000]}{rework}\n"
             f"Journey so far: {' → '.join(path_summary(state)) or '(just started)'}\n"
-            f"The agent that just finished: {finished.value}\n"
+            f"What happened: {EVENTS.get(facts.event, facts.event)}\n"
+            f"{problem}"
+            f"The agent concerned: {finished.value}\n"
+            f"The Architect can plan fixes: {facts.can_plan}\n"
             f"Task list planned: {facts.tasks_planned}; tasks still open: {facts.tasks_open}; "
             f"QA report exists: {facts.qa_report}\n"
             f"Approved documents you may hand on: {', '.join(sorted(facts.approved)) or '(none)'}\n"

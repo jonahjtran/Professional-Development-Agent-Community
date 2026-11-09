@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestrator.project_settings import project_settings_path, read_settings, update_settings
+from orchestrator.project_settings import read_settings, update_settings
 from orchestrator.rules import home_dir
 
 BILLINGS = ("api", "subscription")
@@ -49,9 +49,10 @@ def get_default_billing() -> BillingChoice:
 
 
 def get_developer_billing(runs_dir: Path, project: str) -> BillingChoice:
-    mine = read_settings(project_settings_path(runs_dir, project)).get(_KEY)
-    if mine in BILLINGS:
-        return BillingChoice(mine, "project")
+    """Who pays for the Developer. One choice for every project: the global one, else API credits.
+
+    A per-project setting used to exist; one left in a project's settings file is ignored.
+    """
     return get_default_billing()
 
 
@@ -63,12 +64,6 @@ def _check(billing: str | None) -> None:
 def set_global_billing(billing: str) -> None:
     _check(billing)
     update_settings(_global_path(), **{_KEY: billing})
-
-
-def set_project_billing(runs_dir: Path, project: str, billing: str | None) -> None:
-    """Choose for one project, or None to follow the global choice."""
-    _check(billing)
-    update_settings(project_settings_path(runs_dir, project), **{_KEY: billing})
 
 
 # --- is Claude Code signed in with an account ---------------------------------------------------

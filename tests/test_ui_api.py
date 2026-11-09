@@ -650,10 +650,6 @@ def test_an_unknown_backend_is_refused(models_client: TestClient, runs: Path) ->
     make_project(runs, stage=Stage.DEVELOPER)
 
     assert post(models_client, "/api/models/developer", {"backend": "gpt"}).status_code == 400
-    assert (
-        post(models_client, "/api/projects/demo/developer-backend", {"backend": "gpt"}).status_code
-        == 400
-    )
 
 
 def test_a_project_shows_which_model_its_developer_uses_and_why(
@@ -672,45 +668,34 @@ def test_a_project_shows_which_model_its_developer_uses_and_why(
     }
 
 
-def test_a_project_can_use_the_local_model_and_go_back_to_the_default(
+def test_the_global_model_choice_applies_to_every_project(
     models_client: TestClient, runs: Path
 ) -> None:
     make_project(runs, stage=Stage.DEVELOPER)
 
-    assert (
-        post(
-            models_client, "/api/projects/demo/developer-backend", {"backend": "local"}
-        ).status_code
-        == 200
-    )
+    assert post(models_client, "/api/models/developer", {"backend": "local"}).status_code == 200
+
     shown = models_client.get("/api/projects/demo").json()["developer"]
-    assert shown["backend"] == "local" and shown["source"] == "project"
+    assert shown["backend"] == "local" and shown["source"] == "global"
     assert shown["model"].startswith("qwen3-coder")
 
-    post(models_client, "/api/projects/demo/developer-backend", {"backend": "default"})
-    assert models_client.get("/api/projects/demo").json()["developer"]["source"] == "default"
 
-
-def test_the_project_choice_beats_the_global_one(models_client: TestClient, runs: Path) -> None:
+def test_there_is_no_per_project_model_or_billing_switch(
+    models_client: TestClient, runs: Path
+) -> None:
     make_project(runs, stage=Stage.DEVELOPER)
-    post(models_client, "/api/models/developer", {"backend": "local"})
-    post(models_client, "/api/projects/demo/developer-backend", {"backend": "claude"})
 
-    shown = models_client.get("/api/projects/demo").json()["developer"]
-
-    assert (shown["backend"], shown["source"]) == ("claude", "project")
+    for url, body in (
+        ("/api/projects/demo/developer-backend", {"backend": "local"}),
+        ("/api/projects/demo/developer-billing", {"billing": "subscription"}),
+    ):
+        assert post(models_client, url, body).status_code in (404, 405)
 
 
 def test_switching_needs_the_session_token(models_client: TestClient, runs: Path) -> None:
     make_project(runs, stage=Stage.DEVELOPER)
 
     assert models_client.post("/api/models/developer", json={"backend": "local"}).status_code == 403
-    assert (
-        models_client.post(
-            "/api/projects/demo/developer-backend", json={"backend": "local"}
-        ).status_code
-        == 403
-    )
 
 
 def test_a_down_local_server_shows_up_in_health_only_when_it_is_in_use(
@@ -968,7 +953,7 @@ def test_confirming_a_developer_model_switch_applies_it(client: TestClient, runs
 
     assert response.status_code == 200
     choice = get_developer_backend(runs, "demo")
-    assert (choice.backend, choice.source) == ("local", "project")
+    assert (choice.backend, choice.source) == ("local", "global")
 
 
 def test_a_proposal_can_be_dismissed_and_does_nothing(client: TestClient, runs: Path) -> None:
@@ -1309,7 +1294,7 @@ def test_the_developers_local_model_is_shown_when_the_project_uses_it(
     models_client: TestClient, runs: Path
 ) -> None:
     make_project(runs, stage=Stage.DEVELOPER)
-    post(models_client, "/api/projects/demo/developer-backend", {"backend": "local"})
+    post(models_client, "/api/models/developer", {"backend": "local"})
 
     dev = {
         p["stage"]: p for p in models_client.get("/api/projects/demo/activity").json()["agents"]
@@ -2089,7 +2074,7 @@ def test_a_project_using_a_subscription_also_triggers_the_check(
 ) -> None:
     web, checks = billing_client(runs, launched, tmp_path, monkeypatch)
     make_project(runs, stage=Stage.DEVELOPER)
-    post(web, "/api/projects/demo/developer-billing", {"billing": "subscription"})
+    post(web, "/api/models/developer-billing", {"billing": "subscription"})
 
     assert web.get("/api/models").json()["billing"]["sign_in"]["ok"] is True
     assert checks == [1]
@@ -2114,7 +2099,7 @@ def test_a_failing_sign_in_check_shows_the_fix(
     assert sign_in["ok"] is False and "claude auth login" in sign_in["fix"]
 
 
-def test_a_project_can_follow_the_default_or_choose_its_own_billing(
+def test_the_billing_choice_applies_to_every_project(
     runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     web, _checks = billing_client(runs, launched, tmp_path, monkeypatch)
@@ -2124,18 +2109,14 @@ def test_a_project_can_follow_the_default_or_choose_its_own_billing(
         return web.get("/api/projects/demo").json()["developer"]
 
     assert (shown()["billing"], shown()["billing_source"]) == ("api", "default")
-    post(web, "/api/projects/demo/developer-billing", {"billing": "subscription"})
-    assert (shown()["billing"], shown()["billing_source"]) == ("subscription", "project")
-    post(web, "/api/projects/demo/developer-billing", {"billing": "default"})
-    assert shown()["billing_source"] == "default"
+    post(web, "/api/models/developer-billing", {"billing": "subscription"})
+    assert (shown()["billing"], shown()["billing_source"]) == ("subscription", "global")
 
 
-@pytest.mark.parametrize(
-    "path", ["/api/models/developer-billing", "/api/projects/demo/developer-billing"]
-)
 def test_an_unknown_billing_is_refused(
-    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+    runs: Path, launched: Launched, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    path = "/api/models/developer-billing"
     web, _checks = billing_client(runs, launched, tmp_path, monkeypatch)
     make_project(runs, stage=Stage.DEVELOPER)
 

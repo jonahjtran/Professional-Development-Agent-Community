@@ -16,7 +16,6 @@ from orchestrator.developer_billing import (
     get_default_billing,
     get_developer_billing,
     set_global_billing,
-    set_project_billing,
 )
 from orchestrator.pipeline import AgentError
 from tests.factories import make_config
@@ -58,23 +57,24 @@ def test_a_global_choice_applies_to_every_project(tmp_path: Path) -> None:
     assert (choice.billing, choice.source) == ("subscription", "global")
 
 
-def test_a_project_choice_overrides_the_global_one_until_cleared(tmp_path: Path) -> None:
+def test_a_leftover_project_setting_is_ignored_the_global_one_applies_everywhere(
+    tmp_path: Path,
+) -> None:
     runs = tmp_path / "runs"
     set_global_billing("subscription")
+    (runs / "demo").mkdir(parents=True)
+    (runs / "demo" / "settings.json").write_text('{"developer_billing": "api"}')
 
-    set_project_billing(runs, "demo", "api")
-    assert get_developer_billing(runs, "demo").billing == "api"
-    assert get_developer_billing(runs, "demo").source == "project"
+    choice = get_developer_billing(runs, "demo")
 
-    set_project_billing(runs, "demo", None)
-    assert get_developer_billing(runs, "demo").billing == "subscription"
+    assert (choice.billing, choice.source) == ("subscription", "global")
 
 
 def test_an_unknown_billing_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="one of"):
         set_global_billing("free")
     with pytest.raises(ValueError, match="one of"):
-        set_project_billing(tmp_path / "runs", "demo", "free")
+        set_global_billing("free")
 
 
 # --- what the Developer's process is given -------------------------------------------------
@@ -197,7 +197,7 @@ class SubscriptionHarness(Harness):
 
 
 def test_a_subscription_task_runs_without_the_api_key(repo: Path, tmp_path: Path) -> None:
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_billing("subscription")
     harness = SubscriptionHarness(repo, tmp_path)
 
     harness.runner().run(request())
@@ -218,7 +218,7 @@ def test_not_signed_in_pauses_with_how_to_fix_it_and_starts_nothing(
     repo: Path,
     tmp_path: Path,
 ) -> None:
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_billing("subscription")
     harness = SubscriptionHarness(repo, tmp_path)
     harness.subscription = SubscriptionStatus(
         False, "You are not signed in to Claude.", "Run `claude auth login`."
@@ -233,10 +233,10 @@ def test_not_signed_in_pauses_with_how_to_fix_it_and_starts_nothing(
 
 
 def test_a_local_task_ignores_the_subscription_setting(repo: Path, tmp_path: Path) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
-    set_project_backend(tmp_path / "runs", "demo", "local")
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_backend("local")
+    set_global_billing("subscription")
     harness = SubscriptionHarness(repo, tmp_path)
     harness.subscription = SubscriptionStatus(False, "not signed in", "")
 
@@ -283,7 +283,7 @@ def test_a_subscription_failure_says_what_happened_and_what_to_do(
     error: str,
     expected: str,
 ) -> None:
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_billing("subscription")
     harness = SubscriptionHarness(repo, tmp_path, failing_turn(error))
 
     with pytest.raises(AgentError) as raised:
@@ -293,7 +293,7 @@ def test_a_subscription_failure_says_what_happened_and_what_to_do(
 
 
 def test_a_plain_failure_is_unchanged(repo: Path, tmp_path: Path) -> None:
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_billing("subscription")
     harness = SubscriptionHarness(repo, tmp_path, failing_turn(None))
 
     with pytest.raises(AgentError, match="the Developer failed"):
@@ -304,7 +304,7 @@ def test_a_subscription_task_does_not_need_the_sdk_to_report_a_price(
     repo: Path,
     tmp_path: Path,
 ) -> None:
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_billing("subscription")
 
     def unpriced(cwd: Path) -> list[Any]:
         commit_a_file(cwd)
@@ -321,7 +321,7 @@ def test_a_subscription_task_still_counts_the_estimate_the_sdk_gives(
     repo: Path,
     tmp_path: Path,
 ) -> None:
-    set_project_billing(tmp_path / "runs", "demo", "subscription")
+    set_global_billing("subscription")
 
     result = SubscriptionHarness(repo, tmp_path).runner().run(request())
 

@@ -47,7 +47,7 @@ def test_any_agent_may_be_chosen_next_including_skipping_ahead() -> None:
 
 
 def test_an_agent_cannot_be_chosen_straight_after_itself() -> None:
-    assert "just finished" in (check(run_to("product_owner"), facts()) or "")
+    assert "just ran" in (check(run_to("product_owner"), facts()) or "")
 
 
 def test_the_developer_needs_the_task_list_when_it_builds_tasks() -> None:
@@ -344,3 +344,116 @@ def test_an_api_error_or_a_malformed_answer_is_no_decision(tmp_path: Path) -> No
         api(tmp_path, FakeClient(reply(agent="wizard"))).decide(state, Stage.PRODUCT_OWNER, facts())
         is None
     )
+
+
+# --- failures are decided too -----------------------------------------------------------------
+
+
+def ask_person(reason: str = "This needs you") -> NextStep:
+    return NextStep.model_validate(
+        {"action": "ask_person", "agent": None, "reason": reason, "note": "", "documents": []}
+    )
+
+
+def test_asking_you_is_only_allowed_when_something_went_wrong() -> None:
+    assert check(ask_person(), facts(event="qa_failed", current=Stage.QA)) is None
+    assert check(ask_person(), facts(event="design_problem", current=Stage.DEVELOPER)) is None
+    assert "nothing" in (check(ask_person(), facts()) or "")
+
+
+def test_a_failed_qa_cannot_be_finished_or_rerun_unchanged() -> None:
+    failed = facts(event="qa_failed", current=Stage.QA)
+
+    assert "problem is open" in (check(finish(), failed) or "")
+    assert "just" in (check(run_to("qa"), failed) or "")
+    assert check(run_to("architect"), failed) is None
+    assert check(run_to("product_owner"), failed) is None
+
+
+def test_a_design_problem_may_be_answered_by_carrying_on_with_the_developer() -> None:
+    problem = facts(
+        event="design_problem", current=Stage.DEVELOPER, needs_task_list=True, tasks_planned=True
+    )
+
+    assert check(run_to("developer"), problem) is None
+    assert check(run_to("architect"), problem) is None
+
+
+def test_a_stuck_task_cannot_be_sent_straight_back_to_the_developer() -> None:
+    stuck = facts(
+        event="task_stuck", current=Stage.DEVELOPER, needs_task_list=True, tasks_planned=True
+    )
+
+    assert "just" in (check(run_to("developer"), stuck) or "")
+    assert check(run_to("architect"), stuck) is None
+
+
+class OnEvent:
+    """Answers each kind of event with a chosen step; the usual order otherwise."""
+
+    def __init__(self, **by_event: NextStep | None) -> None:
+        self.by_event = by_event
+        self.seen: list[Facts] = []
+
+    def decide(self, state: Any, finished: Stage, facts: Facts) -> NextStep | None:
+        self.seen.append(facts)
+        if facts.event in self.by_event:
+            return self.by_event[facts.event]
+        return fallback_step(finished)
+
+
+def qa_failing(
+    tmp_path: Path, director: Any, results: list[bool], gates: FakeGates | None = None
+) -> Any:
+    from orchestrator.pipeline import PipelineContext
+
+    agent = FakeAgent(qa_results=results)
+    ctx = PipelineContext(
+        config=make_config(), runs_dir=tmp_path, runner=agent,
+        gates=gates or FakeGates(), caps=FakeCaps(), director=director,
+    )  # fmt: skip
+    return agent, run_pipeline(start(stage=Stage.PRODUCT_OWNER), ctx), ctx
+
+
+def test_a_failed_qa_goes_wherever_the_director_says_not_to_a_fixed_loop(tmp_path: Path) -> None:
+    director = OnEvent(qa_failed=run_to("product_owner", "The requirements are the problem"))
+
+    agent, state, _ = qa_failing(tmp_path, director, [False, True])
+
+    assert agent.stages[:5] == [
+        Stage.PRODUCT_OWNER, Stage.ARCHITECT, Stage.DEVELOPER, Stage.QA, Stage.PRODUCT_OWNER,
+    ]  # fmt: skip
+    failed = next(f for f in director.seen if f.event == "qa_failed")
+    assert failed.current == Stage.QA and "QA" in failed.problem
+    assert state.status == Status.DONE
+
+
+def test_the_director_can_bring_a_failed_qa_to_you_instead_of_looping(tmp_path: Path) -> None:
+    director = OnEvent(qa_failed=ask_person("It needs your call"))
+    gates = FakeGates()
+
+    agent, state, _ = qa_failing(tmp_path, director, [False], gates)
+
+    assert agent.stages.count(Stage.QA) == 1 and agent.stages.count(Stage.DEVELOPER) == 1
+    assert any("QA FAILED" in (r.summary or "") for r in gates.requests)
+    assert state.qa_loops == 0
+
+
+def test_without_an_answer_a_failed_qa_follows_the_old_rule_so_nothing_breaks(
+    tmp_path: Path,
+) -> None:
+    director = OnEvent(qa_failed=None)
+
+    agent, state, _ = qa_failing(tmp_path, director, [False, True])
+
+    assert agent.stages.count(Stage.DEVELOPER) == 2 and state.status == Status.DONE
+
+
+def test_the_note_for_the_agent_after_a_failure_carries_what_failed(tmp_path: Path) -> None:
+    director = OnEvent(qa_failed=run_to("developer", note="Focus on the empty-state bug."))
+
+    agent, _, _ = qa_failing(tmp_path, director, [False, True])
+
+    retry = [r for r in agent.requests if r.stage == Stage.DEVELOPER][1]
+    assert retry.routing_note is not None
+    assert "Focus on the empty-state bug." in retry.routing_note and "QA" in retry.routing_note

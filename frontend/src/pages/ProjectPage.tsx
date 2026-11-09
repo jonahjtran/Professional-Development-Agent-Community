@@ -19,7 +19,7 @@ import {
 import { ProjectTasks } from "../components/ProjectTasks";
 import { TodoRow } from "../components/TodoRow";
 import { useLoad } from "../hooks";
-import type { Billing, Project, StartingProject } from "../types";
+import type { Project, StartingProject } from "../types";
 
 export function ProjectPage() {
   const { slug = "" } = useParams();
@@ -98,26 +98,6 @@ export function ProjectPage() {
     try {
       await post(`/api/projects/${slug}/raise-cap`, { scope: raiseScope, amount });
       setRaiseAmount("");
-      reload();
-    } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : String(e));
-    }
-  }
-
-  async function setBilling(billing: string) {
-    setProblem(null);
-    try {
-      await post(`/api/projects/${slug}/developer-billing`, { billing });
-      reload();
-    } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : String(e));
-    }
-  }
-
-  async function setDeveloper(backend: string) {
-    setProblem(null);
-    try {
-      await post(`/api/projects/${slug}/developer-backend`, { backend });
       reload();
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : String(e));
@@ -227,55 +207,6 @@ export function ProjectPage() {
             <p className="muted">Pause the project first (or wait until it is done) to send it back to an agent.</p>
           </Card>
         )}
-      </Section>
-
-      <Section title="Developer model">
-        <Card>
-          <p>
-            <code>{data.developer.model}</code>{" "}
-            <span className="muted">
-              ({data.developer.backend === "local" ? "local" : "Claude"},{" "}
-              {data.developer.source === "project" ? "chosen for this project" : "the default"})
-            </span>
-          </p>
-          <Segmented<"default" | "claude" | "local">
-            name="developer-backend"
-            value={data.developer.source === "project" ? data.developer.backend : "default"}
-            onChange={(choice) => void setDeveloper(choice)}
-            options={[
-              { value: "default", label: "Follow the default" },
-              { value: "claude", label: "Claude" },
-              { value: "local", label: "Local model" },
-            ]}
-          />
-          <p className="hint">A switch applies from the next task; a task already running finishes on its model.</p>
-          {data.developer.backend === "local" ? (
-            <p className="hint">The local model does not use your Claude account or API credits.</p>
-          ) : (
-            <>
-              <p>
-                {data.developer.billing === "subscription" ? "Paid from your subscription" : "Paid with API credits"}{" "}
-                <span className="muted">
-                  ({data.developer.billing_source === "project" ? "chosen for this project" : "the default"})
-                </span>
-              </p>
-              <Segmented<"default" | Billing>
-                name="developer-billing"
-                value={data.developer.billing_source === "project" ? data.developer.billing : "default"}
-                onChange={(choice) => void setBilling(choice)}
-                options={[
-                  { value: "default", label: "Default billing" },
-                  { value: "api", label: "API credits" },
-                  { value: "subscription", label: "My subscription" },
-                ]}
-              />
-              <p className="hint">
-                A subscription is for your own projects. Dollar figures become estimates, and your plan's usage
-                limit can stop a run.
-              </p>
-            </>
-          )}
-        </Card>
       </Section>
 
       <Section title="Approvals">

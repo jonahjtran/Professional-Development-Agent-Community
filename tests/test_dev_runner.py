@@ -826,10 +826,10 @@ def test_claude_is_used_unless_the_project_chose_the_local_model(
 def test_a_project_on_the_local_model_runs_claude_code_against_the_local_server(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-real-key")
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
     harness = Harness(repo, tmp_path)
 
     harness.runner().run(request())
@@ -846,9 +846,9 @@ def test_a_project_on_the_local_model_runs_claude_code_against_the_local_server(
 def test_a_local_task_costs_nothing_even_if_the_sdk_prices_it_or_reports_no_cost(
     repo: Path, tmp_path: Path
 ) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
 
     def unpriced(cwd: Path) -> list[Any]:
         commit_a_file(cwd)
@@ -861,9 +861,9 @@ def test_a_local_task_costs_nothing_even_if_the_sdk_prices_it_or_reports_no_cost
 
 
 def test_a_local_task_that_was_priced_by_the_sdk_is_still_free(repo: Path, tmp_path: Path) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
 
     result = Harness(repo, tmp_path).runner().run(request())  # the fake reports $0.50
 
@@ -873,9 +873,9 @@ def test_a_local_task_that_was_priced_by_the_sdk_is_still_free(repo: Path, tmp_p
 def test_a_missing_local_server_pauses_with_what_to_do_and_creates_nothing(
     repo: Path, tmp_path: Path
 ) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
     harness = Harness(repo, tmp_path)
     harness.local_status = LocalStatus(
         False, False, False, None, "Ollama is not answering at http://localhost:11434.", "Start it."
@@ -899,13 +899,13 @@ def test_claude_does_not_wait_on_the_local_server(repo: Path, tmp_path: Path) ->
 
 
 def test_switching_between_tasks_takes_effect_on_the_next_one(repo: Path, tmp_path: Path) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
     harness = Harness(repo, tmp_path, Harness.good_turn, Harness.good_turn)
     runner = harness.runner()
 
     runner.run(request(task_id="T1"))
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
     runner.run(request(task_id="T2"))
 
     assert harness.options[0].model == "claude-sonnet-5-5"
@@ -913,9 +913,9 @@ def test_switching_between_tasks_takes_effect_on_the_next_one(repo: Path, tmp_pa
 
 
 def test_the_runner_records_which_model_each_task_starts_on(repo: Path, tmp_path: Path) -> None:
-    from orchestrator.developer_backend import read_running_model, set_project_backend
+    from orchestrator.developer_backend import read_running_model, set_global_backend
 
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
     harness = Harness(repo, tmp_path)
 
     harness.runner().run(request())
@@ -981,9 +981,9 @@ def test_a_configured_skill_that_is_missing_stops_the_task_before_it_starts(
 
 
 def test_the_skills_reach_a_local_model_too(repo: Path, tmp_path: Path) -> None:
-    from orchestrator.developer_backend import set_project_backend
+    from orchestrator.developer_backend import set_global_backend
 
-    set_project_backend(tmp_path / "runs", "demo", "local")
+    set_global_backend("local")
     harness = Harness(repo, tmp_path)
     harness.config = harness.config.model_copy(
         update={"developer": DeveloperConfig(skills=["tdd"])}
