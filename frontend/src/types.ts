@@ -328,6 +328,8 @@ export interface BoardProject {
   can_resume: boolean;
   agent: { stage: string; label: string; state: "running" | "waiting" | "paused" };
   tasks: BoardTask[];
+  // The change or plan the agent is working on above the level of one task, which can be stopped.
+  goal: { title: string; can_stop: boolean } | null;
 }
 
 /** Who pays for the Developer: Anthropic API credits, or your Claude subscription. */

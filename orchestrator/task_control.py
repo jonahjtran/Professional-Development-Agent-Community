@@ -4,7 +4,8 @@ A project runs one agent at a time, so *pausing* a task is pausing its project (
 work is kept. *Killing* a task cancels it: it is taken out of the task list, and if it was the one
 being built, its folder and branch are discarded when they hold no commits (a branch with commits
 is never touched). The Architect owns the order and content of the plan, so nothing here lets a
-person add, edit or reorder tasks, and the Architect's own stage has no controls but Pause.
+person add, edit or reorder tasks. The goal above the tasks (a change you asked for, or a plan the
+Architect is making) can be stopped too: `stop_goal` drops it and puts the project back.
 
 A kill asked while the run is still going cannot be applied at once, because the run owns the
 saved state. It is queued (`cancel_requests.json`) and the run applies it when it stops; a project
@@ -19,7 +20,16 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from orchestrator.artifacts import ArtifactStore, approve_artifacts, record_artifacts
-from orchestrator.state import ProjectState, Status, atomic_write
+from orchestrator.rework import put_aside_open_questions
+from orchestrator.state import (
+    GateOutcome,
+    Handoff,
+    ProjectState,
+    Stage,
+    StageVisit,
+    Status,
+    atomic_write,
+)
 from orchestrator.worktree import WorktreeError, discard_unused
 from schemas import TaskList
 
@@ -224,8 +234,91 @@ def apply_pending_cancels(
         return state
     for task_id in queued:
         try:
-            state = cancel_task(runs_dir, state, task_id, repo=repo)
+            if task_id == GOAL:
+                state = stop_goal(runs_dir, state)
+            else:
+                state = cancel_task(runs_dir, state, task_id, repo=repo)
         except TaskControlError:
             continue
     _requests_path(runs_dir, state.project_slug).unlink(missing_ok=True)
     return state
+
+
+# --- stopping the current goal ------------------------------------------------------------------
+
+GOAL = "@goal"  # in the queue of stops, "the current goal" instead of a task id
+
+_PLANNING = {
+    "human_design": "Plan the tasks for a change you asked for",
+    "qa_fix": "Plan fixes for the failed QA report",
+    "design_review": "Resolve a design problem the Developer raised",
+}
+
+
+def current_goal(state: ProjectState) -> str | None:
+    """What the project is working on above the level of one task, or None.
+
+    That is a change you asked for (from Change something, the chat or the coordinator) while the
+    agent you chose is still working on it, or a plan the Architect is making after a failed QA or a
+    design problem. Once the work is tasks, each task is stopped on its own.
+    """
+    if state.status == Status.DONE and state.rework is None:
+        return None
+    rework = state.rework
+    if rework is not None and not rework.origin_done:
+        return rework.note.strip().splitlines()[0][:120] if rework.note.strip() else "A change"
+    if state.handoff is not None and state.handoff.purpose in _PLANNING:
+        return _PLANNING[state.handoff.purpose]
+    return None
+
+
+def stop_goal(runs_dir: Path, state: ProjectState) -> ProjectState:
+    """Drop the current goal and put the project back where it was before it began.
+
+    The project is left paused (a finished project is finished again). Tasks the Architect already
+    planned for the goal stay in the task list, and each can be stopped on its own.
+    """
+    goal = current_goal(state)
+    if goal is None:
+        raise TaskControlError("there is nothing to stop: no change or plan is being worked on")
+    put_aside_open_questions(runs_dir, state.project_slug)
+    when = datetime.now(UTC)
+    rework = state.rework
+    began = next(
+        (v for v in reversed(state.path) if rework is not None and v.ts == rework.ts), None
+    )
+    if began is None and state.path and state.path[-1].stage == state.stage:
+        began = state.path[-1]
+    back = began.came_from if began is not None else None
+    handoff = state.handoff
+    changes: dict[str, object] = {
+        "rework": None,
+        "handoff": None,
+        "intervention": None,
+        "current_task_id": None,
+        "status": Status.HALTED,
+    }
+    if back is not None:
+        was_finished = (
+            back == Stage.CAREER_COACH
+            and bool(state.gate_history)
+            and state.gate_history[-1].stage == Stage.CAREER_COACH
+            and state.gate_history[-1].outcome == GateOutcome.APPROVE
+        )
+        changes["stage"] = back
+        if was_finished:
+            changes["status"] = Status.DONE
+        if handoff is not None and handoff.purpose == "qa_fix" and back == Stage.QA:
+            changes["handoff"] = Handoff(
+                purpose="qa_gate", note="You stopped the fix plan, so the failed report is yours."
+            )
+        visit = StageVisit(
+            stage=back, reason=f"you stopped: {goal}"[:200], ts=when, came_from=state.stage
+        )
+        changes["path"] = [*state.path, visit]
+    return state.evolve(**changes)
+
+
+def request_stop_goal(runs_dir: Path, project: str) -> None:
+    """Queue stopping the goal for when the live run stops."""
+    request_cancel(runs_dir, project, GOAL)

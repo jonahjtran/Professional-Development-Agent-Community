@@ -86,7 +86,10 @@ from orchestrator.state import (
 from orchestrator.task_control import (
     TaskControlError,
     cancel_task,
+    current_goal,
     request_cancel,
+    request_stop_goal,
+    stop_goal,
     task_rows,
 )
 from orchestrator.todos import Todo, all_open_todos, mark_done, open_todos
@@ -663,8 +666,33 @@ def create_app(
                     "state": agent_state,
                 },
                 "tasks": [asdict(row) for row in task_rows(runs_dir, view)],
+                "goal": (
+                    {"title": goal, "can_stop": True}
+                    if (goal := current_goal(view)) is not None
+                    else None
+                ),
             }
         )
+
+    @app.post("/api/projects/{slug}/goal/stop")
+    async def stop_current_goal(request: Request, slug: str) -> JSONResponse:
+        """Drop the current goal (a change you asked for, or a plan the Architect is making)."""
+        await checked_body(request)
+        state = view_or_404(slug).state
+        if current_goal(state) is None:
+            return fail(409, "There is nothing to stop: no change or plan is being worked on.")
+        if run_is_alive(runs_dir, slug):
+            request_stop_goal(runs_dir, slug)
+            request_halt(runs_dir, slug)
+            return JSONResponse({"ok": True, "state": "stopping"})
+        if state.status == Status.RUNNING:  # a run that died without saying so
+            state = state.evolve(status=Status.HALTED)
+        try:
+            stopped = stop_goal(runs_dir, state)
+        except TaskControlError as refusal:
+            return fail(409, str(refusal))
+        save_state(runs_dir, stopped)
+        return JSONResponse({"ok": True, "state": "stopped"})
 
     @app.post("/api/projects/{slug}/tasks/{task_id}/kill")
     async def kill_task(request: Request, slug: str, task_id: str) -> JSONResponse:
